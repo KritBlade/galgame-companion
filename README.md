@@ -22,7 +22,7 @@ Four capabilities:
 ## Install (Tavern Helper script library)
 
 ```js
-import 'https://gcore.jsdelivr.net/gh/KritBlade/galgame-companion@v0.1/dist/galgame-companion.dist.js'
+import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.1/dist/galgame-companion.dist.js'
 ```
 
 Add AFTER the galgame script entry. `@v0.1` pins a release tag — bump it to update.
