@@ -5,6 +5,7 @@
 // do NOT depend on galgame's internal showCustomPopupPanel (not a public API).
 
 import { DOC, log } from './env.js';
+import { mountStatusMenu } from './status-menu.js';
 
 const MODAL_ID = 'school-companion-modal';
 // galgame's fullscreen overlay uses a very high z-index; sit above it.
@@ -42,8 +43,6 @@ export function openMenuModal() {
   const body = DOC.createElement('div');
   body.style.cssText =
     'flex:1 1 auto;display:flex;align-items:center;justify-content:center;color:#8892b0;';
-  // G3 replaces this placeholder with the bridged StatusMenu iframe
-  body.textContent = 'StatusMenu loads here (phase G3).';
 
   box.appendChild(bar);
   box.appendChild(body);
@@ -64,5 +63,8 @@ export function openMenuModal() {
   DOC.addEventListener('keydown', onKey);
 
   DOC.body.appendChild(wrap);
+  // fill the body with the card's StatusMenu (bridged iframe). The iframe — and its 2s
+  // poll interval, which lives INSIDE it — is destroyed when closeMenuModal() removes `wrap`.
+  mountStatusMenu(body);
   log.info('menu modal opened');
 }

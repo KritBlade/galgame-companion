@@ -1,8 +1,8 @@
-// galgame-companion v0.3.2 — built 2026-07-15T10:26:27.851Z
+// galgame-companion v0.4 — built 2026-07-15T10:49:00.943Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.3.2";
+  var VERSION = "0.4";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || document;
   var topWindow = typeof window !== "undefined" && window.parent || window;
   var DEBUG = true;
@@ -571,6 +571,122 @@
     log.info("i18n active" + (HARVEST ? " (harvest mode — run __galI18nDump() when done)" : ""));
   }
 
+  // src/status-menu.js
+  var MENU_MARKER = "VARIABLE_UPDATE_ENDED";
+  function pickMenuScript(scripts) {
+    const markers = scripts.filter((s) => (s.replaceString || "").includes(MENU_MARKER));
+    if (!markers.length) return null;
+    return markers.find((s) => /status/i.test(s.scriptName)) || markers.find((s) => !/start|开始|newgame|new game/i.test(s.scriptName)) || markers.slice().sort((a, b) => b.replaceString.length - a.replaceString.length)[0];
+  }
+  function loadMenuHtml() {
+    try {
+      const ctx = (window.SillyTavern || DOC.defaultView?.SillyTavern)?.getContext?.();
+      if (!ctx) {
+        log.warn("status-menu: no SillyTavern context");
+        return null;
+      }
+      const char = ctx.characters?.[ctx.characterId];
+      const scripts = char?.data?.extensions?.regex_scripts || [];
+      const menu = pickMenuScript(scripts);
+      if (!menu) {
+        log.warn(`status-menu: no StatusMenu regex script on "${char?.name}"`);
+        return null;
+      }
+      log.info(`status-menu: loaded "${menu.scriptName}" (${menu.replaceString.length} chars)`);
+      return menu.replaceString;
+    } catch (e) {
+      log.error("status-menu: loadMenuHtml failed:", e);
+      return null;
+    }
+  }
+  var FLOOR_LOOKBACK = 30;
+  function latestMessageId() {
+    let last = -1;
+    try {
+      const n = Number(window.getLastMessageId ? window.getLastMessageId() : NaN);
+      if (Number.isFinite(n) && n >= 0) last = n;
+    } catch (e) {
+    }
+    if (last < 0) {
+      try {
+        const chat = (window.parent?.SillyTavern || window.SillyTavern)?.getContext?.()?.chat;
+        if (Array.isArray(chat)) last = chat.length - 1;
+      } catch (e) {
+      }
+    }
+    if (last < 0) return -1;
+    const gv = typeof window.getVariables === "function" ? window.getVariables : null;
+    if (gv) {
+      for (let id = last; id >= 0 && id > last - FLOOR_LOOKBACK; id--) {
+        try {
+          const v = gv({ type: "message", message_id: id });
+          if (v && v.stat_data) return id;
+        } catch (e) {
+        }
+      }
+    }
+    return last;
+  }
+  function bridgeGlobals(iw) {
+    const fromSelf = [
+      "getVariables",
+      "getChatMessages",
+      "waitGlobalInitialized",
+      "eventOn",
+      "getLastMessageId",
+      "triggerSlash",
+      "SillyTavern",
+      "TavernHelper"
+    ];
+    const bridged = [];
+    for (const k of fromSelf) {
+      if (typeof window[k] !== "undefined") {
+        iw[k] = window[k];
+        bridged.push(k);
+      }
+    }
+    iw.getCurrentMessageId = latestMessageId;
+    bridged.push("getCurrentMessageId(shim)");
+    try {
+      const topMvu = window.parent && window.parent.Mvu;
+      if (topMvu) {
+        iw.Mvu = topMvu;
+        bridged.push("Mvu");
+      } else log.warn("status-menu: Mvu not found on parent window (menu falls back to 2s polling)");
+    } catch (e) {
+      log.warn("status-menu: could not reach parent Mvu:", e);
+    }
+    if (typeof iw.getVariables !== "function") {
+      log.error("status-menu: getVariables NOT bridged — menu will render blank");
+    }
+    return bridged;
+  }
+  function mountStatusMenu(bodyEl) {
+    const html = loadMenuHtml();
+    if (!html) {
+      bodyEl.textContent = "This card has no StatusMenu.";
+      return null;
+    }
+    bodyEl.textContent = "";
+    bodyEl.style.cssText = "flex:1 1 auto;display:block;padding:0;overflow:hidden;";
+    const frame = DOC.createElement("iframe");
+    frame.style.cssText = "width:100%;height:100%;border:0;display:block;background:#fff;";
+    bodyEl.appendChild(frame);
+    const iw = frame.contentWindow;
+    const bridged = bridgeGlobals(iw);
+    log.info(`status-menu: bridged [${bridged.join(", ")}]`);
+    try {
+      iw.document.open();
+      iw.document.write(html);
+      iw.document.close();
+    } catch (e) {
+      log.error("status-menu: writing menu HTML failed:", e);
+      bodyEl.textContent = "Failed to render StatusMenu (see console).";
+      return null;
+    }
+    return frame;
+  }
+
   // src/menu-modal.js
   var MODAL_ID = "school-companion-modal";
   var Z_INDEX = 2147483e3;
@@ -590,7 +706,6 @@
     bar.innerHTML = '<span><i class="fa-solid fa-users"></i> School Menu</span><button data-school-close style="background:none;border:0;color:#e8e8e8;font-size:1.1rem;cursor:pointer;padding:4px 8px;"><i class="fa-solid fa-xmark"></i></button>';
     const body = DOC.createElement("div");
     body.style.cssText = "flex:1 1 auto;display:flex;align-items:center;justify-content:center;color:#8892b0;";
-    body.textContent = "StatusMenu loads here (phase G3).";
     box.appendChild(bar);
     box.appendChild(body);
     wrap.appendChild(box);
@@ -607,6 +722,7 @@
     };
     DOC.addEventListener("keydown", onKey);
     DOC.body.appendChild(wrap);
+    mountStatusMenu(body);
     log.info("menu modal opened");
   }
 
