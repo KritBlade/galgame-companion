@@ -15,6 +15,7 @@ import { startI18n } from './i18n.js';
 import { startToolbar } from './toolbar.js';
 import { injectStyle } from './style.js';
 import { startFullscreenGuard } from './fullscreen-guard.js';
+import { startImageSeam } from './image-seam.js';
 
 log.info(`v${VERSION} loading`);
 
@@ -22,6 +23,7 @@ injectStyle();
 startI18n();
 startToolbar();
 startFullscreenGuard(); // release native fullscreen galgame leaks when its "quit mode" is clicked
+startImageSeam();       // G4b: mvu-helper images → galgame backdrop DB + ForceImageType flip on enter/exit
 // G3: StatusMenu bridge wires into menu-modal.js
 // G4b: image-seam writer (saveBackground keyed by nearest-preceding <background scene>)
 //      + World_Calc.ForceImageType flip on immersive enter/exit
