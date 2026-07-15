@@ -1,8 +1,8 @@
-// galgame-companion v0.5.7 — built 2026-07-15T22:51:23.533Z
+// galgame-companion v0.5.8 — built 2026-07-15T22:56:40.149Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.5.7";
+  var VERSION = "0.5.8";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || document;
   var topWindow = typeof window !== "undefined" && window.parent || window;
   var DEBUG = true;
@@ -830,7 +830,12 @@
     "启用": "Enable",
     // --- Custom-Modules panel (说明 block, save config) + CG display-name fullwidth fix ---
     "显示名称（可选）": "Display name (optional)",
-    "2. 右侧图标弹窗只读取当前消息中的标签内容，不再直接显示这里输入的备用内容。": "2. The right-side icon popup reads only the tag content in the current message; it no longer directly shows the fallback content entered here."
+    "2. 右侧图标弹窗只读取当前消息中的标签内容，不再直接显示这里输入的备用内容。": "2. The right-side icon popup reads only the tag content in the current message; it no longer directly shows the fallback content entered here.",
+    // --- map-blocked toast (both interface-name build variants) ---
+    "未检测到骰子系统数据接口，无法打开地图": "Dice-system data interface not detected — can't open the map",
+    "未检测到数据库插件接口，无法打开地图": "Database-plugin interface not detected — can't open the map",
+    // --- "no pending choices" toast ---
+    "当前没有待选择的选项": "No options available to select right now"
   };
   var PATTERNS = [
     // TTS voice list renders name+descriptor fused: 桃天 (温柔少女(免费)) → 桃天 (Gentle girl, free).
