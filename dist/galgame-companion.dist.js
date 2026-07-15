@@ -1,8 +1,8 @@
-// galgame-companion v0.1 — built 2026-07-14T23:47:53.873Z
+// galgame-companion v0.2 — built 2026-07-15T00:02:04.628Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.1";
+  var VERSION = "0.2";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || document;
   var topWindow = typeof window !== "undefined" && window.parent || window;
   var DEBUG = true;
@@ -48,6 +48,8 @@
     "当前角色卡独立设置": "Per-character-card settings",
     "插件发布地址": "Plugin release page",
     // --- galgame mode / choices ---
+    "进入 Galgame 模式": "Enter Galgame Mode",
+    "正在开启 Galgame 模式...": "Entering Galgame mode...",
     "Galgame 模式已开启": "Galgame mode enabled",
     "Galgame 模式已关闭": "Galgame mode disabled",
     "请先开启 Galgame 模式": "Enable Galgame mode first",
@@ -410,8 +412,27 @@
     log.info("toolbar watcher active");
   }
 
+  // src/style.js
+  var STYLE_ID = "school-companion-style";
+  var CSS = `
+/* Fullscreen toggle: icon-only. The EN label ("Fullscreen") outgrows the Chinese 全屏 and
+   overlaps the status pills; the icon is self-explanatory. Covers both states (全屏/退出) —
+   a dict blank can't, because 退出 is also the mobile menu's Exit label. */
+.gal-fullscreen-btn span { display: none !important; }
+`;
+  function injectStyle() {
+    if (!DOC || !DOC.head) return setTimeout(injectStyle, 200);
+    if (DOC.getElementById(STYLE_ID)) return;
+    const el = DOC.createElement("style");
+    el.id = STYLE_ID;
+    el.textContent = CSS;
+    DOC.head.appendChild(el);
+    log.info("style injected");
+  }
+
   // src/index.js
   log.info(`v${VERSION} loading`);
+  injectStyle();
   startI18n();
   startToolbar();
   log.info(`v${VERSION} ready`);

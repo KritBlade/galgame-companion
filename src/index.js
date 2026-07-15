@@ -13,9 +13,11 @@
 import { SCRIPT_NAME, VERSION, log } from './env.js';
 import { startI18n } from './i18n.js';
 import { startToolbar } from './toolbar.js';
+import { injectStyle } from './style.js';
 
 log.info(`v${VERSION} loading`);
 
+injectStyle();
 startI18n();
 startToolbar();
 // G3: StatusMenu bridge wires into menu-modal.js

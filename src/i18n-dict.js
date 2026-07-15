@@ -20,6 +20,7 @@ export const DICT = {
   '当前角色卡独立设置': 'Per-character-card settings', '插件发布地址': 'Plugin release page',
 
   // --- galgame mode / choices ---
+  '进入 Galgame 模式': 'Enter Galgame Mode', '正在开启 Galgame 模式...': 'Entering Galgame mode...',
   'Galgame 模式已开启': 'Galgame mode enabled', 'Galgame 模式已关闭': 'Galgame mode disabled',
   '请先开启 Galgame 模式': 'Enable Galgame mode first', '请选择行动': 'Choose an action',
   '剧情选项': 'Story choices', '剧情回顾': 'Story recap', '沉浸模式': 'Immersive mode',
