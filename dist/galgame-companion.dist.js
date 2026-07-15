@@ -1,8 +1,8 @@
-// galgame-companion v0.5.1 — built 2026-07-15T15:54:49.991Z
+// galgame-companion v0.5.2 — built 2026-07-15T20:08:08.527Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.5.1";
+  var VERSION = "0.5.2";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || document;
   var topWindow = typeof window !== "undefined" && window.parent || window;
   var DEBUG = true;
@@ -535,6 +535,11 @@
     // so the text node is just the "…：立绘 N · …" run.
     [/^资源统计：立绘 (\d+) · 背景 (\d+) · 地图 (\d+) · CG (\d+)$/, (m) => `Assets: sprites ${m[1]} · backgrounds ${m[2]} · maps ${m[3]} · CG ${m[4]}`],
     [/^当前资源：立绘 (\d+) · 背景 (\d+) · 地图 (\d+) · CG (\d+)$/, (m) => `Current assets: sprites ${m[1]} · backgrounds ${m[2]} · maps ${m[3]} · CG ${m[4]}`],
+    // wizard "配置完成" summary — label is fused with its interpolated value in ONE text node
+    // (显示模式：${modeName} / 生图来源：${bgSourceName}), so translate the label AND look the value
+    // up in DICT (标准 Galgame 模式→…, 智绘姬→Zhihuiji, 大香蕉→Big Banana; Wallhaven/ComfyUI pass through).
+    [/^显示模式：(.+)$/, (m) => `Display mode: ${DICT[m[1].trim()] ?? m[1].trim()}`],
+    [/^生图来源：(.+)$/, (m) => `Image source: ${DICT[m[1].trim()] ?? m[1].trim()}`],
     [/^自定义 · (.+)$/, (m) => `Custom · ${m[1]}`],
     [/^当前表情:\s*(.*)$/, (m) => `Current Expression: ${m[1]}`],
     [/^(.+)，COT已更新$/, (m) => `${m[1]}, COT updated`],
