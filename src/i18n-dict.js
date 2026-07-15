@@ -227,6 +227,44 @@ export const DICT = {
   '音乐': 'Music', '音效': 'SFX', '播放当前曲目并停止': 'Play current track then stop',
   '重复播放所有曲目': 'Repeat all tracks', '通知设置': 'Notification settings',
   '试听文本': 'Preview text', '场景': 'Scene', '世界书': 'Worldbook',
+
+  // ═══ v0.3.1 harvest (2026-07-15, second pass) — galgame chrome ═══
+  // --- overlay tooltips (title attrs) ---
+  '点击展开音乐控制': 'Click to expand music controls',
+  '有待选择的选项': 'Choices available',
+  '查看消息内嵌界面': 'View embedded message UI',
+
+  // --- sprite manager (立绘) ---
+  '上传角色立绘': 'Upload character sprite', '保存立绘': 'Save sprite', '生成立绘': 'Generate sprite',
+  '使用本地ComfyUI自动生成角色立绘': 'Auto-generate the sprite via local ComfyUI',
+  '角色外貌基础提示词': 'Base appearance prompt', '额外描述 (可选)': 'Extra description (optional)',
+  '点击选择立绘图片': 'Click to choose a sprite image', '立绘将自动裁剪为 2:3 比例': 'Sprites are auto-cropped to 2:3',
+  '换图': 'Replace image', '更换图片': 'Replace image', '获取图片': 'Fetch image',
+  '本地上传': 'Local upload', '本地文生图': 'Local text-to-image', '远程链接': 'Remote link',
+  '输入图片 URL (https://...)': 'Enter image URL (https://...)', '支持 PNG / JPG / GIF / WebP': 'Supports PNG / JPG / GIF / WebP',
+  '未设置，点击右侧按钮添加': 'Not set — add with the button on the right',
+  '将生成:': 'Will generate:', '生成中...': 'Generating...',
+  '角色名称': 'Character name', '输入角色名': 'Enter character name',
+  '表情类型': 'Expression type', '重置位置': 'Reset position', '重置': 'Reset', '编辑': 'Edit',
+
+  // --- voice binding ---
+  'TTS配音音色': 'TTS voice', '绑定': 'Bind',
+  '-- 不绑定音色 --': '-- No voice --', '-- 使用 Workflow默认 --': '-- Use workflow default --',
+  '为该角色绑定专属配音音色': 'Bind a dedicated voice to this character',
+  '绑定后AI会自动为该角色使用此音色配音': 'Once bound, the AI voices this character with it',
+
+  // --- image config (sentences user flagged) ---
+  'Checkpoint 模型': 'Checkpoint model', '工作流': 'Workflow', '用户设定描述': 'User persona description',
+  '使用 NovelAI 官方 API 生成背景图片，需要有效的订阅和 API Key。': 'Generates backgrounds via the official NovelAI API — needs a valid subscription and API Key.',
+  '仅供学习研究使用。所有图片版权归原作者及 Wallhaven 所有。': 'For study/research only. All image rights belong to their creators and to Wallhaven.',
+  '背景图来源: ComfyUI': 'Background source: ComfyUI', '背景图来源: NovelAI': 'Background source: NovelAI',
+  '背景图来源: Wallhaven': 'Background source: Wallhaven', '背景图来源: 大香蕉': 'Background source: Big Banana',
+
+  // --- custom modules: textarea placeholders + the tag EXAMPLES it shows ---
+  '<div>自定义地点介绍...</div>': '<div>Custom location intro...</div>',
+  '<div>自定义时间介绍...</div>': '<div>Custom time intro...</div>',
+  '<地点状态栏>...</地点状态栏>': '<Location bar>...</Location bar>',
+  '<时间状态栏>...</时间状态栏>': '<Time bar>...</Time bar>',
 };
 
 // Pattern rules for interpolated strings — applied only when a text node is NOT an
@@ -245,5 +283,9 @@ export const PATTERNS = [
   [/^发现新版本: (.+)$/, (m) => `New version available: ${m[1]}`],
   // NOTE: a pattern hit replaces the WHOLE matched key — re-emit the example lines
   [/^每行填写一首歌曲名，例如：/, () => 'One song per line, e.g.:\n夜に駆ける\nunravel\n打上花火'],
+  // BGM note #1: text node before the inline <bgm> element (the "。" after it is a separate node)
+  [/^1\.\s*每行一首歌，保存后会更新 COT：模型只能从该歌单中输出$/,
+    () => '1. One song per line; on save the COT updates so the model can only output'],
+  [/^构建信息:\s*(.+)$/, (m) => `Build: ${m[1]}`],
   // … add more as harvest surfaces them …
 ];
