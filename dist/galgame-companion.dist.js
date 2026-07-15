@@ -1,8 +1,8 @@
-// galgame-companion v0.4.1 — built 2026-07-15T10:58:39.640Z
+// galgame-companion v0.4.2 — built 2026-07-15T11:40:28.920Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.4.1";
+  var VERSION = "0.4.2";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || document;
   var topWindow = typeof window !== "undefined" && window.parent || window;
   var DEBUG = true;
@@ -692,23 +692,68 @@
 
   // src/menu-modal.js
   var MODAL_ID = "school-companion-modal";
+  var STYLE_ID = "school-companion-modal-css";
   var Z_INDEX = 2147483e3;
+  function ensureStyles() {
+    if (DOC.getElementById(STYLE_ID)) return;
+    const style = DOC.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = `
+#${MODAL_ID} {
+  position: fixed; inset: 0; z-index: ${Z_INDEX};
+  /* explicit viewport units — SillyTavern sets transform on <html>, which re-roots
+     position:fixed to that ancestor, so inset:0 collapses to 0 height. vw/dvh always
+     resolve to the real viewport, so the wrap fills the screen regardless. */
+  width: 100vw; height: 100vh; height: 100dvh;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.55);
+}
+#${MODAL_ID} .sc-box {
+  position: relative;
+  width: min(920px, 94vw); height: min(680px, 90vh);
+  background: #1a1a2e; border-radius: 12px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+  overflow: hidden; display: flex; flex-direction: column;
+}
+#${MODAL_ID} .sc-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; background: #0f3460; color: #e8e8e8;
+  font-weight: 700; flex: 0 0 auto;
+}
+#${MODAL_ID} .sc-bar button {
+  background: none; border: 0; color: #e8e8e8;
+  font-size: 1.1rem; cursor: pointer; padding: 4px 8px;
+}
+#${MODAL_ID} .sc-body {
+  flex: 1 1 auto; display: flex; align-items: center; justify-content: center;
+  color: #8892b0;
+}
+@media (max-width: 768px) {
+  #${MODAL_ID} { background: #1a1a2e; }         /* opaque — no galgame bleed-through */
+  #${MODAL_ID} .sc-box {
+    width: 100vw; height: 100vh; height: 100dvh; /* dvh handles mobile browser chrome */
+    max-width: none; max-height: none;
+    border-radius: 0; box-shadow: none;
+  }
+}`;
+    (DOC.head || DOC.documentElement).appendChild(style);
+  }
   function closeMenuModal() {
     const el = DOC.getElementById(MODAL_ID);
     if (el) el.remove();
   }
   function openMenuModal() {
     if (DOC.getElementById(MODAL_ID)) return;
+    ensureStyles();
     const wrap = DOC.createElement("div");
     wrap.id = MODAL_ID;
-    wrap.style.cssText = `position:fixed;inset:0;z-index:${Z_INDEX};display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);`;
     const box = DOC.createElement("div");
-    box.style.cssText = "position:relative;width:min(920px,94vw);height:min(680px,90vh);background:#1a1a2e;border-radius:12px;box-shadow:0 8px 40px rgba(0,0,0,0.6);overflow:hidden;display:flex;flex-direction:column;";
+    box.className = "sc-box";
     const bar = DOC.createElement("div");
-    bar.style.cssText = "display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#0f3460;color:#e8e8e8;font-weight:700;flex:0 0 auto;";
-    bar.innerHTML = '<span><i class="fa-solid fa-users"></i> School Menu</span><button data-school-close style="background:none;border:0;color:#e8e8e8;font-size:1.1rem;cursor:pointer;padding:4px 8px;"><i class="fa-solid fa-xmark"></i></button>';
+    bar.className = "sc-bar";
+    bar.innerHTML = '<span><i class="fa-solid fa-users"></i> School Menu</span><button data-school-close aria-label="Close"><i class="fa-solid fa-xmark"></i></button>';
     const body = DOC.createElement("div");
-    body.style.cssText = "flex:1 1 auto;display:flex;align-items:center;justify-content:center;color:#8892b0;";
+    body.className = "sc-body";
     box.appendChild(bar);
     box.appendChild(body);
     wrap.appendChild(box);
@@ -774,7 +819,7 @@
   }
 
   // src/style.js
-  var STYLE_ID = "school-companion-style";
+  var STYLE_ID2 = "school-companion-style";
   var CSS = `
 /* Fullscreen toggle: icon-only. The EN label ("Fullscreen") outgrows the Chinese 全屏 and
    overlaps the status pills; the icon is self-explanatory. Covers both states (全屏/退出) —
@@ -783,9 +828,9 @@
 `;
   function injectStyle() {
     if (!DOC || !DOC.head) return setTimeout(injectStyle, 200);
-    if (DOC.getElementById(STYLE_ID)) return;
+    if (DOC.getElementById(STYLE_ID2)) return;
     const el = DOC.createElement("style");
-    el.id = STYLE_ID;
+    el.id = STYLE_ID2;
     el.textContent = CSS;
     DOC.head.appendChild(el);
     log.info("style injected");
