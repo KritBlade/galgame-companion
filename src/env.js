@@ -4,7 +4,7 @@
 // so we reach it via window.parent.document (GCP §1).
 
 export const SCRIPT_NAME = 'School-Companion';
-export const VERSION = '0.5.4';
+export const VERSION = '0.5.5';
 
 // Parent ST document (galgame's overlay lives here). Fallback to own document only if the
 // iframe boundary is somehow absent (e.g. pasted into the console for a quick test).

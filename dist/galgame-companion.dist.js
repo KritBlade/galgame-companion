@@ -1,8 +1,8 @@
-// galgame-companion v0.5.4 — built 2026-07-15T22:17:26.446Z
+// galgame-companion v0.5.5 — built 2026-07-15T22:34:20.817Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.5.4";
+  var VERSION = "0.5.5";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || document;
   var topWindow = typeof window !== "undefined" && window.parent || window;
   var DEBUG = true;
@@ -755,11 +755,53 @@
     "雨天": "Rainy",
     "高级": "Advanced",
     "默认 · 深色": "Default · Dark",
-    "，例如：": ", for example:"
+    "，例如：": ", for example:",
+    // --- galgame 2.0 deeper modals: map / CG rules / GitHub+ZIP import / ComfyUI scene-gen + bare voice descriptors (2026-07-15) ---
+    "温柔少女": "Gentle girl",
+    "沉稳男声": "Steady male voice",
+    "清冷女声": "Cool female voice",
+    "成熟御姐": "Mature onee-san",
+    "元气少女": "Energetic girl",
+    "甜美声线": "Sweet voice",
+    "邻家女孩": "Girl next door",
+    "活泼萝莉": "Lively loli",
+    "儒雅公子": "Refined gentleman",
+    "阳光少年": "Sunny youth",
+    "磁性低音": "Magnetic bass",
+    "预览": "Preview",
+    "一键导入": "One-click import",
+    "上传世界地图": "Upload world map",
+    "保存地图": "Save map",
+    "规则名（必填）": "Rule name (required)",
+    "变量路径，如：角色.艾莉.好感度": "Variable path, e.g.: Character.Ellie.Affection",
+    "未填写": "Not filled in",
+    "选择CG资源": "Select CG resource",
+    "添加背景图片": "Add background image",
+    "场景名称": "Scene name",
+    "如：教室、公园、夜晚街道": "e.g.: classroom, park, night street",
+    "场景描述": "Scene description",
+    "生成背景": "Generate background",
+    "保存背景": "Save background",
+    "请输入 GitHub 仓库地址 (例如: user/repo 或 https://github.com/user/repo/tree/main/path):": "Enter GitHub repo address (e.g.: user/repo or https://github.com/user/repo/tree/main/path):",
+    "背景托管在 GitHub（jsDelivr CDN），导入仅保存链接、不占本地存储；显示时按需加载。": "Backgrounds are hosted on GitHub (jsDelivr CDN); import saves only the link, uses no local storage; loaded on demand when shown.",
+    "街道 / 咖啡厅 / 雨夜街头等 30 场景 + 10 套立绘模板与路人剪影": "30 scenes such as street / cafe / rainy-night street, plus 10 sprite templates and passerby silhouettes",
+    "ZIP 文件链接": "ZIP file link",
+    "支持直接下载链接，如 GitHub Release、云盘直链等": "Supports direct download links, e.g. GitHub Release, cloud-drive direct links, etc.",
+    "限制：最大 5GB": "Limit: max 5GB",
+    "下载并导入": "Download and import",
+    "当前为统一世界地图模式：所有地点共用一张大地图，不再按场景/地区分别上传。": "Currently in unified world-map mode: all locations share one big map; no longer uploaded per scene/region.",
+    "点击选择地图图片": "Click to select map image",
+    "ComfyUI 生成": "ComfyUI generation",
+    "ComfyUI 场景生成": "ComfyUI scene generation",
+    "使用本地ComfyUI生成背景图片": "Use local ComfyUI to generate background images",
+    '场景名称需与 AI 输出的 <background scene="xxx" /> 标签中的 xxx 一致': 'Scene name must match the xxx in the <background scene="xxx" /> tag output by the AI'
   };
   var PATTERNS = [
+    // TTS voice list renders name+descriptor fused: 桃天 (温柔少女(免费)) → 桃天 (Gentle girl, free).
+    // Keep the voice-id name; translate the descriptor (via DICT) + 免费/付费.
+    [/^(.+?)\s*\(([^()]+)\((免费|付费)\)\)$/, (m) => `${m[1]} (${DICT[m[2]] ?? m[2]}, ${m[3] === "免费" ? "free" : "paid"})`],
     // galgame placeholder examples: 例如：… → e.g.: … (keeps the example content verbatim)
-    [/^例如：(.+)$/, (m) => `e.g.: ${m[1]}`],
+    [/^例如[:：]\s*(.+)$/, (m) => `e.g.: ${m[1]}`],
     // typing speed, saved-CG count, per-card config header (interpolated values)
     [/^(\d+)字\/秒$/, (m) => `${m[1]} chars/sec`],
     [/^已保存 (\d+) 张特殊CG$/, (m) => `Saved ${m[1]} special CG`],
