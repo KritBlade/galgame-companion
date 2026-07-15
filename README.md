@@ -25,7 +25,7 @@ Four capabilities:
 import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.4.3/dist/galgame-companion.dist.js'
 ```
 
-Add AFTER the galgame script entry. `@v0.4.1` pins a release tag — bump it to update.
+Add AFTER the galgame script entry. `@v0.4.3` pins a release tag — bump it to update.
 
 **Versionless (auto-latest)** — resolves to the newest semver tag, so the TH entry never needs editing:
 
