@@ -1,8 +1,8 @@
-// galgame-companion v0.5.6 — built 2026-07-15T22:44:08.457Z
+// galgame-companion v0.5.7 — built 2026-07-15T22:51:23.533Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.5.6";
+  var VERSION = "0.5.7";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || document;
   var topWindow = typeof window !== "undefined" && window.parent || window;
   var DEBUG = true;
@@ -827,7 +827,10 @@
     "支持 png / jpg / webp": "Supports png / jpg / webp",
     "保存CG": "Save CG",
     // --- MVU-triggered CG row (enable toggle; variable path left as data) ---
-    "启用": "Enable"
+    "启用": "Enable",
+    // --- Custom-Modules panel (说明 block, save config) + CG display-name fullwidth fix ---
+    "显示名称（可选）": "Display name (optional)",
+    "2. 右侧图标弹窗只读取当前消息中的标签内容，不再直接显示这里输入的备用内容。": "2. The right-side icon popup reads only the tag content in the current message; it no longer directly shows the fallback content entered here."
   };
   var PATTERNS = [
     // TTS voice list renders name+descriptor fused: 桃天 (温柔少女(免费)) → 桃天 (Gentle girl, free).

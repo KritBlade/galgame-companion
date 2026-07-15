@@ -637,6 +637,10 @@ export const DICT = {
 
   // --- MVU-triggered CG row (enable toggle; variable path left as data) ---
   '启用': 'Enable',
+
+  // --- Custom-Modules panel (说明 block, save config) + CG display-name fullwidth fix ---
+  '显示名称（可选）': 'Display name (optional)',
+  '2. 右侧图标弹窗只读取当前消息中的标签内容，不再直接显示这里输入的备用内容。': '2. The right-side icon popup reads only the tag content in the current message; it no longer directly shows the fallback content entered here.',
 };
 
 // Pattern rules for interpolated strings — applied only when a text node is NOT an
