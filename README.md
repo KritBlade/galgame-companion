@@ -38,8 +38,9 @@ Caveats: the CDN caches versionless URLs up to **12 h** (force with
 and every new tag auto-ships to you. Use versionless for your own dev loop; anything shipped
 inside a card's 脚本库 should stay **pinned**.
 
-**Versioning:** increments of **0.01** per release from here (v0.31, v0.32, …); 0.1 jumps
-reserved for phase-sized features (StatusMenu HUD, image seam).
+**Versioning:** `0.X` = dev phase, `0.X.N` = iteration within the phase (since pinned tags
+are the update mechanism, every change ships as a new tag). Same-phase fixes: v0.3.1,
+v0.3.2, …; a new phase (StatusMenu HUD, image seam) bumps to v0.4, v0.5, ….
 
 ## Dev
 
