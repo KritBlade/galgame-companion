@@ -27,6 +27,20 @@ import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.3/dist/galgam
 
 Add AFTER the galgame script entry. `@v0.3` pins a release tag — bump it to update.
 
+**Versionless (auto-latest)** — resolves to the newest semver tag, so the TH entry never needs editing:
+
+```js
+import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion/dist/galgame-companion.dist.js'
+```
+
+Caveats: the CDN caches versionless URLs up to **12 h** (force with
+`curl https://purge.jsdelivr.net/gh/KritBlade/galgame-companion/dist/galgame-companion.dist.js`),
+and every new tag auto-ships to you. Use versionless for your own dev loop; anything shipped
+inside a card's 脚本库 should stay **pinned**.
+
+**Versioning:** increments of **0.01** per release from here (v0.31, v0.32, …); 0.1 jumps
+reserved for phase-sized features (StatusMenu HUD, image seam).
+
 ## Dev
 
 ```bash
