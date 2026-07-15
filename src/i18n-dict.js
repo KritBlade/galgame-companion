@@ -599,6 +599,44 @@ export const DICT = {
   'ComfyUI 场景生成': 'ComfyUI scene generation',
   '使用本地ComfyUI生成背景图片': 'Use local ComfyUI to generate background images',
   '场景名称需与 AI 输出的 <background scene="xxx" /> 标签中的 xxx 一致': 'Scene name must match the xxx in the <background scene="xxx" /> tag output by the AI',
+
+  // --- Text-Display live-preview demo text (static plugin UI) ---
+  '少女': 'Girl',
+  '晕染着樱色的天空下，风轻轻拂过发梢。': 'Under a sky washed in cherry-blossom pink, the breeze gently stirs her hair.',
+  '——这就是与你相遇的季节。': '—This is the season I met you.',
+
+  // --- Add-Sprite modal (crop ratio + built-in template set) ---
+  '立绘裁剪比例': 'Sprite crop ratio',
+  '内置模板': 'Built-in templates',
+  '选择一套内置立绘模板，整套 10 个表情将套用到上方填写的角色名下（远程链接引用，不占本地存储）。需先导入对应的内置图包。': 'Pick a built-in sprite template set; all 10 expressions are applied to the character name entered above (referenced by remote link, uses no local storage). Import the matching built-in image pack first.',
+  '套用': 'Apply',
+
+  // --- Expression-tags modal (preset + custom expression labels) ---
+  '管理表情标签': 'Manage expression tags',
+  '预设表情 (不可编辑)': 'Preset expressions (read-only)',
+  '微笑': 'Smile',
+  '生气': 'Angry',
+  '难过': 'Sad',
+  '惊讶': 'Surprised',
+  '嘲讽': 'Mocking',
+  '害羞': 'Shy',
+  '思考': 'Thinking',
+  '大笑': 'Laughing',
+  '搞怪': 'Playful',
+  '自定义表情': 'Custom expressions',
+  '暂无自定义表情': 'No custom expressions yet',
+  '添加新表情标签': 'Add new expression tag',
+  '添加': 'Add',
+
+  // --- Add-Special-CG modal (CG id / display name / upload / save) ---
+  '添加特殊CG': 'Add special CG',
+  '显示名称 (可选)': 'Display name (optional)',
+  '点击选择CG图片': 'Click to select CG image',
+  '支持 png / jpg / webp': 'Supports png / jpg / webp',
+  '保存CG': 'Save CG',
+
+  // --- MVU-triggered CG row (enable toggle; variable path left as data) ---
+  '启用': 'Enable',
 };
 
 // Pattern rules for interpolated strings — applied only when a text node is NOT an
