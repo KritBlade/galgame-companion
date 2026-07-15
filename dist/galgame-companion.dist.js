@@ -1,8 +1,8 @@
-// galgame-companion v0.5.3 — built 2026-07-15T22:05:58.464Z
+// galgame-companion v0.5.4 — built 2026-07-15T22:17:26.446Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.5.3";
+  var VERSION = "0.5.4";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || document;
   var topWindow = typeof window !== "undefined" && window.parent || window;
   var DEBUG = true;
@@ -532,6 +532,44 @@
     // --- galgame 2.0 settings panel + image-gen config (harvested + translated 2026-07-15) ---
     // narration fallback (save-load/process-message; full-width parens — may not surface in harvest)
     "（当前消息无可显示内容）": "(No content to display for this message)",
+    // --- skin theme names (v2.0 variants; poetic name kept, descriptor translated) ---
+    "墨染千秋（水墨长卷）": "Ink Dynasty (ink scroll)",
+    "墨染千秋 · 青绿设色": "Ink Dynasty · blue-green palette",
+    "心之怪盗 · 天鹅绒房间": "Phantom Thieves · Velvet Room",
+    "苍穹之庭（星降之夜）": "Azure Court (starfall night)",
+    "苍穹之庭 · 昼之庭黎明": "Azure Court · daytime garden dawn",
+    "燕云十六声（夜雪听风）": "Yanyun Sixteen Voices (night snow, wind)",
+    "燕云十六声 · 雪霁": "Yanyun Sixteen Voices · snow clears",
+    "朱笺（宣纸墨印）": "Vermilion Note (rice-paper ink)",
+    "朱笺 · 墨夜": "Vermilion Note · ink night",
+    // --- ambiance themes (X暮) ---
+    "薄暮": "Twilight",
+    "鎏暮": "Gilded Dusk",
+    "晓暮": "Dawn Dusk",
+    "绯暮": "Crimson Dusk",
+    "霓暮": "Neon Dusk",
+    "澄暮": "Clear Dusk",
+    "森暮": "Forest Dusk",
+    "梦暮": "Dream Dusk",
+    "电暮": "Electric Dusk",
+    // --- TTS voice descriptors (separate literals from the names; names stay as voice IDs) ---
+    "温柔少女(免费)": "Gentle girl (free)",
+    "沉稳男声(免费)": "Steady male voice (free)",
+    "清冷女声(免费)": "Cool female voice (free)",
+    "成熟御姐(免费)": "Mature lady (free)",
+    "元气少女(免费)": "Energetic girl (free)",
+    "甜美声线(免费)": "Sweet voice (free)",
+    "邻家女孩(免费)": "Girl next door (free)",
+    "活泼萝莉(免费)": "Lively loli (free)",
+    "儒雅公子(免费)": "Refined gentleman (free)",
+    "阳光少年(免费)": "Sunny boy (free)",
+    "磁性低音(免费)": "Magnetic bass (free)",
+    // --- popup (弹窗) settings labels (the <弹窗一/二> tags themselves stay Chinese) ---
+    "弹窗一图标": "Popup 1 icon",
+    "弹窗二图标": "Popup 2 icon",
+    "自定义弹窗一内容 - 自定义内容格式要求（注入到世界书）": "Custom Popup 1 content - content format requirements (injected into the worldbook)",
+    "自定义弹窗二内容 - 自定义内容格式要求（注入到世界书）": "Custom Popup 2 content - content format requirements (injected into the worldbook)",
+    "上传后将保存到当前角色卡标题背景（scene: __title__）": "After upload, saved to this character card's title background (scene: __title__)",
     "1. 下载皮肤模板（HTML 文件，内嵌与游戏完全一致的界面样式，浏览器打开即所见即所得预览）；": "1. Download the skin template (an HTML file with the game's exact interface styling embedded — open in a browser for a WYSIWYG preview).",
     "1. 保存后，若填写了内容，会自动同步到世界书并注入兼容标签：": "1. After saving, if content is filled in, it auto-syncs to the worldbook and injects a compatibility tag:",
     "1:1 (正方形)": "1:1 (square)",
@@ -722,6 +760,10 @@
   var PATTERNS = [
     // galgame placeholder examples: 例如：… → e.g.: … (keeps the example content verbatim)
     [/^例如：(.+)$/, (m) => `e.g.: ${m[1]}`],
+    // typing speed, saved-CG count, per-card config header (interpolated values)
+    [/^(\d+)字\/秒$/, (m) => `${m[1]} chars/sec`],
+    [/^已保存 (\d+) 张特殊CG$/, (m) => `Saved ${m[1]} special CG`],
+    [/^当前角色卡独立配置（角色卡名:\s*(.+)）$/, (m) => `Per-card config (card name: ${m[1]})`],
     // galgame 2.0 wizard — asset counts (立绘/背景/地图/CG). The leading <i> icon is a sibling node,
     // so the text node is just the "…：立绘 N · …" run.
     [/^资源统计：立绘 (\d+) · 背景 (\d+) · 地图 (\d+) · CG (\d+)$/, (m) => `Assets: sprites ${m[1]} · backgrounds ${m[2]} · maps ${m[3]} · CG ${m[4]}`],
