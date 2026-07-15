@@ -1,8 +1,8 @@
-// galgame-companion v0.3.1 — built 2026-07-15T10:19:58.736Z
+// galgame-companion v0.3.2 — built 2026-07-15T10:26:27.851Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.3.1";
+  var VERSION = "0.3.2";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || document;
   var topWindow = typeof window !== "undefined" && window.parent || window;
   var DEBUG = true;
@@ -447,11 +447,14 @@
     "背景图来源: NovelAI": "Background source: NovelAI",
     "背景图来源: Wallhaven": "Background source: Wallhaven",
     "背景图来源: 大香蕉": "Background source: Big Banana",
-    // --- custom modules: textarea placeholders + the tag EXAMPLES it shows ---
+    // --- custom modules: textarea placeholders are safe (hint text for the user's own HTML) ---
     "<div>自定义地点介绍...</div>": "<div>Custom location intro...</div>",
-    "<div>自定义时间介绍...</div>": "<div>Custom time intro...</div>",
-    "<地点状态栏>...</地点状态栏>": "<Location bar>...</Location bar>",
-    "<时间状态栏>...</时间状态栏>": "<Time bar>...</Time bar>"
+    "<div>自定义时间介绍...</div>": "<div>Custom time intro...</div>"
+    // ⚠️ NOT translated on purpose: <地点状态栏>...</地点状态栏> and <时间状态栏>...</时间状态栏>.
+    // These are EXAMPLES of galgame's real functional tags (its COT injects the Chinese tag and
+    // parses it back from message.mes). i18n only rewrites display text, so it can't break the
+    // tag-match path — but translating the example would tempt a user to type the English form,
+    // which galgame would NOT recognize. Leave the literal tag in its real language.
   };
   var PATTERNS = [
     [/^自定义 · (.+)$/, (m) => `Custom · ${m[1]}`],

@@ -260,11 +260,14 @@ export const DICT = {
   '背景图来源: ComfyUI': 'Background source: ComfyUI', '背景图来源: NovelAI': 'Background source: NovelAI',
   '背景图来源: Wallhaven': 'Background source: Wallhaven', '背景图来源: 大香蕉': 'Background source: Big Banana',
 
-  // --- custom modules: textarea placeholders + the tag EXAMPLES it shows ---
+  // --- custom modules: textarea placeholders are safe (hint text for the user's own HTML) ---
   '<div>自定义地点介绍...</div>': '<div>Custom location intro...</div>',
   '<div>自定义时间介绍...</div>': '<div>Custom time intro...</div>',
-  '<地点状态栏>...</地点状态栏>': '<Location bar>...</Location bar>',
-  '<时间状态栏>...</时间状态栏>': '<Time bar>...</Time bar>',
+  // ⚠️ NOT translated on purpose: <地点状态栏>...</地点状态栏> and <时间状态栏>...</时间状态栏>.
+  // These are EXAMPLES of galgame's real functional tags (its COT injects the Chinese tag and
+  // parses it back from message.mes). i18n only rewrites display text, so it can't break the
+  // tag-match path — but translating the example would tempt a user to type the English form,
+  // which galgame would NOT recognize. Leave the literal tag in its real language.
 };
 
 // Pattern rules for interpolated strings — applied only when a text node is NOT an
