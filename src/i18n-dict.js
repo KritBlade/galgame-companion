@@ -648,6 +648,13 @@ export const DICT = {
 
   // --- "no pending choices" toast ---
   '当前没有待选择的选项': 'No options available to select right now',
+
+  // --- AI auto-apply sprites: settings toggle (no-space form) + on/off toasts ---
+  'AI自动套用立绘': 'AI auto-apply sprites',
+  'AI自动套用立绘已开启': 'AI auto-apply sprites enabled',
+  'AI自动套用立绘已关闭': 'AI auto-apply sprites disabled',
+  'AI自动套用立绘已开启，COT已更新': 'AI auto-apply sprites enabled, COT updated',
+  'AI自动套用立绘已关闭，COT已更新': 'AI auto-apply sprites disabled, COT updated',
 };
 
 // Pattern rules for interpolated strings — applied only when a text node is NOT an

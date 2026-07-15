@@ -1,8 +1,8 @@
-// galgame-companion v0.5.8 — built 2026-07-15T22:56:40.149Z
+// galgame-companion v0.5.9 — built 2026-07-15T23:14:11.417Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.5.8";
+  var VERSION = "0.5.9";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || document;
   var topWindow = typeof window !== "undefined" && window.parent || window;
   var DEBUG = true;
@@ -835,7 +835,13 @@
     "未检测到骰子系统数据接口，无法打开地图": "Dice-system data interface not detected — can't open the map",
     "未检测到数据库插件接口，无法打开地图": "Database-plugin interface not detected — can't open the map",
     // --- "no pending choices" toast ---
-    "当前没有待选择的选项": "No options available to select right now"
+    "当前没有待选择的选项": "No options available to select right now",
+    // --- AI auto-apply sprites: settings toggle (no-space form) + on/off toasts ---
+    "AI自动套用立绘": "AI auto-apply sprites",
+    "AI自动套用立绘已开启": "AI auto-apply sprites enabled",
+    "AI自动套用立绘已关闭": "AI auto-apply sprites disabled",
+    "AI自动套用立绘已开启，COT已更新": "AI auto-apply sprites enabled, COT updated",
+    "AI自动套用立绘已关闭，COT已更新": "AI auto-apply sprites disabled, COT updated"
   };
   var PATTERNS = [
     // TTS voice list renders name+descriptor fused: 桃天 (温柔少女(免费)) → 桃天 (Gentle girl, free).
