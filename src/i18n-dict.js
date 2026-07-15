@@ -268,11 +268,90 @@ export const DICT = {
   // parses it back from message.mes). i18n only rewrites display text, so it can't break the
   // tag-match path — but translating the example would tempt a user to type the English form,
   // which galgame would NOT recognize. Leave the literal tag in its real language.
+
+  // --- galgame 2.0 setup wizard (配置向导 · src/ui/setup-wizard.js) ---
+  '配置向导': 'Setup Wizard',
+  '欢迎使用 Galgame 通用生成器': 'Welcome to the Galgame Universal Generator',
+  '本向导将引导你完成五项基础配置：': 'This wizard walks you through five basic settings:',
+  '1️⃣ 选择显示模式（标准 Galgame / 简化绘本）': '1️⃣ Choose display mode (Standard Galgame / Simplified picture-book)',
+  '2️⃣ 挑选界面皮肤': '2️⃣ Pick a UI skin',
+  '3️⃣ 常用设置（特效、情境样式、BGM、背景填充）': '3️⃣ Common settings (effects, scene style, BGM, background fill)',
+  '4️⃣ AI 生图配置（推荐智绘姬）': '4️⃣ AI image config (Zhihuiji recommended)',
+  '5️⃣ 导入图包资源（立绘、背景等）': '5️⃣ Import image-pack assets (sprites, backgrounds, etc.)',
+  '全程约 1 分钟，所有配置之后都可以在设置面板中修改；本向导也可随时从「设置 → 通用 → 配置向导」重新打开。': 'Takes about 1 minute; every setting can be changed later in the settings panel. Reopen this wizard anytime from Settings → General → Setup Wizard.',
+  '不再自动提示': "Don't auto-show again",
+  '每会话最多自动弹一次': 'Auto-shows at most once per session',
+  '上一步': 'Previous',
+  '下一步': 'Next',
+  '完成': 'Finish',
+  // step 1 — display mode
+  '选择显示模式': 'Choose display mode',
+  '标准 Galgame 模式': 'Standard Galgame mode',
+  '完整视觉小说体验：角色立绘、表情切换、说话者高亮、背景切换。需要导入立绘图包才能发挥全部效果。': 'Full visual-novel experience: character sprites, expression switching, speaker highlight, background switching. Requires a sprite pack for the full effect.',
+  '简化图书绘本模式': 'Simplified picture-book mode',
+  '纯文本对话框，不解析角色/旁白/表情，不显示立绘和 Live2D；背景（含背景图包）照常切换。适合轻量阅读。': 'Plain-text dialogue box; no character/narration/expression parsing, no sprites or Live2D; backgrounds (incl. background packs) still switch. Good for light reading.',
+  '当前角色尚未开启 Galgame 模式，进入下一步时将自动开启。': "This character doesn't have Galgame mode on yet — it turns on automatically when you continue.",
+  // step 2 — skin
+  '挑选界面皮肤': 'Pick a UI skin',
+  '皮肤决定对话框、工具栏等界面元素的整体风格，切换后立即生效，可实时预览。': 'The skin sets the overall style of the dialogue box, toolbar and other UI; changes apply instantly with live preview.',
+  '之后可以在「设置 → 画面与特效」中随时更换，还可以导入自定义 HTML 皮肤。': 'You can change it anytime under Settings → Display & Effects, and import a custom HTML skin.',
+  // step 3 — common settings
+  '常用设置': 'Common settings',
+  'Pixi 特效': 'Pixi effects',
+  '雨、雪、樱花等画面粒子特效，低端设备可关闭省电。': 'Particle effects like rain, snow and cherry blossoms; turn off on low-end devices to save power.',
+  '允许 AI 输出 <styled> 特殊排版文本（如手机短信、书信样式）。': 'Let the AI output <styled> specially-formatted text (e.g. phone SMS, letter styles).',
+  '启用 BGM': 'Enable BGM',
+  '允许 AI 输出 <bgm> 标签自动切换背景音乐。': 'Let the AI output <bgm> tags to auto-switch background music.',
+  '背景图填充': 'Background fill',
+  '背景图与屏幕比例不一致时，填满裁剪或完整显示留边。': "When the background's aspect differs from the screen: fill-and-crop, or show it whole with letterboxing.",
+  '进入下一步时统一应用；之后可在「设置 → 画面与特效 / 生成COT」中随时调整。': 'Applied together when you continue; adjust anytime under Settings → Display & Effects / Generation COT.',
+  'Contain (完整显示)': 'Contain (show whole)',
+  'Cover (填满裁剪)': 'Cover (fill / crop)',
+  // step 4 — AI image config (source options)
+  'AI 生图配置': 'AI image config',
+  '选择背景图来源，剧情推进时可自动生成/匹配背景图片。': 'Choose the background-image source; images auto-generate/match as the story advances.',
+  '智绘姬': 'Zhihuiji',
+  '推荐': 'Recommended',
+  '配合 st-chatu8 插件使用，自动识别其在消息中生成的图片（支持人物剧情CG），无需在本插件内配置 API，开箱即用。': 'Works with the st-chatu8 plugin: auto-detects the images it stamps into messages (supports character story CG); no API setup needed here — works out of the box.',
+  '不使用 AI 生图，仅使用图包中的本地背景。': 'No AI generation — use only the local backgrounds from the image pack.',
+  '本地部署的 ComfyUI 文生图，需配置 API 地址与工作流。': 'Locally-hosted ComfyUI text-to-image; needs an API address + workflow.',
+  '通过反代 API 生成图片，需配置反代地址与 Key，支持人物剧情CG。': 'Generates images via a reverse-proxy API; needs the proxy address + key; supports character story CG.',
+  'NovelAI 官方 API 生图，需有效订阅与 API Key。': 'Image generation via the official NovelAI API; needs an active subscription + API key.',
+  '按关键词搜索匹配现成壁纸（非 AI 生成），无需配置。': 'Keyword-searches ready-made wallpapers (not AI-generated); no setup needed.',
+  '生成剧情CG': 'Generate story CG',
+  '开启：生成包含人物的剧情CG | 关闭：生成纯场景背景。对 ComfyUI / 大香蕉 / NovelAI / Wallhaven 通用；智绘姬由其插件自行控制。': 'On: generate character story CG | Off: generate scenery-only backgrounds. Applies to ComfyUI / Big Banana / NovelAI / Wallhaven; Zhihuiji is controlled by its own plugin.',
+  'ComfyUI / 大香蕉 / NovelAI 的 API 地址等详细参数，稍后到「设置 → 资源管理 → 生图配置」中填写。': 'Fill in the API address and other details for ComfyUI / Big Banana / NovelAI later under Settings → Asset Management → Image Config.',
+  // step 5 — import assets
+  '导入图包资源': 'Import image-pack assets',
+  '内置图包（推荐）': 'Built-in pack (recommended)',
+  '本地压缩包': 'Local zip',
+  '远程压缩包': 'Remote zip',
+  '远程链接 JSON': 'Remote link JSON',
+  '刷新统计': 'Refresh count',
+  '正在统计资源…': 'Counting assets…',
+  '资源统计失败': 'Asset count failed',
+  '也可以先跳过这一步，稍后到「设置 → 资源管理」中导入或逐张上传。': 'You can skip this step and import later under Settings → Asset Management, or upload images one by one.',
+  'AI 自动套用立绘': 'AI auto-apply sprites',
+  '剧情出现新主要角色/重要配角时，AI 自动从内置图包挑选气质匹配的立绘模板套用。': 'When a new main/supporting character appears, the AI auto-picks a matching sprite template from the built-in pack.',
+  // step 6 — done
+  '配置完成': 'Setup complete',
+  '点击「完成」将刷新视图并应用全部配置。': 'Click Finish to refresh the view and apply all settings.',
+  '后续调整入口：「设置 → 基础设置」调整文本/画面/立绘等细节；「设置 → 资源管理」管理图包资源；「设置 → 通用 → 配置向导」重新打开本向导。': 'Where to adjust later: Settings → Basic Settings for text/display/sprite details; Settings → Asset Management for image packs; Settings → General → Setup Wizard to reopen this wizard.',
+  // wizard toasts
+  '操作失败，请重试': 'Operation failed, please retry',
+  '配置完成，视图已刷新': 'Setup complete, view refreshed',
+  '模式已保存，但世界书更新失败，可稍后在设置面板重试': 'Mode saved, but the worldbook update failed; retry later in the settings panel.',
+  '设置已保存，但世界书更新失败，可稍后在设置面板重试': 'Settings saved, but the worldbook update failed; retry later in the settings panel.',
+  '生图配置已保存，但世界书更新失败，可稍后在设置面板重试': 'Image config saved, but the worldbook update failed; retry later in the settings panel.',
 };
 
 // Pattern rules for interpolated strings — applied only when a text node is NOT an
 // exact DICT hit. Capture groups from the Chinese are reused in the replacement.
 export const PATTERNS = [
+  // galgame 2.0 wizard — asset counts (立绘/背景/地图/CG). The leading <i> icon is a sibling node,
+  // so the text node is just the "…：立绘 N · …" run.
+  [/^资源统计：立绘 (\d+) · 背景 (\d+) · 地图 (\d+) · CG (\d+)$/, (m) => `Assets: sprites ${m[1]} · backgrounds ${m[2]} · maps ${m[3]} · CG ${m[4]}`],
+  [/^当前资源：立绘 (\d+) · 背景 (\d+) · 地图 (\d+) · CG (\d+)$/, (m) => `Current assets: sprites ${m[1]} · backgrounds ${m[2]} · maps ${m[3]} · CG ${m[4]}`],
   [/^自定义 · (.+)$/, (m) => `Custom · ${m[1]}`],
   [/^当前表情:\s*(.*)$/, (m) => `Current Expression: ${m[1]}`],
   [/^(.+)，COT已更新$/, (m) => `${m[1]}, COT updated`],
