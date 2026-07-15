@@ -1,8 +1,8 @@
-// galgame-companion v0.4.2 — built 2026-07-15T11:40:28.920Z
+// galgame-companion v0.4.3 — built 2026-07-15T12:42:23.292Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.4.2";
+  var VERSION = "0.4.3";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || document;
   var topWindow = typeof window !== "undefined" && window.parent || window;
   var DEBUG = true;
@@ -836,10 +836,45 @@
     log.info("style injected");
   }
 
+  // src/fullscreen-guard.js
+  function currentFullscreenEl() {
+    return DOC.fullscreenElement || DOC.webkitFullscreenElement || DOC.mozFullScreenElement || DOC.msFullscreenElement || null;
+  }
+  function exitFullscreen() {
+    const fn = DOC.exitFullscreen || DOC.webkitExitFullscreen || DOC.mozCancelFullScreen || DOC.msExitFullscreen;
+    if (!fn) return;
+    try {
+      const r = fn.call(DOC);
+      if (r && typeof r.catch === "function") {
+        r.catch((e) => log.warn("fullscreen-guard: exitFullscreen rejected:", e));
+      }
+    } catch (e) {
+      log.warn("fullscreen-guard: exitFullscreen threw:", e);
+    }
+  }
+  function startFullscreenGuard() {
+    if (!DOC) {
+      log.warn("fullscreen-guard: no parent document — skipping");
+      return;
+    }
+    DOC.addEventListener("click", (e) => {
+      const btn = e.target && e.target.closest && e.target.closest('[data-action="close-mode"]');
+      if (!btn) return;
+      setTimeout(() => {
+        if (currentFullscreenEl()) {
+          log.info("fullscreen-guard: galgame quit while fullscreen — exiting native fullscreen");
+          exitFullscreen();
+        }
+      }, 0);
+    }, true);
+    log.info("fullscreen-guard active");
+  }
+
   // src/index.js
   log.info(`v${VERSION} loading`);
   injectStyle();
   startI18n();
   startToolbar();
+  startFullscreenGuard();
   log.info(`v${VERSION} ready`);
 })();
