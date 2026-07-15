@@ -1,8 +1,8 @@
-// galgame-companion v0.4 — built 2026-07-15T10:49:00.943Z
+// galgame-companion v0.4.1 — built 2026-07-15T10:58:39.640Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.4";
+  var VERSION = "0.4.1";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || document;
   var topWindow = typeof window !== "undefined" && window.parent || window;
   var DEBUG = true;
@@ -636,7 +636,10 @@
       "getLastMessageId",
       "triggerSlash",
       "SillyTavern",
-      "TavernHelper"
+      "TavernHelper",
+      "updateVariablesWith",
+      "insertOrAssignVariables",
+      "replaceVariables"
     ];
     const bridged = [];
     for (const k of fromSelf) {

@@ -87,9 +87,14 @@ function latestMessageId() {
 }
 
 // The globals the menu resolves against. Functions come from OUR window; Mvu from the top window.
+// Includes the WRITE API — the menu's interactive controls (Present/In-Conflict checkboxes, the
+// ✎ editor) call `updateVariablesWith((vars)=>…, {type:'message',message_id})` to persist edits.
+// Without it the menu reads fine but every toggle is a silent no-op. `resolveCurrentMessageId`
+// (our shim) picks the same data floor for writes as for reads.
 function bridgeGlobals(iw) {
   const fromSelf = ['getVariables', 'getChatMessages', 'waitGlobalInitialized', 'eventOn',
-    'getLastMessageId', 'triggerSlash', 'SillyTavern', 'TavernHelper'];
+    'getLastMessageId', 'triggerSlash', 'SillyTavern', 'TavernHelper',
+    'updateVariablesWith', 'insertOrAssignVariables', 'replaceVariables'];
   const bridged = [];
   for (const k of fromSelf) {
     if (typeof window[k] !== 'undefined') { iw[k] = window[k]; bridged.push(k); }
