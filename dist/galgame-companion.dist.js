@@ -1,8 +1,8 @@
-// galgame-companion v0.5.9 — built 2026-07-15T23:14:11.417Z
+// galgame-companion v0.5.11 — built 2026-07-16T20:47:09.319Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.5.9";
+  var VERSION = "0.5.11";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || document;
   var topWindow = typeof window !== "undefined" && window.parent || window;
   var DEBUG = true;
@@ -60,7 +60,6 @@
     "自由对话": "Free chat",
     "自由输入": "Free input",
     "自动播放": "Auto-play",
-    "简化图书绘本模式": "Simplified picture-book mode",
     "智能判断主界面显示": "Smart main-view detection",
     // --- enhanced mode / worldbook ---
     "加强模式": "Enhanced mode",
@@ -136,15 +135,12 @@
     "字体大小": "Font size",
     "对话框缩放": "Dialogue box scale",
     "对话框透明度": "Dialogue box opacity",
-    "背景图填充": "Background fill",
     "底部渐变遮罩": "Bottom gradient overlay",
     "毛玻璃背景": "Frosted glass background",
     "独立文字背景": "Separate text background",
     "界面皮肤": "UI skin",
     "情境样式": "Scene style",
     "底栏缩放": "Bottom bar scale",
-    "Cover (填满裁剪)": "Cover (Fill / crop)",
-    "Contain (完整显示)": "Contain (Fit)",
     "(cover填满/contain完整)": "(cover = fill / contain = fit)",
     // --- fonts ---
     "现代黑体（默认）": "Modern sans-serif (default)",
@@ -1230,6 +1226,18 @@
    overlaps the status pills; the icon is self-explanatory. Covers both states (全屏/退出) —
    a dict blank can't, because 退出 is also the mobile menu's Exit label. */
 .gal-fullscreen-btn span { display: none !important; }
+
+/* Overlay anti-collapse (galgame upstream structural quirk, proven live 2026-07-16):
+   galgame appends #gal-global-overlay as a flex child of ST's #chat (display:flex;
+   flex-direction:column) and gives it inline flex-shrink:1 + min-height:0. Immersive mode
+   (沉浸模式 / hideNonLastFloors) works by display:none-ing every sibling .mes row, so the
+   overlay is the ONLY flex item and keeps its full height. With immersive OFF the message
+   floors stay as flex items; flex-shrink:1 + min-height:0 then lets the overlay be squeezed
+   to 0px — entering galgame mode activates an INVISIBLE overlay (toast fires, no UI shows).
+   We can't edit galgame (imported untouched from CDN); pin the ACTIVE overlay's size so it
+   survives the flex squeeze and displays inline (below the chat) even with immersive off.
+   Keyed on .active — only present while the overlay is meant to be shown. */
+#gal-global-overlay.active { flex-shrink: 0 !important; min-height: 70vh !important; }
 `;
   function injectStyle() {
     if (!DOC || !DOC.head) return setTimeout(injectStyle, 200);

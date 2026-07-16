@@ -1,4 +1,4 @@
-// galgame-companion · i18n dictionary — exact-match 中文→EN + pattern rules. v0.1
+// galgame-companion · i18n dictionary — exact-match 中文→EN + pattern rules. v0.2
 // ⚠️ Seeded from the prototype harvest against an OLDER galgame UI. Phase G1 refreshes
 // this file: run harvest mode live against v2.1, machine-translate, paste the long tail
 // here (GCP §2, §9-G1). Keyed by the exact RENDERED on-screen text, never source literals.
@@ -25,7 +25,7 @@ export const DICT = {
   '请先开启 Galgame 模式': 'Enable Galgame mode first', '请选择行动': 'Choose an action',
   '剧情选项': 'Story choices', '剧情回顾': 'Story recap', '沉浸模式': 'Immersive mode',
   '自由对话': 'Free chat', '自由输入': 'Free input', '自动播放': 'Auto-play',
-  '简化图书绘本模式': 'Simplified picture-book mode', '智能判断主界面显示': 'Smart main-view detection',
+  '智能判断主界面显示': 'Smart main-view detection',
 
   // --- enhanced mode / worldbook ---
   '加强模式': 'Enhanced mode', '启用加强模式': 'Enable enhanced mode',
@@ -71,10 +71,9 @@ export const DICT = {
   '发光效果': 'Glow effect', '打字机显示': 'Typewriter effect', '打字速度': 'Typing speed',
   '打字音效': 'Typing sound', '对话字体': 'Dialogue font', '字体大小': 'Font size',
   '对话框缩放': 'Dialogue box scale', '对话框透明度': 'Dialogue box opacity',
-  '背景图填充': 'Background fill', '底部渐变遮罩': 'Bottom gradient overlay',
+  '底部渐变遮罩': 'Bottom gradient overlay',
   '毛玻璃背景': 'Frosted glass background', '独立文字背景': 'Separate text background',
   '界面皮肤': 'UI skin', '情境样式': 'Scene style', '底栏缩放': 'Bottom bar scale',
-  'Cover (填满裁剪)': 'Cover (Fill / crop)', 'Contain (完整显示)': 'Contain (Fit)',
   '(cover填满/contain完整)': '(cover = fill / contain = fit)',
 
   // --- fonts ---

@@ -10,9 +10,13 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { teeToLog } from './dev-log.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const PORT = 5500;
+
+// Tee server output (requests, 404s) to logs/serve.log — truncated fresh each run.
+teeToLog('serve');
 
 const MIME = {
   '.js': 'text/javascript; charset=utf-8',
