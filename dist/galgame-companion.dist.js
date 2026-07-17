@@ -1,4 +1,4 @@
-// galgame-companion v0.5.11 — built 2026-07-16T20:47:09.319Z
+// galgame-companion v0.5.11 — built 2026-07-16T23:45:55.457Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
@@ -1283,6 +1283,104 @@
     log.info("fullscreen-guard active");
   }
 
+  // src/beat-shaper-core.js
+  var SCENE_NAME_RE = /^msg(\d+)_scene_(\d+)$/;
+  function sceneName(messageId, n) {
+    return `msg${messageId}_scene_${n}`;
+  }
+  var RE_MAINTEXT_OPEN = /<maintext>/i;
+  var RE_MAINTEXT_CLOSE = /<\/maintext>/i;
+  var RE_BACKGROUND_TAG = /[ \t]*<background\b[^>]*\/?>(?:\s*<\/background>)?[ \t]*\r?\n?/gi;
+  var RE_PIC_TAG = /<pic\b/i;
+  var RE_IMG_WRAP = /<span class="(?:custom-)?auto-img-wrap"[^>]*>[\s\S]*?<\/span>\s*<\/span>/gi;
+  var PROTECTED_BLOCK_RE = new RegExp(
+    [
+      "<p(?:\\s[^>]*)?>[\\s\\S]*?<\\/p>",
+      // existing beats — never nest/double-wrap
+      RE_IMG_WRAP.source,
+      // rendered images
+      "<styled\\b[^>]*>[\\s\\S]*?<\\/styled>",
+      "<弹窗一>[\\s\\S]*?<\\/弹窗一>",
+      "<弹窗二>[\\s\\S]*?<\\/弹窗二>",
+      "<option\\b[^>]*>[\\s\\S]*?<\\/option>",
+      "<bgm>[\\s\\S]*?<\\/bgm>"
+    ].join("|"),
+    "gi"
+  );
+  var RE_TAG_ONLY_PARAGRAPH = /^(?:\s|<[^>]+>)*$/;
+  function shapeMessage(raw, messageId) {
+    const unchanged = (deferred = null) => ({
+      text: raw,
+      changed: false,
+      deferred,
+      stats: { wrapped: 0, scenes: 0, strippedScenes: 0 }
+    });
+    if (typeof raw !== "string" || raw.length === 0) return unchanged();
+    const openMatch = raw.match(RE_MAINTEXT_OPEN);
+    if (!openMatch) return unchanged();
+    const closeMatch = raw.match(RE_MAINTEXT_CLOSE);
+    if (!closeMatch) return unchanged("maintext-unclosed");
+    const innerStart = openMatch.index + openMatch[0].length;
+    const innerEnd = closeMatch.index;
+    if (innerEnd < innerStart) return unchanged();
+    const head = raw.slice(0, innerStart);
+    const tail = raw.slice(innerEnd);
+    let inner = raw.slice(innerStart, innerEnd);
+    if (RE_PIC_TAG.test(inner)) return unchanged("pics-pending");
+    const stats = { wrapped: 0, scenes: 0, strippedScenes: 0 };
+    inner = inner.replace(RE_BACKGROUND_TAG, () => {
+      stats.strippedScenes++;
+      return "";
+    });
+    inner = wrapBareProse(inner, stats);
+    const imgStarts = [];
+    RE_IMG_WRAP.lastIndex = 0;
+    let m;
+    while ((m = RE_IMG_WRAP.exec(inner)) !== null) imgStarts.push(m.index);
+    for (let n = imgStarts.length; n >= 2; n--) {
+      const tag = `<background scene="${sceneName(messageId, n)}" />
+`;
+      inner = inner.slice(0, imgStarts[n - 1]) + tag + inner.slice(imgStarts[n - 1]);
+      stats.scenes++;
+    }
+    if (imgStarts.length >= 1) {
+      inner = `
+<background scene="${sceneName(messageId, 1)}" />
+` + inner.replace(/^\n+/, "");
+      stats.scenes++;
+    }
+    const text = head + inner + tail;
+    return { text, changed: text !== raw, deferred: null, stats };
+  }
+  function wrapBareProse(inner, stats) {
+    const out = [];
+    let cursor = 0;
+    PROTECTED_BLOCK_RE.lastIndex = 0;
+    let m;
+    while ((m = PROTECTED_BLOCK_RE.exec(inner)) !== null) {
+      out.push(wrapFreeRun(inner.slice(cursor, m.index), stats));
+      out.push(m[0]);
+      cursor = m.index + m[0].length;
+    }
+    out.push(wrapFreeRun(inner.slice(cursor), stats));
+    return out.join("");
+  }
+  function wrapFreeRun(run, stats) {
+    if (!run || !run.trim()) return run;
+    const parts = run.split(/(\n[ \t]*\n+)/);
+    for (let i = 0; i < parts.length; i += 2) {
+      const para = parts[i];
+      if (!para.trim()) continue;
+      if (RE_TAG_ONLY_PARAGRAPH.test(para)) continue;
+      const lead = para.match(/^\s*/)[0];
+      const trail = para.match(/\s*$/)[0];
+      const body = para.slice(lead.length, para.length - trail.length);
+      parts[i] = `${lead}<p>${body}</p>${trail}`;
+      stats.wrapped++;
+    }
+    return parts.join("");
+  }
+
   // src/image-seam.js
   var DB_NAME = "GalgameUIPluginDB";
   var STORE = "backgrounds";
@@ -1316,7 +1414,7 @@
   function decodeEntities(s) {
     return String(s).replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&#x27;/gi, "'");
   }
-  async function writeBackground(sceneName, imageUrl) {
+  async function writeBackground(sceneName2, imageUrl) {
     let db;
     try {
       db = await openDb();
@@ -1332,8 +1430,8 @@
       await new Promise((resolve, reject) => {
         const tx = db.transaction([STORE], "readwrite");
         const rec = {
-          id: sceneName,
-          sceneName,
+          id: sceneName2,
+          sceneName: sceneName2,
           imageBlob: null,
           imageUrl,
           packId: currentPackId(),
@@ -1345,7 +1443,7 @@
       });
       return true;
     } catch (e) {
-      log.warn(`image-seam: writeBackground("${sceneName}") failed:`, e);
+      log.warn(`image-seam: writeBackground("${sceneName2}") failed:`, e);
       return false;
     } finally {
       try {
@@ -1366,6 +1464,10 @@
         const url = decodeEntities(m[2].trim());
         if (!currentScene) {
           log.warn(`image-seam: <img> with no preceding <background scene> — skipped (${url.slice(0, 60)})`);
+          continue;
+        }
+        if (!SCENE_NAME_RE.test(currentScene)) {
+          log.info(`image-seam: pre-shape scene "${currentScene}" — skipped (waiting for beat-shaper names)`);
           continue;
         }
         pairs.push({ scene: currentScene, url });
@@ -1511,12 +1613,83 @@
     log.info("image-seam active");
   }
 
+  // src/beat-shaper.js
+  var inFlight = /* @__PURE__ */ new Set();
+  var deferralLogged = /* @__PURE__ */ new Set();
+  function rawMessage2(id) {
+    try {
+      const arr = window.getChatMessages(id);
+      const msg = Array.isArray(arr) ? arr[0] : arr;
+      if (!msg) return null;
+      if (msg.role && msg.role !== "assistant") return null;
+      return typeof msg.message === "string" ? msg.message : typeof msg.mes === "string" ? msg.mes : null;
+    } catch (e) {
+      log.warn(`beat-shaper: getChatMessages(${id}) failed:`, e);
+      return null;
+    }
+  }
+  async function onMessageEvent(messageId) {
+    const id = Number(messageId);
+    if (!Number.isFinite(id) || id < 0) return;
+    if (inFlight.has(id)) return;
+    if (!topWindow.galgame) return;
+    const raw = rawMessage2(id);
+    if (raw === null) return;
+    const { text, changed, deferred, stats } = shapeMessage(raw, id);
+    if (deferred) {
+      const key = `${id}:${deferred}`;
+      if (!deferralLogged.has(key)) {
+        deferralLogged.add(key);
+        log.info(`beat-shaper msg=${id}: deferred (${deferred}) — will retry on next message event`);
+      }
+      return;
+    }
+    deferralLogged.forEach((k) => {
+      if (k.startsWith(`${id}:`)) deferralLogged.delete(k);
+    });
+    if (!changed) return;
+    inFlight.add(id);
+    try {
+      await window.setChatMessages([{ message_id: id, message: text }], { refresh: "affected" });
+      log.info(
+        `beat-shaper msg=${id}: wrapped=${stats.wrapped}p scenes=${stats.scenes}${stats.scenes ? " (hoisted #1)" : ""} strippedScenes=${stats.strippedScenes}`
+      );
+    } catch (e) {
+      log.warn(`beat-shaper: setChatMessages(${id}) failed — message left unshaped:`, e);
+    } finally {
+      inFlight.delete(id);
+    }
+  }
+  function startBeatShaper() {
+    if (typeof window.getChatMessages !== "function" || typeof window.setChatMessages !== "function" || typeof window.eventOn !== "function") {
+      log.warn("beat-shaper: TH globals (getChatMessages/setChatMessages/eventOn) absent — shaper disabled");
+      return;
+    }
+    const te = window.tavern_events || {};
+    let bound = 0;
+    for (const ev of [te.MESSAGE_RECEIVED, te.MESSAGE_UPDATED]) {
+      if (!ev) continue;
+      try {
+        window.eventOn(ev, onMessageEvent);
+        bound++;
+      } catch (e) {
+        log.warn(`beat-shaper: eventOn(${ev}) failed:`, e);
+      }
+    }
+    if (bound === 0) {
+      log.warn("beat-shaper: no tavern message events available — shaper disabled");
+      return;
+    }
+    log.info(`beat-shaper active (${bound} event(s) bound)`);
+  }
+
   // src/index.js
   log.info(`v${VERSION} loading`);
   injectStyle();
   startI18n();
   startToolbar();
   startFullscreenGuard();
+  startBeatShaper();
   startImageSeam();
   log.info(`v${VERSION} ready`);
 })();

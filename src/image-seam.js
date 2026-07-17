@@ -1,5 +1,5 @@
 // galgame-companion · image-seam (G4b) — feed mvu-helper's generated images into galgame's own
-// backdrop library, and flip the ForceImageType latch on immersive enter/exit. GCP §10.3 / VPP §3.
+// backdrop library, and flip the ForceImageType latch on immersive enter/exit. GCP §10.3 / VPP §3. v0.2
 //
 // PIPELINE: the narrator writes `<background scene="X">` beats; mvu-helper draws each `<pic>` and
 // stamps `<span class="auto-img-wrap"><img src="…"></span>` into the message (then emits
@@ -13,6 +13,7 @@
 // localStorage `galgame-ui-plugin_current_pack` (default `pack_default`), db/image-packs.js.
 
 import { DOC, topWindow, log } from './env.js';
+import { SCENE_NAME_RE } from './beat-shaper-core.js';
 
 // ── galgame constants (do NOT drift — re-verify on an upstream bump, GCP §10.4 §5) ──
 const DB_NAME = 'GalgameUIPluginDB';
@@ -84,8 +85,12 @@ async function writeBackground(sceneName, imageUrl) {
 }
 
 // ── scan: bind each <img> to the nearest preceding <background scene> ──────────
-// Scan in document order; carry the latest scene forward; a scene with no preceding tag is skipped
-// (narrator-discipline miss — do NOT invent a scene name). Returns [{scene, url}].
+// Scan in document order; carry the latest scene forward. Since the beat-shaper (dumb-terminal C1)
+// owns ALL scene tags, only OUR msg-scoped names (SCENE_NAME_RE) are ever written to the store —
+// a narrator/galgame-COT-named scene in a not-yet-shaped message is a transient we must NOT bind
+// (the prune's safety rule can never delete a foreign name, so writing one would pollute the store
+// forever). No preceding scene / foreign-only scene → skip quietly; the shaper's re-render fires
+// CHARACTER_MESSAGE_RENDERED and this scan re-runs on the shaped text. Returns [{scene, url}].
 function pairImagesToScenes(rawMes) {
   const re = /<background\s+scene="([^"]+)"|<img\b[^>]*\bsrc="([^"]+)"/gi;
   const pairs = [];
@@ -98,6 +103,10 @@ function pairImagesToScenes(rawMes) {
       const url = decodeEntities(m[2].trim());
       if (!currentScene) {
         log.warn(`image-seam: <img> with no preceding <background scene> — skipped (${url.slice(0, 60)})`);
+        continue;
+      }
+      if (!SCENE_NAME_RE.test(currentScene)) {
+        log.info(`image-seam: pre-shape scene "${currentScene}" — skipped (waiting for beat-shaper names)`);
         continue;
       }
       pairs.push({ scene: currentScene, url });
