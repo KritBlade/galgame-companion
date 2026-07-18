@@ -7,7 +7,7 @@
 import { DOC, log } from './env.js';
 import { DICT, PATTERNS } from './i18n-dict.js';
 
-const HARVEST = true; // true while the dictionary is being filled (G1); false for release (G5)
+const HARVEST = false; // true while the dictionary is being filled (G1); false for release (G5)
 const ATTRS = ['placeholder', 'title', 'aria-label']; // attributes we also translate
 const CJK = /[一-鿿㐀-䶿豈-﫿]/; // "does this string contain Chinese?"
 

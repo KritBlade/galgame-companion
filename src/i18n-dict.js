@@ -83,9 +83,11 @@ export const DICT = {
   // --- skins ---
   '墨染千秋（中国古风）': 'Ink Dynasty (Chinese classical)', '心之怪盗（女神异闻录）': 'Phantom Thieves (Persona)',
   '苍穹之庭（日式奇幻）': 'Azure Court (Japanese fantasy)', '樱色物语（经典Galgame）': 'Sakura Story (Classic Galgame)',
+  '霞暮': 'Rosy Twilight',
 
   // --- sprites / Live2D ---
-  '显示立绘': 'Show sprites', '立绘大小': 'Sprite size', '立绘间距': 'Sprite spacing',
+  '显示立绘': 'Show sprites', '隐藏立绘': 'Hide sprites', '立绘大小': 'Sprite size', '立绘间距': 'Sprite spacing',
+  '立绘将自动裁剪为': 'Sprites auto-crop to',
   '无立绘时显示添加框': 'Show add-box when no sprite', 'Live2D 版权与使用声明': 'Live2D Copyright & Usage Notice',
   '垂直位置': 'Vertical position', '(左右距离)': '(Horizontal distance)', '(底部偏移)': '(Bottom offset)',
   '添加立绘': 'Add sprite',
@@ -108,9 +110,15 @@ export const DICT = {
   '重新生成失败': 'Regenerate failed', '未找到重新生成按钮': 'Regenerate button not found',
   '快速回退中...': 'Rewinding...', '已快进到最后': 'Fast-forwarded to end',
   '已回退到最早AI楼层': 'Rewound to earliest AI message', '已是最早AI楼层': 'Already at earliest AI message',
+  '已到最后AI楼层': 'Already at last AI message',
+  '正在加载模板...': 'Loading template...', '正在生成内容...': 'Generating content...',
   '已添加音色：': 'Voice added:', '标题背景上传成功': 'Title background uploaded',
   '标题背景上传失败': 'Title background upload failed', '暂无历史记录': 'No history yet',
   '点击空白处关闭': 'Click outside to close',
+  // native status-popup icons (📍 弹窗一 / 🕐 弹窗二) toast when the current reply carries no
+  // matching <弹窗N> block. "Popup 1/2" matches the settings labels (弹窗一图标 → 'Popup 1 icon').
+  '未找到 <弹窗一> 标签内容': 'No <Popup 1> tag content found',
+  '未找到 <弹窗二> 标签内容': 'No <Popup 2> tag content found',
 
   // --- mobile menu labels (custom-skin-footer-buttons.js) ---
   '历史': 'Log', '退出': 'Exit', '原界面': 'Original UI', '设置': 'Settings',

@@ -22,10 +22,10 @@ Four capabilities:
 ## Install (Tavern Helper script library)
 
 ```js
-import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.5.20/dist/galgame-companion.dist.js'
+import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.6.0/dist/galgame-companion.dist.js'
 ```
 
-Add AFTER the galgame script entry. `@v0.5.20` pins a release tag — bump it to update.
+Add AFTER the galgame script entry. `@v0.6.0` pins a release tag — bump it to update.
 
 **Versionless (auto-latest)** — resolves to the newest semver tag, so the TH entry never needs editing:
 
@@ -58,6 +58,20 @@ import 'http://127.0.0.1:5500/dist/galgame-companion.dist.js?v=dev1'
 
 Bump `?v=` to cache-bust. `dist/` is committed — jsdelivr serves it straight from the tag,
 same model as galgame's own `dist/数据库界面插件.dist.js`.
+
+## Maintenance (per upstream galgame bump)
+
+The companion rides on `bigmalove/galgame` untouched, so an upstream release can shift selectors or
+the IndexedDB schema. After each `git pull` of the galgame clone, run this loop:
+
+1. **Re-harvest i18n** — set `HARVEST = true` (`src/i18n.js`), load in ST, exercise the chrome, run
+   `__galI18nDump()` in the console, curate genuine galgame-chrome strings into `src/i18n-dict.js`
+   (skip story text / ST presets / TH's own UI / TTS voice names), then flip `HARVEST` back to `false`.
+2. **Spot-check the two anchor selectors** the companion hooks: `.gal-bottom-toolbar` (button injection)
+   and `#gal-global-overlay` (immersive-mode detection). If renamed upstream, update and re-test.
+3. **Verify the image-seam DB contract** — object store `backgrounds` in `GalgameUIPluginDB` and the
+   record shape (`{id, sceneName, imageUrl, packId, …}`). Bump of galgame's `DB_VERSION` = re-verify
+   `image-seam.js` still writes a compatible record.
 
 ## Design docs
 

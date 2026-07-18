@@ -1,11 +1,11 @@
-// galgame-companion v0.5.20 — built 2026-07-18T22:04:55.052Z
+// galgame-companion v0.6.0 — built 2026-07-18T22:56:35.911Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.5.20";
+  var VERSION = "0.6.0";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || document;
   var topWindow = typeof window !== "undefined" && window.parent || window;
-  var DEBUG = true;
+  var DEBUG = false;
   var log = {
     info: (...a) => {
       if (DEBUG) console.log(`[${SCRIPT_NAME}]`, ...a);
@@ -309,10 +309,13 @@
     "心之怪盗（女神异闻录）": "Phantom Thieves (Persona)",
     "苍穹之庭（日式奇幻）": "Azure Court (Japanese fantasy)",
     "樱色物语（经典Galgame）": "Sakura Story (Classic Galgame)",
+    "霞暮": "Rosy Twilight",
     // --- sprites / Live2D ---
     "显示立绘": "Show sprites",
+    "隐藏立绘": "Hide sprites",
     "立绘大小": "Sprite size",
     "立绘间距": "Sprite spacing",
+    "立绘将自动裁剪为": "Sprites auto-crop to",
     "无立绘时显示添加框": "Show add-box when no sprite",
     "Live2D 版权与使用声明": "Live2D Copyright & Usage Notice",
     "垂直位置": "Vertical position",
@@ -347,11 +350,18 @@
     "已快进到最后": "Fast-forwarded to end",
     "已回退到最早AI楼层": "Rewound to earliest AI message",
     "已是最早AI楼层": "Already at earliest AI message",
+    "已到最后AI楼层": "Already at last AI message",
+    "正在加载模板...": "Loading template...",
+    "正在生成内容...": "Generating content...",
     "已添加音色：": "Voice added:",
     "标题背景上传成功": "Title background uploaded",
     "标题背景上传失败": "Title background upload failed",
     "暂无历史记录": "No history yet",
     "点击空白处关闭": "Click outside to close",
+    // native status-popup icons (📍 弹窗一 / 🕐 弹窗二) toast when the current reply carries no
+    // matching <弹窗N> block. "Popup 1/2" matches the settings labels (弹窗一图标 → 'Popup 1 icon').
+    "未找到 <弹窗一> 标签内容": "No <Popup 1> tag content found",
+    "未找到 <弹窗二> 标签内容": "No <Popup 2> tag content found",
     // --- mobile menu labels (custom-skin-footer-buttons.js) ---
     "历史": "Log",
     "退出": "Exit",
@@ -1037,7 +1047,7 @@
   ];
 
   // src/i18n.js
-  var HARVEST = true;
+  var HARVEST = false;
   var ATTRS = ["placeholder", "title", "aria-label"];
   var CJK = /[一-鿿㐀-䶿豈-﫿]/;
   var missing = /* @__PURE__ */ new Set();
