@@ -48,7 +48,8 @@ const GAL_TTS_ENABLED_KEY = 'galgame-ui-plugin_tts_enabled';  // TTS enable live
 const GAL_INIT_LOCK = '__galgame_init_lock__';                // set by galgame init, same sync block as loadSettings()
 const SEED_FLAG_KEY = 'galgame-companion_seed_version';       // localStorage version gate (see SEED_VERSION RULE)
 const RELOAD_MARKER = 'galgame-companion_seed_reload';        // sessionStorage: # of seed-reloads this session
-const SEED_VERSION = 3;                                       // 1→2 re-heal of v0.5.15 clobber; 2→3 adds ctrlKeySkip:false
+// Fractional bumps for small data tweaks (numeric compare: 3.1 > 3 works through the Number() gate).
+const SEED_VERSION = 3.1;                                     // 1→2 v0.5.15 re-heal; 2→3 ctrlKeySkip; 3→3.1 bgImageSource chatu8
 const MAX_RELOADS = 2;                                        // hard cap per session — never a reload loop
 
 // Card-intended values + galgame's own DEFAULT_SETTINGS value (`def`, verified against
@@ -65,6 +66,10 @@ const MANAGED = [
   { key: 'showSprites', value: false, def: true },               // Sprites off
   { key: 'bgmEnabled', value: false, def: true },                // BGM off (also drops <bgm> from galgame's COT)
   { key: 'ctrlKeySkip', value: false, def: true },               // Hold-Ctrl fast-forward off (eats Ctrl while typing)
+  { key: 'bgImageSource', value: 'chatu8', def: 'none' },        // Zhihuiji mode: galgame must NOT self-generate backdrops
+  //   (comfyui/banana/novelai/wallhaven all disabled; galgame only recognizes rendered images in messages —
+  //    ours come from mvu-helper via the image-seam. Kills the "未找到默认背景生成工作流: default_bg" error spam
+  //    that galgame's legacy realTimeBackgroundGen migration caused, live-seen 2026-07-18.)
 ];
 const SEEDED_TTS_ENABLED = false; // TTS voice off (separate key; also drops TTS from galgame's COT)
 

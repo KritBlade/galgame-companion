@@ -1,8 +1,8 @@
-// galgame-companion v0.5.17 — built 2026-07-18T13:08:19.987Z
+// galgame-companion v0.5.18 — built 2026-07-18T13:19:32.203Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.5.17";
+  var VERSION = "0.5.18";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || document;
   var topWindow = typeof window !== "undefined" && window.parent || window;
   var DEBUG = true;
@@ -20,7 +20,7 @@
   var GAL_INIT_LOCK = "__galgame_init_lock__";
   var SEED_FLAG_KEY = "galgame-companion_seed_version";
   var RELOAD_MARKER = "galgame-companion_seed_reload";
-  var SEED_VERSION = 3;
+  var SEED_VERSION = 3.1;
   var MAX_RELOADS = 2;
   var MANAGED = [
     { key: "dialogSegLengthOverride", value: 460, def: 0 },
@@ -41,8 +41,13 @@
     // Sprites off
     { key: "bgmEnabled", value: false, def: true },
     // BGM off (also drops <bgm> from galgame's COT)
-    { key: "ctrlKeySkip", value: false, def: true }
+    { key: "ctrlKeySkip", value: false, def: true },
     // Hold-Ctrl fast-forward off (eats Ctrl while typing)
+    { key: "bgImageSource", value: "chatu8", def: "none" }
+    // Zhihuiji mode: galgame must NOT self-generate backdrops
+    //   (comfyui/banana/novelai/wallhaven all disabled; galgame only recognizes rendered images in messages —
+    //    ours come from mvu-helper via the image-seam. Kills the "未找到默认背景生成工作流: default_bg" error spam
+    //    that galgame's legacy realTimeBackgroundGen migration caused, live-seen 2026-07-18.)
   ];
   var SEEDED_TTS_ENABLED = false;
   function localStore() {

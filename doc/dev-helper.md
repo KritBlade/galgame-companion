@@ -27,7 +27,7 @@ The companion seeds galgame's per-browser display prefs so the card's VN present
 the parent origin):
 
 ```js
-localStorage.getItem('galgame-companion_seed_version')   // version gate — current "3"; ≥ SEED_VERSION ⇒ done
+localStorage.getItem('galgame-companion_seed_version')   // version gate — current "3.1"; ≥ SEED_VERSION ⇒ done
 JSON.parse(localStorage.getItem('galgame-ui-plugin_settings'))   // galgame's blob — managed fields below
 localStorage.getItem('galgame-ui-plugin_tts_enabled')    // "false" (TTS off; separate key)
 sessionStorage.getItem('galgame-companion_seed_reload')  // # seed-reloads this session (transient; absent = steady state)
@@ -44,6 +44,7 @@ Managed fields (seeded once per SEED_VERSION):
 | `bgmEnabled` | `false` | `true` |
 | `typewriterEnabled` / `typewriterSoundEnabled` | `false` | `true` |
 | `ctrlKeySkip` | `false` | `true` |
+| `bgImageSource` | `'chatu8'` (Zhihuiji — galgame never self-generates backdrops) | `'none'` |
 | `hideOtherFloors` | `true` | `true` (already matches) |
 | `cgAsBackground` | `false` | `false` (already matches) |
 
@@ -71,7 +72,8 @@ Steady state (every normal session): flag check → return. Zero work, zero poll
 
 **`SEED_VERSION` bump rule:** bump ONLY when the seeded DATA changes — a default value, a managed
 field added/removed, or a forced re-heal of broken installs (1→2 healed the v0.5.15 clobber; 2→3
-added `ctrlKeySkip:false`). A bump
+added `ctrlKeySkip:false`; 3→3.1 added `bgImageSource:'chatu8'`). Use fractional bumps (3.1, 3.2…)
+for small data tweaks — the gate compares numerically. A bump
 re-applies card values ONCE per install, overwriting user tweaks to managed fields one time. Logic-only
 changes ship as a normal script release with NO bump.
 
