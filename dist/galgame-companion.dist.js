@@ -1,8 +1,8 @@
-// galgame-companion v0.5.12 — built 2026-07-17T00:06:50.666Z
+// galgame-companion v0.5.15 — built 2026-07-17T23:31:01.608Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.5.12";
+  var VERSION = "0.5.15";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || document;
   var topWindow = typeof window !== "undefined" && window.parent || window;
   var DEBUG = true;
@@ -13,6 +13,81 @@
     warn: (...a) => console.warn(`[${SCRIPT_NAME}]`, ...a),
     error: (...a) => console.error(`[${SCRIPT_NAME}]`, ...a)
   };
+
+  // src/galgame-defaults.js
+  var GAL_SETTINGS_KEY = "galgame-ui-plugin_settings";
+  var GAL_TTS_ENABLED_KEY = "galgame-ui-plugin_tts_enabled";
+  var SEED_FLAG_KEY = "galgame-companion_seed_version";
+  var SEED_VERSION = 1;
+  var SEEDED_SETTINGS = {
+    dialogSegLengthOverride: 460,
+    // Words per page — Auto measures with a CJK glyph, under-counting English ~2× → tiny pages
+    hideOtherFloors: true,
+    // Immersive mode (hide other message floors)
+    typewriterEnabled: false,
+    // Typewriter effect: off
+    typewriterSoundEnabled: false,
+    // Typing sound: off
+    bgFillMode: "contain",
+    // Background fill: Contain (show whole)
+    cgAsBackground: false,
+    // CG replaces background directly: off
+    effectsEnabled: false,
+    // Pixi effects: off
+    showSprites: false,
+    // Show sprites: off
+    bgmEnabled: false
+    // Enable BGM: off (also drops the <bgm> spec from galgame's COT)
+  };
+  var SEEDED_TTS_ENABLED = false;
+  function store() {
+    try {
+      return topWindow.localStorage;
+    } catch (e) {
+      log.warn("galgame-defaults: topWindow.localStorage unreachable — seed skipped:", e);
+      return null;
+    }
+  }
+  function seedGalgameDefaults() {
+    const ls = store();
+    if (!ls) return;
+    let seededVer;
+    try {
+      seededVer = Number(ls.getItem(SEED_FLAG_KEY)) || 0;
+    } catch (e) {
+      log.warn("galgame-defaults: reading seed flag failed — seed skipped:", e);
+      return;
+    }
+    if (seededVer >= SEED_VERSION) return;
+    let blob = {};
+    try {
+      const raw = ls.getItem(GAL_SETTINGS_KEY);
+      if (raw) blob = JSON.parse(raw) || {};
+    } catch (e) {
+      log.warn("galgame-defaults: existing settings blob unparsable — writing a fresh managed set:", e);
+      blob = {};
+    }
+    Object.assign(blob, SEEDED_SETTINGS);
+    try {
+      ls.setItem(GAL_SETTINGS_KEY, JSON.stringify(blob));
+    } catch (e) {
+      log.error("galgame-defaults: could not write settings blob — seed aborted:", e);
+      return;
+    }
+    try {
+      ls.setItem(GAL_TTS_ENABLED_KEY, String(SEEDED_TTS_ENABLED));
+    } catch (e) {
+      log.warn("galgame-defaults: could not write TTS-enable key:", e);
+    }
+    try {
+      ls.setItem(SEED_FLAG_KEY, String(SEED_VERSION));
+    } catch (e) {
+      log.warn("galgame-defaults: could not write seed flag (harmless — will re-seed next load):", e);
+    }
+    log.info(
+      `galgame-defaults: seeded galgame display settings (v${SEED_VERSION}) — words/page=${SEEDED_SETTINGS.dialogSegLengthOverride}, immersive=on, typewriter/typing-sound/sprites/TTS/BGM/pixi=off, bgFill=contain. Takes effect on the next galgame load.`
+    );
+  }
 
   // src/i18n-dict.js
   var DICT = {
@@ -1284,9 +1359,23 @@
   }
 
   // src/beat-shaper-core.js
-  var SCENE_NAME_RE = /^msg(\d+)_scene_(\d+)$/;
-  function sceneName(messageId, n) {
-    return `msg${messageId}_scene_${n}`;
+  var SCENE_NAME_RE = /^msg(\d+)_scene_(\d+)(?:_([0-9a-z]+))?$/;
+  function sceneName(messageId, n, hash) {
+    const base = `msg${messageId}_scene_${n}`;
+    return hash ? `${base}_${hash}` : base;
+  }
+  function shortHash(str) {
+    let h = 2166136261;
+    const s = String(str);
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return (h >>> 0).toString(36);
+  }
+  function imgSrcOf(block) {
+    const m = /<img\b[^>]*\bsrc="([^"]*)"/i.exec(block);
+    return m ? m[1] : block;
   }
   var RE_MAINTEXT_OPEN = /<maintext>/i;
   var RE_MAINTEXT_CLOSE = /<\/maintext>/i;
@@ -1333,19 +1422,21 @@
       return "";
     });
     inner = wrapBareProse(inner, stats);
-    const imgStarts = [];
+    const imgs = [];
     RE_IMG_WRAP.lastIndex = 0;
     let m;
-    while ((m = RE_IMG_WRAP.exec(inner)) !== null) imgStarts.push(m.index);
-    for (let n = imgStarts.length; n >= 2; n--) {
-      const tag = `<background scene="${sceneName(messageId, n)}" />
+    while ((m = RE_IMG_WRAP.exec(inner)) !== null) imgs.push({ index: m.index, src: imgSrcOf(m[0]) });
+    for (let n = imgs.length; n >= 2; n--) {
+      const nm = sceneName(messageId, n, shortHash(imgs[n - 1].src));
+      const tag = `<background scene="${nm}" />
 `;
-      inner = inner.slice(0, imgStarts[n - 1]) + tag + inner.slice(imgStarts[n - 1]);
+      inner = inner.slice(0, imgs[n - 1].index) + tag + inner.slice(imgs[n - 1].index);
       stats.scenes++;
     }
-    if (imgStarts.length >= 1) {
+    if (imgs.length >= 1) {
+      const nm = sceneName(messageId, 1, shortHash(imgs[0].src));
       inner = `
-<background scene="${sceneName(messageId, 1)}" />
+<background scene="${nm}" />
 ` + inner.replace(/^\n+/, "");
       stats.scenes++;
     }
@@ -1487,6 +1578,45 @@
       return null;
     }
   }
+  async function pruneMessageSiblings(messageId, keep) {
+    const prefix = `msg${messageId}_scene_`;
+    let db;
+    try {
+      db = await openDb();
+    } catch (e) {
+      log.warn(`image-seam: prune open failed (msg ${messageId}):`, e);
+      return 0;
+    }
+    try {
+      if (!db.objectStoreNames.contains(STORE)) return 0;
+      const keys = await new Promise((resolve, reject) => {
+        const tx = db.transaction([STORE], "readonly");
+        const r = tx.objectStore(STORE).getAllKeys();
+        r.onsuccess = () => resolve(r.result || []);
+        r.onerror = () => reject(r.error);
+      });
+      const stale = keys.filter(
+        (k) => typeof k === "string" && k.startsWith(prefix) && SCENE_NAME_RE.test(k) && !keep.has(k)
+      );
+      if (!stale.length) return 0;
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction([STORE], "readwrite");
+        const store2 = tx.objectStore(STORE);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        for (const k of stale) store2.delete(k);
+      });
+      return stale.length;
+    } catch (e) {
+      log.warn(`image-seam: pruneMessageSiblings(${messageId}) failed:`, e);
+      return 0;
+    } finally {
+      try {
+        db.close();
+      } catch (e) {
+      }
+    }
+  }
   async function processMessage(id) {
     const raw = rawMessage(id);
     if (!raw) return;
@@ -1496,7 +1626,12 @@
     for (const { scene, url } of pairs) {
       if (await writeBackground(scene, url)) ok++;
     }
-    if (ok) log.info(`image-seam: wrote ${ok}/${pairs.length} background(s) from message ${id}`);
+    const removed = await pruneMessageSiblings(id, new Set(pairs.map((p) => p.scene)));
+    if (ok || removed) {
+      log.info(
+        `image-seam: wrote ${ok}/${pairs.length} background(s) from message ${id}` + (removed ? `, pruned ${removed} superseded` : "")
+      );
+    }
   }
   function topMvu() {
     try {
@@ -1683,13 +1818,71 @@
     log.info(`beat-shaper active (${bound} event(s) bound)`);
   }
 
+  // src/generating-guard.js
+  var INDICATOR_ID = "gal-generating-indicator";
+  var POLL_MS = 750;
+  var generating = false;
+  function stBusy() {
+    if (generating) return true;
+    try {
+      if (topWindow.is_send_press) return true;
+      const ctx = topWindow.SillyTavern && topWindow.SillyTavern.getContext && topWindow.SillyTavern.getContext();
+      if (ctx && ctx.streamingProcessor) return true;
+    } catch (e) {
+    }
+    return false;
+  }
+  function clearIfStuck() {
+    const el = DOC.getElementById(INDICATOR_ID);
+    if (!el || !el.classList.contains("active")) return;
+    if (stBusy()) return;
+    el.classList.remove("active");
+    log.info("generating-guard: cleared a stuck Generating indicator (ST idle, no generation)");
+  }
+  function startGeneratingGuard() {
+    const te = window.tavern_events || {};
+    const on = typeof window.eventOn === "function" ? window.eventOn : null;
+    if (on) {
+      if (te.GENERATION_STARTED) {
+        try {
+          on(te.GENERATION_STARTED, (type, option, dry_run) => {
+            if (dry_run) return;
+            if (type === "quiet" && !(option && option.quietToLoud)) return;
+            generating = true;
+          });
+        } catch (e) {
+          log.warn("generating-guard: bind GENERATION_STARTED failed:", e);
+        }
+      }
+      for (const ev of [te.GENERATION_ENDED, te.GENERATION_STOPPED]) {
+        if (ev) {
+          try {
+            on(ev, () => {
+              generating = false;
+              clearIfStuck();
+            });
+          } catch (e) {
+            log.warn("generating-guard: bind end/stop failed:", e);
+          }
+        }
+      }
+    } else {
+      log.warn("generating-guard: TH eventOn absent — relying on ST live flags only");
+    }
+    (topWindow.setInterval || setInterval)(clearIfStuck, POLL_MS);
+    clearIfStuck();
+    log.info("generating-guard active");
+  }
+
   // src/index.js
   log.info(`v${VERSION} loading`);
+  seedGalgameDefaults();
   injectStyle();
   startI18n();
   startToolbar();
   startFullscreenGuard();
   startBeatShaper();
   startImageSeam();
+  startGeneratingGuard();
   log.info(`v${VERSION} ready`);
 })();

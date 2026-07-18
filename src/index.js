@@ -11,14 +11,21 @@
 // ============================================================
 
 import { SCRIPT_NAME, VERSION, log } from './env.js';
+import { seedGalgameDefaults } from './galgame-defaults.js';
 import { startI18n } from './i18n.js';
 import { startToolbar } from './toolbar.js';
 import { injectStyle } from './style.js';
 import { startFullscreenGuard } from './fullscreen-guard.js';
 import { startImageSeam } from './image-seam.js';
 import { startBeatShaper } from './beat-shaper.js';
+import { startGeneratingGuard } from './generating-guard.js';
 
 log.info(`v${VERSION} loading`);
+
+// FIRST: seed galgame's display settings once per install (words/page, immersive, no typewriter/
+// sprites/TTS/BGM/pixi, contain-fit). galgame reads settings only at its own init, so writing this
+// as early as possible gives it the best chance to apply THIS session; otherwise it lands next load.
+seedGalgameDefaults();
 
 injectStyle();
 startI18n();
@@ -29,6 +36,7 @@ startFullscreenGuard(); // release native fullscreen galgame leaks when its "qui
 // when the seam scans it. Seam-side SCENE_NAME_RE filter is the belt-and-braces for other orders.
 startBeatShaper();      // dumb-terminal C1: <p>-wrap prose + inject msg-scoped <background scene> per image (scene #1 hoisted)
 startImageSeam();       // G4b: mvu-helper images → galgame backdrop DB (msg-scoped names only) + ForceImageType flip
+startGeneratingGuard(); // clear galgame's "Generating" indicator when it latches on with no real generation (load-race / 120s-hang)
 // G3: StatusMenu bridge wires into menu-modal.js
 // G4b: image-seam writer (saveBackground keyed by nearest-preceding <background scene>)
 //      + World_Calc.ForceImageType flip on immersive enter/exit

@@ -1,4 +1,4 @@
-// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v0.1
+// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v0.2
 //
 // Deterministically reshapes an AI reply into galgame's beat contract (plan: mvu-helper
 // plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). galgame's standard parser builds display beats ONLY
@@ -12,10 +12,40 @@
 // from scratch each run (strip-then-inject), so re-runs converge with changed=false.
 
 // ── §2.1 scene naming contract (shared with the image-seam prune — keep in ONE place) ─────────
-export const SCENE_NAME_RE = /^msg(\d+)_scene_(\d+)$/;
+// Name = msg{id}_scene_{n}_{hash}. The trailing hash is a digest of the bound image's src, and it is
+// LOAD-BEARING, not decoration: galgame memoizes scene→url by NAME in an in-session Map
+// (backgrounds.js getBackground → sceneBackgrounds.has(name) short-circuits the DB). We write the DB
+// DIRECTLY (bypassing galgame's saveBackground, the only thing that updates that Map), so re-using a
+// name after a swipe/regen leaves galgame serving the STALE url until a full reload. A fresh image →
+// fresh src → fresh hash → a name galgame has never cached → guaranteed Map miss → fresh DB read. The
+// hash is content-derived (not time/random) so a re-shape of the SAME reply yields the SAME name and
+// the transform stays idempotent. The image-seam prunes superseded siblings (same msg+n, old hash).
+// The hash group is OPTIONAL in the regex so legacy hashless names still parse (prune can delete them).
+export const SCENE_NAME_RE = /^msg(\d+)_scene_(\d+)(?:_([0-9a-z]+))?$/;
 
-export function sceneName(messageId, n) {
-  return `msg${messageId}_scene_${n}`;
+export function sceneName(messageId, n, hash) {
+  const base = `msg${messageId}_scene_${n}`;
+  return hash ? `${base}_${hash}` : base;
+}
+
+// FNV-1a 32-bit → base36. Pure, deterministic, ~7 chars in [0-9a-z] (matches SCENE_NAME_RE's group).
+// Same image src → same hash (idempotent); a regenerated image (new src) → different hash.
+export function shortHash(str) {
+  let h = 0x811c9dc5;
+  const s = String(str);
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
+}
+
+// Pull the first <img src="…"> out of a rendered image block (RE_IMG_WRAP match). The src is what
+// changes between generations, so it — not the wrapper chrome — is what we hash. Fall back to the
+// whole block if somehow src-less (never in practice; keeps the hash defined).
+function imgSrcOf(block) {
+  const m = /<img\b[^>]*\bsrc="([^"]*)"/i.exec(block);
+  return m ? m[1] : block;
 }
 
 // ── tag patterns ──────────────────────────────────────────────────────────────
@@ -100,19 +130,22 @@ export function shapeMessage(raw, messageId) {
   // 2) <p>-wrap bare prose between protected blocks, per natural paragraph (blank-line split).
   inner = wrapBareProse(inner, stats);
 
-  // 3) Inject our scenes: enumerate rendered images in document order, insert back-to-front so
-  //    earlier offsets stay valid; then hoist scene #1 to the very top of <maintext>.
-  const imgStarts = [];
+  // 3) Inject our scenes: enumerate rendered images in document order (capturing each image's src so
+  //    the scene name carries its content hash, §2.1), insert back-to-front so earlier offsets stay
+  //    valid; then hoist scene #1 to the very top of <maintext>.
+  const imgs = [];
   RE_IMG_WRAP.lastIndex = 0;
   let m;
-  while ((m = RE_IMG_WRAP.exec(inner)) !== null) imgStarts.push(m.index);
-  for (let n = imgStarts.length; n >= 2; n--) {
-    const tag = `<background scene="${sceneName(messageId, n)}" />\n`;
-    inner = inner.slice(0, imgStarts[n - 1]) + tag + inner.slice(imgStarts[n - 1]);
+  while ((m = RE_IMG_WRAP.exec(inner)) !== null) imgs.push({ index: m.index, src: imgSrcOf(m[0]) });
+  for (let n = imgs.length; n >= 2; n--) {
+    const nm = sceneName(messageId, n, shortHash(imgs[n - 1].src));
+    const tag = `<background scene="${nm}" />\n`;
+    inner = inner.slice(0, imgs[n - 1].index) + tag + inner.slice(imgs[n - 1].index);
     stats.scenes++;
   }
-  if (imgStarts.length >= 1) {
-    inner = `\n<background scene="${sceneName(messageId, 1)}" />\n` + inner.replace(/^\n+/, '');
+  if (imgs.length >= 1) {
+    const nm = sceneName(messageId, 1, shortHash(imgs[0].src));
+    inner = `\n<background scene="${nm}" />\n` + inner.replace(/^\n+/, '');
     stats.scenes++;
   }
 

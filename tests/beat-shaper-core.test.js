@@ -1,22 +1,35 @@
 // beat-shaper-core unit tests — pure transform (plan GALGAME_DUMB_TERMINAL_PLAN.md §5.1). v0.1
 import { describe, it, expect } from 'vitest';
-import { shapeMessage, sceneName, SCENE_NAME_RE } from '../src/beat-shaper-core.js';
+import { shapeMessage, sceneName, shortHash, SCENE_NAME_RE } from '../src/beat-shaper-core.js';
 
 // A rendered image block exactly as mvu-helper's imagegen REPLACE path writes it.
+const imgSrc = (n) => `http://127.0.0.1:8000/img${n}.png`;
 const img = (n) =>
-  `<span class="auto-img-wrap" data-rawtag="&lt;pic char=&quot;Mitsuki&quot;&gt;"><img src="http://127.0.0.1:8000/img${n}.png" title="p${n}" alt="p${n}"><span class="auto-img-regen fa-solid fa-arrows-rotate" title="Regenerate image" role="button" tabindex="0" style="cursor:pointer;"></span></span>`;
+  `<span class="auto-img-wrap" data-rawtag="&lt;pic char=&quot;Mitsuki&quot;&gt;"><img src="${imgSrc(n)}" title="p${n}" alt="p${n}"><span class="auto-img-regen fa-solid fa-arrows-rotate" title="Regenerate image" role="button" tabindex="0" style="cursor:pointer;"></span></span>`;
+// Expected injected name for image #n of message id (name carries the src hash, §2.1).
+const nameFor = (id, n) => sceneName(id, n, shortHash(imgSrc(n)));
 
 describe('scene naming contract (§2.1)', () => {
-  it('sceneName round-trips through SCENE_NAME_RE', () => {
+  it('sceneName round-trips through SCENE_NAME_RE (hashless + hashed)', () => {
     const m = sceneName(42, 3).match(SCENE_NAME_RE);
     expect(m).not.toBeNull();
     expect(m[1]).toBe('42');
     expect(m[2]).toBe('3');
+    expect(m[3]).toBeUndefined();
+    const h = sceneName(42, 3, 'ab12z').match(SCENE_NAME_RE);
+    expect(h[1]).toBe('42');
+    expect(h[2]).toBe('3');
+    expect(h[3]).toBe('ab12z');
   });
   it('rejects foreign names', () => {
     expect('櫻花飛舞的人光學園校門口').not.toMatch(SCENE_NAME_RE);
     expect('msg42_scene_').not.toMatch(SCENE_NAME_RE);
     expect('xmsg42_scene_1').not.toMatch(SCENE_NAME_RE);
+  });
+  it('shortHash is deterministic and content-sensitive', () => {
+    expect(shortHash('a')).toBe(shortHash('a'));
+    expect(shortHash('a')).not.toBe(shortHash('b'));
+    expect(shortHash('x')).toMatch(/^[0-9a-z]+$/);
   });
 });
 
@@ -89,16 +102,16 @@ describe('scene strip + inject', () => {
     const raw = `<maintext>\n<p>beat one</p>\n\n旁白。\n\n${img(1)}\n\n<p>beat after</p>\n</maintext>`;
     const r = shapeMessage(raw, 7);
     const inner = r.text.slice(r.text.indexOf('<maintext>') + '<maintext>'.length);
-    expect(inner.trimStart().startsWith(`<background scene="${sceneName(7, 1)}" />`)).toBe(true);
+    expect(inner.trimStart().startsWith(`<background scene="${nameFor(7, 1)}" />`)).toBe(true);
     expect(r.stats.scenes).toBe(1);
     expect((r.text.match(/<background\b/g) || []).length).toBe(1);
   });
   it('N images → scene_1 top, scene_n directly above image n', () => {
     const raw = `<maintext>\n<p>b1</p>\n${img(1)}\n<p>b2</p>\n${img(2)}\n<p>b3</p>\n</maintext>`;
     const r = shapeMessage(raw, 9);
-    const s1 = r.text.indexOf(sceneName(9, 1));
+    const s1 = r.text.indexOf(nameFor(9, 1));
     const i1 = r.text.indexOf('img1.png');
-    const s2 = r.text.indexOf(sceneName(9, 2));
+    const s2 = r.text.indexOf(nameFor(9, 2));
     const i2 = r.text.indexOf('img2.png');
     expect(s1).toBeGreaterThan(-1);
     expect(s2).toBeGreaterThan(-1);
@@ -122,6 +135,17 @@ describe('idempotency', () => {
   it('re-run re-derives the same scene set (strip-then-inject)', () => {
     const r1 = shapeMessage(sample, 42);
     const names = [...r1.text.matchAll(/<background scene="([^"]+)"/g)].map((m) => m[1]);
-    expect(names).toEqual([sceneName(42, 1), sceneName(42, 2)]);
+    expect(names).toEqual([nameFor(42, 1), nameFor(42, 2)]);
+    // every injected name carries a hash group (load-bearing for galgame's per-name cache, §2.1)
+    for (const n of names) expect(n.match(SCENE_NAME_RE)[3]).toBeTruthy();
+  });
+  it('a regenerated image (new src) yields a new scene name', () => {
+    const withImg = (src) =>
+      `<maintext>\n<p>b</p>\n<span class="auto-img-wrap" data-rawtag="&lt;pic&gt;"><img src="${src}"><span class="auto-img-regen"></span></span>\n</maintext>`;
+    const a = shapeMessage(withImg('http://h/old.png'), 3);
+    const b = shapeMessage(withImg('http://h/new.png'), 3);
+    const nameA = a.text.match(/<background scene="([^"]+)"/)[1];
+    const nameB = b.text.match(/<background scene="([^"]+)"/)[1];
+    expect(nameA).not.toBe(nameB); // → galgame Map miss on the new name → fresh backdrop, no stale
   });
 });

@@ -1,5 +1,5 @@
 // galgame-companion · image-seam (G4b) — feed mvu-helper's generated images into galgame's own
-// backdrop library, and flip the ForceImageType latch on immersive enter/exit. GCP §10.3 / VPP §3. v0.2
+// backdrop library, and flip the ForceImageType latch on immersive enter/exit. GCP §10.3 / VPP §3. v0.3
 //
 // PIPELINE: the narrator writes `<background scene="X">` beats; mvu-helper draws each `<pic>` and
 // stamps `<span class="auto-img-wrap"><img src="…"></span>` into the message (then emits
@@ -129,17 +129,63 @@ function rawMessage(id) {
   }
 }
 
+// Delete this message's SUPERSEDED backdrop entries: same `msg{id}_scene_*` names that are NOT in the
+// current keep-set (older image-src hashes from a prior swipe/regen, or legacy hashless names). The
+// beat-shaper mints a fresh hash per image generation (§2.1), so without this the store would grow one
+// entry per swipe forever. SAFETY: only ever deletes OUR SCENE_NAME_RE names scoped to THIS message id
+// — never a foreign name, never another message. The caller guarantees keep is non-empty (we skip the
+// prune entirely on a transient empty pass, so we can't wipe good backdrops mid-stream).
+async function pruneMessageSiblings(messageId, keep) {
+  const prefix = `msg${messageId}_scene_`;
+  let db;
+  try { db = await openDb(); }
+  catch (e) { log.warn(`image-seam: prune open failed (msg ${messageId}):`, e); return 0; }
+  try {
+    if (!db.objectStoreNames.contains(STORE)) return 0;
+    const keys = await new Promise((resolve, reject) => {
+      const tx = db.transaction([STORE], 'readonly');
+      const r = tx.objectStore(STORE).getAllKeys();
+      r.onsuccess = () => resolve(r.result || []);
+      r.onerror = () => reject(r.error);
+    });
+    const stale = keys.filter(
+      (k) => typeof k === 'string' && k.startsWith(prefix) && SCENE_NAME_RE.test(k) && !keep.has(k),
+    );
+    if (!stale.length) return 0;
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction([STORE], 'readwrite');
+      const store = tx.objectStore(STORE);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      for (const k of stale) store.delete(k);
+    });
+    return stale.length;
+  } catch (e) {
+    log.warn(`image-seam: pruneMessageSiblings(${messageId}) failed:`, e);
+    return 0;
+  } finally {
+    try { db.close(); } catch (e) { /* EXPECTED: closing an already-closing db is harmless */ }
+  }
+}
+
 async function processMessage(id) {
   const raw = rawMessage(id);
   if (!raw) return;
   const pairs = pairImagesToScenes(raw);
-  if (!pairs.length) return;
+  if (!pairs.length) return; // transient (pre-shape / no images) — write nothing AND prune nothing
   let ok = 0;
   for (const { scene, url } of pairs) {
     // eslint-disable-next-line no-await-in-loop -- serialize DB writes; a message has at most a few
     if (await writeBackground(scene, url)) ok++;
   }
-  if (ok) log.info(`image-seam: wrote ${ok}/${pairs.length} background(s) from message ${id}`);
+  // Drop superseded gens of THIS message's beats so swipe/regen doesn't accumulate (keep = current names).
+  const removed = await pruneMessageSiblings(id, new Set(pairs.map((p) => p.scene)));
+  if (ok || removed) {
+    log.info(
+      `image-seam: wrote ${ok}/${pairs.length} background(s) from message ${id}` +
+        (removed ? `, pruned ${removed} superseded` : ''),
+    );
+  }
 }
 
 // ── ForceImageType latch flip (paired with mvu-helper G4a) ────────────────────
