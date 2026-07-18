@@ -1,8 +1,8 @@
-// galgame-companion v0.5.19 — built 2026-07-18T15:01:31.399Z
+// galgame-companion v0.5.20 — built 2026-07-18T22:04:55.052Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.5.19";
+  var VERSION = "0.5.20";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || document;
   var topWindow = typeof window !== "undefined" && window.parent || window;
   var DEBUG = true;
@@ -1247,10 +1247,47 @@
     return frame;
   }
 
+  // src/fullscreen-guard.js
+  function currentFullscreenEl() {
+    return DOC.fullscreenElement || DOC.webkitFullscreenElement || DOC.mozFullScreenElement || DOC.msFullscreenElement || null;
+  }
+  function exitFullscreen() {
+    const fn = DOC.exitFullscreen || DOC.webkitExitFullscreen || DOC.mozCancelFullScreen || DOC.msExitFullscreen;
+    if (!fn) return;
+    try {
+      const r = fn.call(DOC);
+      if (r && typeof r.catch === "function") {
+        r.catch((e) => log.warn("fullscreen-guard: exitFullscreen rejected:", e));
+      }
+    } catch (e) {
+      log.warn("fullscreen-guard: exitFullscreen threw:", e);
+    }
+  }
+  function startFullscreenGuard() {
+    if (!DOC) {
+      log.warn("fullscreen-guard: no parent document — skipping");
+      return;
+    }
+    DOC.addEventListener("click", (e) => {
+      const btn = e.target && e.target.closest && e.target.closest('[data-action="close-mode"]');
+      if (!btn) return;
+      setTimeout(() => {
+        if (currentFullscreenEl()) {
+          log.info("fullscreen-guard: galgame quit while fullscreen — exiting native fullscreen");
+          exitFullscreen();
+        }
+      }, 0);
+    }, true);
+    log.info("fullscreen-guard active");
+  }
+
   // src/menu-modal.js
   var MODAL_ID = "school-companion-modal";
   var STYLE_ID = "school-companion-modal-css";
   var Z_INDEX = 2147483e3;
+  function modalParent() {
+    return currentFullscreenEl() || DOC.body;
+  }
   function ensureStyles() {
     if (DOC.getElementById(STYLE_ID)) return;
     const style = DOC.createElement("style");
@@ -1267,7 +1304,10 @@
 }
 #${MODAL_ID} .sc-box {
   position: relative;
-  width: min(920px, 94vw); height: min(680px, 90vh);
+  /* Fill (almost) the full viewport height — the status menu is a long scroller, so height is precious.
+     Small vertical margin (96dvh) keeps the rounded corners off the screen edge; width stays capped for
+     readable line length. dvh so mobile browser chrome doesn't overflow it. */
+  width: min(920px, 94vw); height: 96dvh;
   background: #1a1a2e; border-radius: 12px;
   box-shadow: 0 8px 40px rgba(0,0,0,0.6);
   overflow: hidden; display: flex; flex-direction: column;
@@ -1295,7 +1335,16 @@
 }`;
     (DOC.head || DOC.documentElement).appendChild(style);
   }
+  var modalCleanup = null;
   function closeMenuModal() {
+    if (modalCleanup) {
+      try {
+        modalCleanup();
+      } catch (e) {
+        log.warn("menu-modal: cleanup failed:", e);
+      }
+      modalCleanup = null;
+    }
     const el = DOC.getElementById(MODAL_ID);
     if (el) el.remove();
   }
@@ -1320,13 +1369,13 @@
       }
     });
     const onKey = (e) => {
-      if (e.key === "Escape") {
-        closeMenuModal();
-        DOC.removeEventListener("keydown", onKey);
-      }
+      if (e.key === "Escape") closeMenuModal();
     };
     DOC.addEventListener("keydown", onKey);
-    DOC.body.appendChild(wrap);
+    modalCleanup = () => {
+      DOC.removeEventListener("keydown", onKey);
+    };
+    modalParent().appendChild(wrap);
     mountStatusMenu(body);
     log.info("menu modal opened");
   }
@@ -1393,6 +1442,43 @@
    mirrors galgame's top-right pills. Keyed on our own class → cannot touch galgame's layout. */
 #gal-global-overlay .school-corner-btn { position: absolute; top: 12px; left: 14px; z-index: 30; }
 
+/* Next-Block control (next-block.js) — the engine's manual time-block advance (World_Calc.BlockDone),
+   surfaced on the overlay under the fullscreen button so it works with the stat-menu hidden. Ticking
+   OUR checkbox drives the real (hidden) stat-menu checkbox. Small dark chip to read over the artwork. */
+#gal-global-overlay .school-nextblock {
+  position: absolute; top: 56px; right: 15px; z-index: 30;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 4px 9px; border-radius: 8px; cursor: pointer;
+  background: rgba(20, 22, 34, 0.72); border: 1px solid rgba(120, 140, 200, 0.42);
+  color: #fff; font-size: 0.72rem; font-weight: 700; line-height: 1; user-select: none;
+}
+#gal-global-overlay .school-nextblock-cb {
+  width: 16px; height: 16px; margin: 0; cursor: pointer; accent-color: #29b6f6;
+}
+
+/* Image-viewer button (image-viewer.js) — stacked under the Next control (fullscreen · Next · 🖼), same dark chip
+   look. Opens a near-full-viewport lightbox of galgame's current backdrop. Kept in our top-right control column,
+   NOT galgame's absolutely-positioned right gutter (that would be fragile to couple to). */
+#gal-global-overlay .school-imgview-btn {
+  position: absolute; top: 104px; right: 15px; z-index: 30;
+  width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
+  padding: 0; border-radius: 8px; cursor: pointer;
+  background: rgba(20, 22, 34, 0.72); border: 1px solid rgba(120, 140, 200, 0.42);
+  color: #fff; font-size: 0.95rem; line-height: 1;
+}
+
+/* Regenerate-image button (image-regen.js) — stacked under the 🖼 image-viewer. Clicks mvu-helper's own
+   .auto-img-regen for the current backdrop. Spins while "triggered". */
+#gal-global-overlay .school-imgregen-btn {
+  position: absolute; top: 142px; right: 15px; z-index: 30;
+  width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
+  padding: 0; border-radius: 8px; cursor: pointer;
+  background: rgba(20, 22, 34, 0.72); border: 1px solid rgba(120, 140, 200, 0.42);
+  color: #fff; font-size: 0.95rem; line-height: 1;
+}
+#gal-global-overlay .school-imgregen-btn.is-spinning i { animation: school-spin 0.9s linear infinite; }
+@keyframes school-spin { to { transform: rotate(360deg); } }
+
 /* Right-gutter buttons un-clip (galgame upstream bug, proven live 2026-07-18): galgame's right-edge
    column — sprite-toggle (👁) + the location/time status-popup triggers — is positioned right:-40px,
    hung into the gutter past the dialog panel, but clipped by .gal-game-container(overflow:hidden). At
@@ -1424,40 +1510,6 @@
     el.textContent = CSS;
     DOC.head.appendChild(el);
     log.info("style injected");
-  }
-
-  // src/fullscreen-guard.js
-  function currentFullscreenEl() {
-    return DOC.fullscreenElement || DOC.webkitFullscreenElement || DOC.mozFullScreenElement || DOC.msFullscreenElement || null;
-  }
-  function exitFullscreen() {
-    const fn = DOC.exitFullscreen || DOC.webkitExitFullscreen || DOC.mozCancelFullScreen || DOC.msExitFullscreen;
-    if (!fn) return;
-    try {
-      const r = fn.call(DOC);
-      if (r && typeof r.catch === "function") {
-        r.catch((e) => log.warn("fullscreen-guard: exitFullscreen rejected:", e));
-      }
-    } catch (e) {
-      log.warn("fullscreen-guard: exitFullscreen threw:", e);
-    }
-  }
-  function startFullscreenGuard() {
-    if (!DOC) {
-      log.warn("fullscreen-guard: no parent document — skipping");
-      return;
-    }
-    DOC.addEventListener("click", (e) => {
-      const btn = e.target && e.target.closest && e.target.closest('[data-action="close-mode"]');
-      if (!btn) return;
-      setTimeout(() => {
-        if (currentFullscreenEl()) {
-          log.info("fullscreen-guard: galgame quit while fullscreen — exiting native fullscreen");
-          exitFullscreen();
-        }
-      }, 0);
-    }, true);
-    log.info("fullscreen-guard active");
   }
 
   // src/beat-shaper-core.js
@@ -2065,6 +2117,28 @@ ${m2}
     if (weather) timeStr += (timeStr ? " · " : "") + weather;
     return { location, time: timeStr };
   }
+  function refreshLocationTimePills() {
+    try {
+      const p = pills();
+      if (!p) return false;
+      const doc = topWindow.document;
+      if (!doc) return false;
+      const locText = doc.querySelector("#gal-location-text");
+      const timeText = doc.querySelector("#gal-time-text");
+      const locBar = doc.querySelector("#gal-location-bar");
+      const timeBar = doc.querySelector("#gal-time-bar");
+      const locStr = p.location || "未知地点";
+      const timeStr = p.time || "--";
+      if (locText) locText.textContent = locStr;
+      if (timeText) timeText.textContent = timeStr;
+      if (locBar) locBar.setAttribute("title", locStr);
+      if (timeBar) timeBar.setAttribute("title", timeStr);
+      return !!(p.location || p.time);
+    } catch (e) {
+      log.warn("location-time-bridge: refreshLocationTimePills failed:", e);
+      return false;
+    }
+  }
   function startLocationTimeBridge() {
     let existing = null;
     try {
@@ -2098,6 +2172,319 @@ ${m2}
     }
   }
 
+  // src/next-block.js
+  var WRAP_CLASS = "school-nextblock";
+  var CB_CLASS = "school-nextblock-cb";
+  var BIND_PATH = "World_Calc.BlockDone";
+  var OVERLAY_SEL2 = "#gal-global-overlay";
+  var snapshot = null;
+  var snapshotMid = -1;
+  var HTML = `<label class="${WRAP_CLASS}" title="Advance one time block — uncheck to undo (until you send a message)"><span class="school-nextblock-label">Next</span><input type="checkbox" class="${CB_CLASS}" aria-label="Advance one time block; uncheck to undo" /></label>`;
+  function findRealCtx() {
+    const doc = topWindow && topWindow.document || DOC;
+    const frames = [...doc.querySelectorAll('iframe[id^="TH-message--"]')].map((f) => {
+      const m = /^TH-message--(\d+)--/.exec(f.id);
+      return { f, n: m ? Number(m[1]) : -1 };
+    }).filter((x) => x.n >= 0).sort((a, b) => b.n - a.n);
+    for (const { f, n } of frames) {
+      try {
+        const cb = f.contentDocument && f.contentDocument.querySelector(`input[type="checkbox"][data-bind-checked="${BIND_PATH}"]`);
+        if (cb) return { cb, win: f.contentWindow, mid: n };
+      } catch (e) {
+      }
+    }
+    return null;
+  }
+  function nudgePills() {
+    [250, 700, 1400].forEach((ms) => setTimeout(() => {
+      try {
+        refreshLocationTimePills();
+      } catch (e) {
+        log.warn("next-block: pill refresh failed:", e);
+      }
+    }, ms));
+  }
+  function doAdvance() {
+    const ctx = findRealCtx();
+    if (!ctx) {
+      log.warn("next-block: real World_Calc.BlockDone checkbox not found — cannot advance the clock");
+      return false;
+    }
+    const { cb, mid } = ctx;
+    try {
+      const Mvu = topWindow.Mvu;
+      const d = Mvu && Mvu.getMvuData ? Mvu.getMvuData({ type: "message", message_id: mid }) : null;
+      snapshot = d && d.stat_data ? JSON.parse(JSON.stringify(d.stat_data)) : null;
+      snapshotMid = snapshot ? mid : -1;
+    } catch (e) {
+      log.warn("next-block: snapshot failed — undo will be unavailable this advance:", e);
+      snapshot = null;
+      snapshotMid = -1;
+    }
+    cb.checked = false;
+    cb.click();
+    log.info("next-block: advancing a time block now (undo " + (snapshot ? "armed" : "UNAVAILABLE") + ")");
+    nudgePills();
+    return true;
+  }
+  function doUndo() {
+    if (!snapshot || snapshotMid < 0) {
+      log.info("next-block: nothing to undo");
+      return false;
+    }
+    const doc = topWindow && topWindow.document || DOC;
+    const f = doc.getElementById(`TH-message--${snapshotMid}--0`);
+    const win = f && f.contentWindow;
+    if (!win || typeof win.saveStatData !== "function") {
+      log.warn("next-block: cannot undo — saveStatData not reachable for msg " + snapshotMid + " (advance stands)");
+      return false;
+    }
+    try {
+      win.saveStatData(snapshot, snapshotMid);
+      log.info("next-block: undid the advance → restored msg " + snapshotMid + " to its pre-advance state");
+    } catch (e) {
+      log.error("next-block: undo save failed:", e);
+      return false;
+    }
+    snapshot = null;
+    snapshotMid = -1;
+    nudgePills();
+    return true;
+  }
+  function commitTurn() {
+    if (!snapshot && snapshotMid < 0) return;
+    snapshot = null;
+    snapshotMid = -1;
+    const cb = DOC.querySelector(`.${CB_CLASS}`);
+    if (cb) cb.checked = false;
+    log.info("next-block: new generation — committed the turn (undo cleared, box reset)");
+  }
+  function injectInto2() {
+    const overlay = DOC.querySelector(OVERLAY_SEL2);
+    if (!overlay || overlay.querySelector(`.${WRAP_CLASS}`)) return false;
+    overlay.insertAdjacentHTML("beforeend", HTML);
+    const chip = overlay.querySelector(`.${WRAP_CLASS}`);
+    if (chip) chip.addEventListener("click", (e) => e.stopPropagation());
+    const cb = chip && chip.querySelector(`.${CB_CLASS}`);
+    if (cb) cb.checked = snapshot != null;
+    return true;
+  }
+  function startNextBlock() {
+    if (!DOC || !DOC.body) return setTimeout(startNextBlock, 200);
+    DOC.addEventListener("change", (e) => {
+      const cb = e.target && e.target.classList && e.target.classList.contains(CB_CLASS) ? e.target : null;
+      if (!cb) return;
+      if (cb.checked) {
+        let ok = false;
+        try {
+          ok = doAdvance();
+        } catch (err) {
+          log.error("next-block: advance failed:", err);
+        }
+        cb.checked = ok;
+      } else {
+        try {
+          doUndo();
+        } catch (err) {
+          log.error("next-block: undo failed:", err);
+        }
+        cb.checked = false;
+      }
+    });
+    const te = window.tavern_events || {};
+    const on = typeof window.eventOn === "function" ? window.eventOn : null;
+    if (on && te.GENERATION_STARTED) {
+      try {
+        on(te.GENERATION_STARTED, (type, option, dry_run) => {
+          if (dry_run) return;
+          if (type === "quiet" && !(option && option.quietToLoud)) return;
+          commitTurn();
+        });
+      } catch (e) {
+        log.warn("next-block: bind GENERATION_STARTED failed:", e);
+      }
+    } else {
+      log.warn("next-block: TH eventOn/GENERATION_STARTED absent — Next box won't auto-commit on a new turn");
+    }
+    let scheduled2 = false;
+    const observer2 = new MutationObserver(() => {
+      if (scheduled2) return;
+      scheduled2 = true;
+      requestAnimationFrame(() => {
+        scheduled2 = false;
+        injectInto2();
+      });
+    });
+    observer2.observe(DOC.body, { childList: true, subtree: true });
+    injectInto2();
+    log.info("next-block active");
+  }
+
+  // src/image-viewer.js
+  var OVERLAY_SEL3 = "#gal-global-overlay";
+  var BTN_CLASS = "school-imgview-btn";
+  var MODAL_ID2 = "school-imgview-modal";
+  var Z_INDEX2 = 2147483e3;
+  function modalParent2() {
+    return currentFullscreenEl() || DOC.body;
+  }
+  function currentBgUrl() {
+    const ov = DOC.querySelector(OVERLAY_SEL3);
+    if (!ov) return null;
+    for (const sel of [".gal-bg-front", ".gal-bg-base"]) {
+      const el = ov.querySelector(sel);
+      if (!el) continue;
+      const bg = getComputedStyle(el).backgroundImage;
+      const m = bg && bg.match(/url\((['"]?)(.*?)\1\)/);
+      if (m && m[2]) return m[2];
+    }
+    return null;
+  }
+  var cleanup = null;
+  function closeImageViewer() {
+    if (cleanup) {
+      try {
+        cleanup();
+      } catch (e) {
+        log.warn("image-viewer: cleanup failed:", e);
+      }
+      cleanup = null;
+    }
+    const el = DOC.getElementById(MODAL_ID2);
+    if (el) el.remove();
+  }
+  function openImageViewer() {
+    if (DOC.getElementById(MODAL_ID2)) return;
+    const url = currentBgUrl();
+    const wrap = DOC.createElement("div");
+    wrap.id = MODAL_ID2;
+    wrap.style.cssText = `position:fixed;inset:0;z-index:${Z_INDEX2};width:100vw;height:100dvh;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.9);cursor:zoom-out;`;
+    if (url) {
+      const img = DOC.createElement("img");
+      img.src = url;
+      img.alt = "Current scene image";
+      img.style.cssText = "max-width:96vw;max-height:96dvh;width:auto;height:auto;object-fit:contain;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,0.7);cursor:default;";
+      img.addEventListener("click", (e) => e.stopPropagation());
+      wrap.appendChild(img);
+    } else {
+      const msg = DOC.createElement("div");
+      msg.textContent = "No image is showing right now.";
+      msg.style.cssText = "color:#ccc;font-size:1rem;";
+      wrap.appendChild(msg);
+    }
+    const close = DOC.createElement("button");
+    close.type = "button";
+    close.setAttribute("aria-label", "Close");
+    close.textContent = "✕";
+    close.style.cssText = "position:absolute;top:14px;right:16px;background:rgba(0,0,0,0.55);border:0;color:#fff;font-size:1.3rem;line-height:1;cursor:pointer;padding:6px 12px;border-radius:8px;";
+    wrap.appendChild(close);
+    wrap.addEventListener("click", (e) => {
+      if (e.target === wrap || e.target === close) closeImageViewer();
+    });
+    const onKey = (e) => {
+      if (e.key === "Escape") closeImageViewer();
+    };
+    DOC.addEventListener("keydown", onKey);
+    cleanup = () => DOC.removeEventListener("keydown", onKey);
+    modalParent2().appendChild(wrap);
+    log.info("image-viewer: opened (" + (url ? "showing current backdrop" : "no image") + ")");
+  }
+  function injectButton() {
+    const overlay = DOC.querySelector(OVERLAY_SEL3);
+    if (!overlay || overlay.querySelector("." + BTN_CLASS)) return false;
+    const btn = DOC.createElement("button");
+    btn.type = "button";
+    btn.className = BTN_CLASS;
+    btn.title = "View the current image";
+    btn.setAttribute("aria-label", "View the current image");
+    btn.innerHTML = '<i class="fa-solid fa-image"></i>';
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openImageViewer();
+    });
+    overlay.appendChild(btn);
+    return true;
+  }
+  function startImageViewer() {
+    if (!DOC || !DOC.body) return setTimeout(startImageViewer, 200);
+    let scheduled2 = false;
+    const observer2 = new MutationObserver(() => {
+      if (scheduled2) return;
+      scheduled2 = true;
+      requestAnimationFrame(() => {
+        scheduled2 = false;
+        injectButton();
+      });
+    });
+    observer2.observe(DOC.body, { childList: true, subtree: true });
+    injectButton();
+    log.info("image-viewer active");
+  }
+
+  // src/image-regen.js
+  var OVERLAY_SEL4 = "#gal-global-overlay";
+  var BTN_CLASS2 = "school-imgregen-btn";
+  function basename(u) {
+    return (u || "").split("/").pop().split("?")[0];
+  }
+  function regenForCurrentBg() {
+    const target = basename(currentBgUrl());
+    if (!target) return null;
+    for (const img of DOC.querySelectorAll('[class*="auto-img-wrap"] img')) {
+      if (basename(img.getAttribute("src") || img.src) === target) {
+        const wrap = img.closest('[class*="auto-img-wrap"]');
+        const regen = wrap && wrap.querySelector('[class*="auto-img-regen"]');
+        if (regen) return regen;
+      }
+    }
+    return null;
+  }
+  function fireRegen(btn) {
+    const span = regenForCurrentBg();
+    if (!span) {
+      log.warn("image-regen: no regen control matches the current backdrop — nothing to regenerate");
+      return false;
+    }
+    span.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    log.info("image-regen: triggered regenerate for the current backdrop");
+    if (btn) {
+      btn.classList.add("is-spinning");
+      setTimeout(() => btn.classList.remove("is-spinning"), 2e3);
+    }
+    return true;
+  }
+  function injectButton2() {
+    const overlay = DOC.querySelector(OVERLAY_SEL4);
+    if (!overlay || overlay.querySelector("." + BTN_CLASS2)) return false;
+    const btn = DOC.createElement("button");
+    btn.type = "button";
+    btn.className = BTN_CLASS2;
+    btn.title = "Regenerate the current image";
+    btn.setAttribute("aria-label", "Regenerate the current image");
+    btn.innerHTML = '<i class="fa-solid fa-arrows-rotate"></i>';
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      fireRegen(btn);
+    });
+    overlay.appendChild(btn);
+    return true;
+  }
+  function startImageRegen() {
+    if (!DOC || !DOC.body) return setTimeout(startImageRegen, 200);
+    let scheduled2 = false;
+    const observer2 = new MutationObserver(() => {
+      if (scheduled2) return;
+      scheduled2 = true;
+      requestAnimationFrame(() => {
+        scheduled2 = false;
+        injectButton2();
+      });
+    });
+    observer2.observe(DOC.body, { childList: true, subtree: true });
+    injectButton2();
+    log.info("image-regen active");
+  }
+
   // src/index.js
   log.info(`v${VERSION} loading`);
   startGalgameDefaults();
@@ -2109,5 +2496,8 @@ ${m2}
   startImageSeam();
   startGeneratingGuard();
   startLocationTimeBridge();
+  startNextBlock();
+  startImageViewer();
+  startImageRegen();
   log.info(`v${VERSION} ready`);
 })();

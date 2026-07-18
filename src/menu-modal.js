@@ -1,4 +1,4 @@
-// galgame-companion · menu modal — our own popup shell over galgame's stage. v0.1 (G3)
+// galgame-companion · menu modal — our own popup shell over galgame's stage. v0.3 (G3)
 // G2 ships the SHELL (mount/close/z-index above galgame's fullscreen overlay). G3 fills it:
 // an iframe of the card's StatusMenu HTML + the TH-globals bridge (status-menu.js).
 // We deliberately do NOT depend on galgame's internal showCustomPopupPanel (not a public API).
@@ -10,11 +10,18 @@
 
 import { DOC, log } from './env.js';
 import { mountStatusMenu } from './status-menu.js';
+import { currentFullscreenEl } from './fullscreen-guard.js';
 
 const MODAL_ID = 'school-companion-modal';
 const STYLE_ID = 'school-companion-modal-css';
 // galgame's fullscreen overlay uses a very high z-index; sit above it.
 const Z_INDEX = 2147483000;
+
+// Where to mount the modal: INTO the native-fullscreen element if there is one, else document.body. Native
+// fullscreen (galgame does overlay.requestFullscreen() on #gal-global-overlay) renders ONLY the fullscreen
+// subtree in the browser's top layer — a body-level modal would sit behind it no matter the z-index, so the
+// Menu button appeared to "do nothing" in fullscreen. Mounting inside the fullscreen el puts us in that layer.
+function modalParent() { return currentFullscreenEl() || DOC.body; }
 
 // Inject the modal stylesheet once. Desktop: centered box. Mobile: fullscreen cover.
 function ensureStyles() {
@@ -33,7 +40,10 @@ function ensureStyles() {
 }
 #${MODAL_ID} .sc-box {
   position: relative;
-  width: min(920px, 94vw); height: min(680px, 90vh);
+  /* Fill (almost) the full viewport height — the status menu is a long scroller, so height is precious.
+     Small vertical margin (96dvh) keeps the rounded corners off the screen edge; width stays capped for
+     readable line length. dvh so mobile browser chrome doesn't overflow it. */
+  width: min(920px, 94vw); height: 96dvh;
   background: #1a1a2e; border-radius: 12px;
   box-shadow: 0 8px 40px rgba(0,0,0,0.6);
   overflow: hidden; display: flex; flex-direction: column;
@@ -62,7 +72,11 @@ function ensureStyles() {
   (DOC.head || DOC.documentElement).appendChild(style);
 }
 
+// Cleanup for listeners bound while the modal is open (keydown + fullscreenchange). Set in openMenuModal.
+let modalCleanup = null;
+
 export function closeMenuModal() {
+  if (modalCleanup) { try { modalCleanup(); } catch (e) { log.warn('menu-modal: cleanup failed:', e); } modalCleanup = null; }
   const el = DOC.getElementById(MODAL_ID);
   if (el) el.remove();
 }
@@ -97,14 +111,17 @@ export function openMenuModal() {
     }
   });
   const onKey = (e) => {
-    if (e.key === 'Escape') {
-      closeMenuModal();
-      DOC.removeEventListener('keydown', onKey);
-    }
+    if (e.key === 'Escape') closeMenuModal();
   };
   DOC.addEventListener('keydown', onKey);
+  modalCleanup = () => { DOC.removeEventListener('keydown', onKey); };
 
-  DOC.body.appendChild(wrap);
+  // Mount into the fullscreen element if we're in fullscreen, else body — decided ONCE, at open time.
+  // We deliberately do NOT re-parent on a later fullscreenchange: moving an iframe in the DOM RELOADS it,
+  // which discards the menu's document.write content and blanks it. Nor is a re-parent needed — the fullscreen
+  // TOGGLE button sits behind our backdrop (unreachable while open), and if fullscreen is exited another way
+  // (ESC) the galgame overlay we're mounted in stays a visible in-page element, so the modal stays on screen.
+  modalParent().appendChild(wrap);
   // fill the body with the card's StatusMenu (bridged iframe). The iframe — and its 2s
   // poll interval, which lives INSIDE it — is destroyed when closeMenuModal() removes `wrap`.
   mountStatusMenu(body);

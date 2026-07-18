@@ -14,7 +14,10 @@
 
 import { DOC, log } from './env.js';
 
-function currentFullscreenEl() {
+// The document's current native-fullscreen element (cross-vendor), or null. Exported so other modules
+// (menu-modal) can mount INTO it — native fullscreen paints only the fullscreen subtree in the browser's
+// top layer, so anything appended to body while fullscreen renders behind it regardless of z-index.
+export function currentFullscreenEl() {
   return DOC.fullscreenElement || DOC.webkitFullscreenElement || DOC.mozFullScreenElement
     || DOC.msFullscreenElement || null;
 }

@@ -20,6 +20,9 @@ import { startImageSeam } from './image-seam.js';
 import { startBeatShaper } from './beat-shaper.js';
 import { startGeneratingGuard } from './generating-guard.js';
 import { startLocationTimeBridge } from './location-time-bridge.js';
+import { startNextBlock } from './next-block.js';
+import { startImageViewer } from './image-viewer.js';
+import { startImageRegen } from './image-regen.js';
 
 log.info(`v${VERSION} loading`);
 
@@ -40,6 +43,9 @@ startBeatShaper();      // dumb-terminal C1: <p>-wrap prose + inject msg-scoped 
 startImageSeam();       // G4b: mvu-helper images → galgame backdrop DB (msg-scoped names only) + ForceImageType flip
 startGeneratingGuard(); // clear galgame's "Generating" indicator when it latches on with no real generation (load-race / 120s-hang)
 startLocationTimeBridge(); // feed galgame's location/time pills from stat_data.World (AutoCardUpdaterAPI shim; MVU cards have none)
+startNextBlock();          // surface the engine's manual Next-Block advance (World_Calc.BlockDone) top-right, driving the real stat-menu checkbox
+startImageViewer();        // top-right button → near-full-viewport lightbox of galgame's current backdrop image
+startImageRegen();         // top-right button (under 🖼) → click mvu-helper's regen control for the current backdrop
 // G3: StatusMenu bridge wires into menu-modal.js
 // G4b: image-seam writer (saveBackground keyed by nearest-preceding <background scene>)
 //      + World_Calc.ForceImageType flip on immersive enter/exit

@@ -1,4 +1,4 @@
-// galgame-companion · location-time-bridge — feed galgame's top-right location/time pills from MVU. v0.1
+// galgame-companion · location-time-bridge — feed galgame's top-right location/time pills from MVU. v0.2
 //
 // WHY: galgame's status pills (地点 / 时间) take their TEXT from
 // AutoCardUpdaterAPI.exportTableAsJson() — updateLocationTimeDisplay() reads the "全局数据表" sheet's
@@ -57,6 +57,32 @@ function pills() {
   let timeStr = parts.join(' ');
   if (weather) timeStr += (timeStr ? ' · ' : '') + weather;
   return { location, time: timeStr };
+}
+
+// Push the pills NOW from the freshest World — for state changes galgame doesn't repaint on (a manual Next-Block
+// advance). Writes the SAME text galgame's own updateLocationTimeDisplay would (it reads our exportTableAsJson),
+// so galgame's next render agrees and never fights this. Returns true if it wrote a non-empty value.
+export function refreshLocationTimePills() {
+  try {
+    const p = pills();
+    if (!p) return false;
+    const doc = topWindow.document;
+    if (!doc) return false;
+    const locText = doc.querySelector('#gal-location-text');
+    const timeText = doc.querySelector('#gal-time-text');
+    const locBar = doc.querySelector('#gal-location-bar');
+    const timeBar = doc.querySelector('#gal-time-bar');
+    const locStr = p.location || '未知地点';
+    const timeStr = p.time || '--';
+    if (locText) locText.textContent = locStr;
+    if (timeText) timeText.textContent = timeStr;
+    if (locBar) locBar.setAttribute('title', locStr);
+    if (timeBar) timeBar.setAttribute('title', timeStr);
+    return !!(p.location || p.time);
+  } catch (e) {
+    log.warn('location-time-bridge: refreshLocationTimePills failed:', e);
+    return false;
+  }
 }
 
 export function startLocationTimeBridge() {

@@ -1,4 +1,4 @@
-// galgame-companion · style — small CSS overrides injected into the parent document. v0.2
+// galgame-companion · style — small CSS overrides injected into the parent document. v0.3
 // Only cosmetic nudges that a dictionary swap can't express. Keep tiny; anything galgame
 // renames simply stops matching (graceful).
 
@@ -20,6 +20,43 @@ const CSS = `
    and we pin it to the top-left corner: out of every crowded row, no clipping at any dialogue scale,
    mirrors galgame's top-right pills. Keyed on our own class → cannot touch galgame's layout. */
 #gal-global-overlay .school-corner-btn { position: absolute; top: 12px; left: 14px; z-index: 30; }
+
+/* Next-Block control (next-block.js) — the engine's manual time-block advance (World_Calc.BlockDone),
+   surfaced on the overlay under the fullscreen button so it works with the stat-menu hidden. Ticking
+   OUR checkbox drives the real (hidden) stat-menu checkbox. Small dark chip to read over the artwork. */
+#gal-global-overlay .school-nextblock {
+  position: absolute; top: 56px; right: 15px; z-index: 30;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 4px 9px; border-radius: 8px; cursor: pointer;
+  background: rgba(20, 22, 34, 0.72); border: 1px solid rgba(120, 140, 200, 0.42);
+  color: #fff; font-size: 0.72rem; font-weight: 700; line-height: 1; user-select: none;
+}
+#gal-global-overlay .school-nextblock-cb {
+  width: 16px; height: 16px; margin: 0; cursor: pointer; accent-color: #29b6f6;
+}
+
+/* Image-viewer button (image-viewer.js) — stacked under the Next control (fullscreen · Next · 🖼), same dark chip
+   look. Opens a near-full-viewport lightbox of galgame's current backdrop. Kept in our top-right control column,
+   NOT galgame's absolutely-positioned right gutter (that would be fragile to couple to). */
+#gal-global-overlay .school-imgview-btn {
+  position: absolute; top: 104px; right: 15px; z-index: 30;
+  width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
+  padding: 0; border-radius: 8px; cursor: pointer;
+  background: rgba(20, 22, 34, 0.72); border: 1px solid rgba(120, 140, 200, 0.42);
+  color: #fff; font-size: 0.95rem; line-height: 1;
+}
+
+/* Regenerate-image button (image-regen.js) — stacked under the 🖼 image-viewer. Clicks mvu-helper's own
+   .auto-img-regen for the current backdrop. Spins while "triggered". */
+#gal-global-overlay .school-imgregen-btn {
+  position: absolute; top: 142px; right: 15px; z-index: 30;
+  width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
+  padding: 0; border-radius: 8px; cursor: pointer;
+  background: rgba(20, 22, 34, 0.72); border: 1px solid rgba(120, 140, 200, 0.42);
+  color: #fff; font-size: 0.95rem; line-height: 1;
+}
+#gal-global-overlay .school-imgregen-btn.is-spinning i { animation: school-spin 0.9s linear infinite; }
+@keyframes school-spin { to { transform: rotate(360deg); } }
 
 /* Right-gutter buttons un-clip (galgame upstream bug, proven live 2026-07-18): galgame's right-edge
    column — sprite-toggle (👁) + the location/time status-popup triggers — is positioned right:-40px,
