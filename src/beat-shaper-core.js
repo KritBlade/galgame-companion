@@ -1,15 +1,21 @@
-// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v0.2
+// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v0.3
 //
 // Deterministically reshapes an AI reply into galgame's beat contract (plan: mvu-helper
 // plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). galgame's standard parser builds display beats ONLY
 // from closed <p>…</p> tags, and resolves each beat's backdrop to the nearest PRECEDING
-// <background scene="X"/> tag — so we (1) wrap bare prose in <p>, (2) strip every scene tag the
-// narrator/galgame-COT emitted, and (3) inject our own message-scoped scene per rendered image:
-// scene #1 hoisted to the very top of <maintext> (image #1 backdrops the reply from beat 1),
-// scene #n directly above image #n (backdrop switches when the reader advances past that beat).
+// <background scene="X"/> tag — so we (0) rename the engine's <gametxt> envelope to <maintext>
+// when no <maintext> exists (presets without galgame's COT keep the engine-native tag, which
+// galgame's parser ignores), (1) wrap bare prose in <p>, (2) strip every scene tag the
+// narrator/galgame-COT emitted PLUS engine display-noise (<bgimg> prompt stripped;
+// <classmate_trait_check> hidden in an HTML comment so POST's inputRegex still reads it while
+// ST's renderer — which p-wraps bare lines before galgame parses the HTML — can't display it),
+// and (3) inject our own message-scoped scene per rendered image: scene #1 hoisted to the very
+// top of <maintext> (image #1 backdrops the reply from beat 1), scene #n directly above image #n
+// (backdrop switches when the reader advances past that beat).
 //
 // The transform must be IDEMPOTENT: shape(shape(x)) === shape(x). It re-derives all scene tags
-// from scratch each run (strip-then-inject), so re-runs converge with changed=false.
+// from scratch each run (strip-then-inject) and unwraps-then-rehides its own gc:hidden comments,
+// so re-runs converge with changed=false.
 
 // ── §2.1 scene naming contract (shared with the image-seam prune — keep in ONE place) ─────────
 // Name = msg{id}_scene_{n}_{hash}. The trailing hash is a digest of the bound image's src, and it is
@@ -51,6 +57,22 @@ function imgSrcOf(block) {
 // ── tag patterns ──────────────────────────────────────────────────────────────
 const RE_MAINTEXT_OPEN = /<maintext>/i;
 const RE_MAINTEXT_CLOSE = /<\/maintext>/i;
+// Engine-native display envelope (School v3 output.txt). galgame parses ONLY <maintext>; presets
+// carrying galgame's COT teach the model <maintext>, but any other preset keeps <gametxt> and the
+// GUI renders nothing scene-wise. Renamed to <maintext> ONLY when no <maintext> exists.
+const RE_GAMETXT_OPEN = /<gametxt>/i;
+const RE_GAMETXT_CLOSE = /<\/gametxt>/i;
+// Engine/galgame-COT realtime-bg-gen prompt (<bgimg>TAGS</bgimg>, parser.js pairs it with the
+// PRECEDING <background> tag). Unused in our pipeline (backdrops come from the image-seam DB) and
+// ST's markdown renderer p-wraps the bare line → the raw prompt shows as a beat (proven live
+// 2026-07-18). Stripped like foreign scene tags.
+const RE_BGIMG_TAG = /[ \t]*<bgimg>[\s\S]*?<\/bgimg>[ \t]*\r?\n?/gi;
+// Engine-internal narrator self-check block — display noise, but mvu-helper's POST call reads the
+// message through its inputRegex capture, so it must SURVIVE in the raw text. HTML-comment-hiding
+// keeps the data while the renderer/DOM drops it from what galgame parses. Idempotent via
+// unwrap-then-rehide (RE_GC_HIDDEN below).
+const RE_TRAIT_CHECK = /<classmate_trait_check>[\s\S]*?<\/classmate_trait_check>/gi;
+const RE_GC_HIDDEN = /<!--gc:hidden\n([\s\S]*?)\n-->/g;
 // Any <background …> tag, self-closing or not (we strip ALL and re-inject our own).
 const RE_BACKGROUND_TAG = /[ \t]*<background\b[^>]*\/?>(?:\s*<\/background>)?[ \t]*\r?\n?/gi;
 // Un-rendered image tag — its presence means mvu-helper's generation is still in flight (or
@@ -73,6 +95,7 @@ const PROTECTED_BLOCK_RE = new RegExp(
     '<弹窗二>[\\s\\S]*?<\\/弹窗二>',
     '<option\\b[^>]*>[\\s\\S]*?<\\/option>',
     '<bgm>[\\s\\S]*?<\\/bgm>',
+    '<!--gc:hidden\\n[\\s\\S]*?\\n-->', // our own comment-hidden engine blocks — never wrap the hider
   ].join('|'),
   'gi',
 );
@@ -88,43 +111,65 @@ const RE_TAG_ONLY_PARAGRAPH = /^(?:\s|<[^>]+>)*$/;
  * @param {string} raw        full raw message text
  * @param {number|string} messageId  floor id — becomes part of the scene names
  * @returns {{ text: string, changed: boolean, deferred: string|null,
- *            stats: { wrapped: number, scenes: number, strippedScenes: number } }}
+ *            stats: { wrapped: number, scenes: number, strippedScenes: number,
+ *                     renamed: boolean, strippedBgimg: number, hidden: number } }}
  *   deferred ≠ null → text is returned UNCHANGED and the caller should retry on a later event
- *   ('maintext-unclosed' while streaming, 'pics-pending' while image generation is in flight).
+ *   ('maintext-unclosed'/'gametxt-unclosed' while streaming, 'pics-pending' while image
+ *   generation is in flight).
  */
 export function shapeMessage(raw, messageId) {
+  const stats = { wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false, strippedBgimg: 0, hidden: 0 };
   const unchanged = (deferred = null) => ({
-    text: raw,
+    text: raw, // ALWAYS the caller's original — a rename ahead of a defer is discarded with it
     changed: false,
     deferred,
-    stats: { wrapped: 0, scenes: 0, strippedScenes: 0 },
+    stats: { wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false, strippedBgimg: 0, hidden: 0 },
   });
 
   if (typeof raw !== 'string' || raw.length === 0) return unchanged();
 
-  const openMatch = raw.match(RE_MAINTEXT_OPEN);
-  if (!openMatch) return unchanged(); // not a galgame-format reply — leave alone
-  const closeMatch = raw.match(RE_MAINTEXT_CLOSE);
+  // 0) Engine→galgame envelope bridge: no <maintext> but a closed <gametxt> pair → rename BOTH tags,
+  //    then shape normally. A reply that already has <maintext> keeps its <gametxt> (if any) as-is.
+  let text0 = raw;
+  if (!RE_MAINTEXT_OPEN.test(raw)) {
+    if (!RE_GAMETXT_OPEN.test(raw)) return unchanged(); // not a galgame-format reply — leave alone
+    if (!RE_GAMETXT_CLOSE.test(raw)) return unchanged('gametxt-unclosed'); // still streaming — retry later
+    text0 = raw.replace(RE_GAMETXT_OPEN, '<maintext>').replace(RE_GAMETXT_CLOSE, '</maintext>');
+    stats.renamed = true;
+  }
+
+  const openMatch = text0.match(RE_MAINTEXT_OPEN);
+  const closeMatch = text0.match(RE_MAINTEXT_CLOSE);
   if (!closeMatch) return unchanged('maintext-unclosed'); // still streaming — retry later
 
   const innerStart = openMatch.index + openMatch[0].length;
   const innerEnd = closeMatch.index;
   if (innerEnd < innerStart) return unchanged(); // malformed (close before open) — leave alone
-  const head = raw.slice(0, innerStart);
-  const tail = raw.slice(innerEnd);
-  let inner = raw.slice(innerStart, innerEnd);
+  const head = text0.slice(0, innerStart);
+  const tail = text0.slice(innerEnd);
+  let inner = text0.slice(innerStart, innerEnd);
 
   // mvu-helper still owes this message rendered images — shaping now would invalidate the
   // string indices its REPLACE pass captured at detection time. Retry on its MESSAGE_UPDATED.
   if (RE_PIC_TAG.test(inner)) return unchanged('pics-pending');
 
-  const stats = { wrapped: 0, scenes: 0, strippedScenes: 0 };
-
   // 1) Strip EVERY scene tag (foreign AND ours) — ours are re-derived below, which is what makes
-  //    the whole transform idempotent instead of accumulating tags run over run.
+  //    the whole transform idempotent instead of accumulating tags run over run. Same pass drops
+  //    <bgimg> (raw prompt would display — ST's renderer p-wraps bare lines) and comment-hides
+  //    <classmate_trait_check> (unwrap-then-rehide keeps it idempotent; POST still reads raw text).
   inner = inner.replace(RE_BACKGROUND_TAG, () => {
     stats.strippedScenes++;
     return '';
+  });
+  inner = inner.replace(RE_BGIMG_TAG, () => {
+    stats.strippedBgimg++;
+    return '';
+  });
+  inner = inner.replace(RE_GC_HIDDEN, (_, body) => body); // unwrap ours from a prior run
+  inner = inner.replace(RE_TRAIT_CHECK, (m) => {
+    if (m.includes('--')) return m; // '--' would corrupt an HTML comment — leave visible over corrupting
+    stats.hidden++;
+    return `<!--gc:hidden\n${m}\n-->`;
   });
 
   // 2) <p>-wrap bare prose between protected blocks, per natural paragraph (blank-line split).

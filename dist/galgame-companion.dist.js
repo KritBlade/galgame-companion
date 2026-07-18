@@ -1,8 +1,8 @@
-// galgame-companion v0.5.16 — built 2026-07-18T12:38:43.014Z
+// galgame-companion v0.5.17 — built 2026-07-18T13:08:19.987Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.5.16";
+  var VERSION = "0.5.17";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || document;
   var topWindow = typeof window !== "undefined" && window.parent || window;
   var DEBUG = true;
@@ -20,7 +20,7 @@
   var GAL_INIT_LOCK = "__galgame_init_lock__";
   var SEED_FLAG_KEY = "galgame-companion_seed_version";
   var RELOAD_MARKER = "galgame-companion_seed_reload";
-  var SEED_VERSION = 2;
+  var SEED_VERSION = 3;
   var MAX_RELOADS = 2;
   var MANAGED = [
     { key: "dialogSegLengthOverride", value: 460, def: 0 },
@@ -39,8 +39,10 @@
     // Pixi effects off
     { key: "showSprites", value: false, def: true },
     // Sprites off
-    { key: "bgmEnabled", value: false, def: true }
+    { key: "bgmEnabled", value: false, def: true },
     // BGM off (also drops <bgm> from galgame's COT)
+    { key: "ctrlKeySkip", value: false, def: true }
+    // Hold-Ctrl fast-forward off (eats Ctrl while typing)
   ];
   var SEEDED_TTS_ENABLED = false;
   function localStore() {
@@ -1453,6 +1455,11 @@
   }
   var RE_MAINTEXT_OPEN = /<maintext>/i;
   var RE_MAINTEXT_CLOSE = /<\/maintext>/i;
+  var RE_GAMETXT_OPEN = /<gametxt>/i;
+  var RE_GAMETXT_CLOSE = /<\/gametxt>/i;
+  var RE_BGIMG_TAG = /[ \t]*<bgimg>[\s\S]*?<\/bgimg>[ \t]*\r?\n?/gi;
+  var RE_TRAIT_CHECK = /<classmate_trait_check>[\s\S]*?<\/classmate_trait_check>/gi;
+  var RE_GC_HIDDEN = /<!--gc:hidden\n([\s\S]*?)\n-->/g;
   var RE_BACKGROUND_TAG = /[ \t]*<background\b[^>]*\/?>(?:\s*<\/background>)?[ \t]*\r?\n?/gi;
   var RE_PIC_TAG = /<pic\b/i;
   var RE_IMG_WRAP = /<span class="(?:custom-)?auto-img-wrap"[^>]*>[\s\S]*?<\/span>\s*<\/span>/gi;
@@ -1466,34 +1473,55 @@
       "<弹窗一>[\\s\\S]*?<\\/弹窗一>",
       "<弹窗二>[\\s\\S]*?<\\/弹窗二>",
       "<option\\b[^>]*>[\\s\\S]*?<\\/option>",
-      "<bgm>[\\s\\S]*?<\\/bgm>"
+      "<bgm>[\\s\\S]*?<\\/bgm>",
+      "<!--gc:hidden\\n[\\s\\S]*?\\n-->"
+      // our own comment-hidden engine blocks — never wrap the hider
     ].join("|"),
     "gi"
   );
   var RE_TAG_ONLY_PARAGRAPH = /^(?:\s|<[^>]+>)*$/;
   function shapeMessage(raw, messageId) {
+    const stats = { wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false, strippedBgimg: 0, hidden: 0 };
     const unchanged = (deferred = null) => ({
       text: raw,
+      // ALWAYS the caller's original — a rename ahead of a defer is discarded with it
       changed: false,
       deferred,
-      stats: { wrapped: 0, scenes: 0, strippedScenes: 0 }
+      stats: { wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false, strippedBgimg: 0, hidden: 0 }
     });
     if (typeof raw !== "string" || raw.length === 0) return unchanged();
-    const openMatch = raw.match(RE_MAINTEXT_OPEN);
-    if (!openMatch) return unchanged();
-    const closeMatch = raw.match(RE_MAINTEXT_CLOSE);
+    let text0 = raw;
+    if (!RE_MAINTEXT_OPEN.test(raw)) {
+      if (!RE_GAMETXT_OPEN.test(raw)) return unchanged();
+      if (!RE_GAMETXT_CLOSE.test(raw)) return unchanged("gametxt-unclosed");
+      text0 = raw.replace(RE_GAMETXT_OPEN, "<maintext>").replace(RE_GAMETXT_CLOSE, "</maintext>");
+      stats.renamed = true;
+    }
+    const openMatch = text0.match(RE_MAINTEXT_OPEN);
+    const closeMatch = text0.match(RE_MAINTEXT_CLOSE);
     if (!closeMatch) return unchanged("maintext-unclosed");
     const innerStart = openMatch.index + openMatch[0].length;
     const innerEnd = closeMatch.index;
     if (innerEnd < innerStart) return unchanged();
-    const head = raw.slice(0, innerStart);
-    const tail = raw.slice(innerEnd);
-    let inner = raw.slice(innerStart, innerEnd);
+    const head = text0.slice(0, innerStart);
+    const tail = text0.slice(innerEnd);
+    let inner = text0.slice(innerStart, innerEnd);
     if (RE_PIC_TAG.test(inner)) return unchanged("pics-pending");
-    const stats = { wrapped: 0, scenes: 0, strippedScenes: 0 };
     inner = inner.replace(RE_BACKGROUND_TAG, () => {
       stats.strippedScenes++;
       return "";
+    });
+    inner = inner.replace(RE_BGIMG_TAG, () => {
+      stats.strippedBgimg++;
+      return "";
+    });
+    inner = inner.replace(RE_GC_HIDDEN, (_, body) => body);
+    inner = inner.replace(RE_TRAIT_CHECK, (m2) => {
+      if (m2.includes("--")) return m2;
+      stats.hidden++;
+      return `<!--gc:hidden
+${m2}
+-->`;
     });
     inner = wrapBareProse(inner, stats);
     const imgs = [];
@@ -1861,7 +1889,7 @@
     try {
       await window.setChatMessages([{ message_id: id, message: text }], { refresh: "affected" });
       log.info(
-        `beat-shaper msg=${id}: wrapped=${stats.wrapped}p scenes=${stats.scenes}${stats.scenes ? " (hoisted #1)" : ""} strippedScenes=${stats.strippedScenes}`
+        `beat-shaper msg=${id}:${stats.renamed ? " gametxt→maintext" : ""} wrapped=${stats.wrapped}p scenes=${stats.scenes}${stats.scenes ? " (hoisted #1)" : ""} strippedScenes=${stats.strippedScenes}${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ""}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ""}`
       );
     } catch (e) {
       log.warn(`beat-shaper: setChatMessages(${id}) failed — message left unshaped:`, e);

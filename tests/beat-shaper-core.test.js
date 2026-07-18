@@ -123,6 +123,56 @@ describe('scene strip + inject', () => {
   });
 });
 
+describe('gametxt→maintext bridge + engine display-noise', () => {
+  it('renames a closed <gametxt> pair when no <maintext> exists', () => {
+    const raw = '<think>x</think>\n<gametxt>\n<p>beat</p>\n</gametxt>\n<DateAndTime>t</DateAndTime>';
+    const r = shapeMessage(raw, 11);
+    expect(r.changed).toBe(true);
+    expect(r.stats.renamed).toBe(true);
+    expect(r.text).toContain('<maintext>');
+    expect(r.text).toContain('</maintext>');
+    expect(r.text).not.toContain('<gametxt>');
+    expect(r.text).not.toContain('</gametxt>');
+    expect(r.text).toContain('<DateAndTime>t</DateAndTime>'); // outside envelope untouched
+  });
+  it('leaves <gametxt> alone when <maintext> already exists', () => {
+    const raw = '<gametxt>meta</gametxt>\n<maintext>\n<p>beat</p>\n</maintext>';
+    const r = shapeMessage(raw, 11);
+    expect(r.stats.renamed).toBe(false);
+    expect(r.text).toContain('<gametxt>meta</gametxt>');
+  });
+  it('defers while <gametxt> is unclosed (streaming)', () => {
+    const r = shapeMessage('<gametxt>\nstill streaming…', 11);
+    expect(r.changed).toBe(false);
+    expect(r.deferred).toBe('gametxt-unclosed');
+  });
+  it('strips <bgimg> prompt blocks (would display via ST renderer p-wrap)', () => {
+    const raw =
+      '<gametxt>\n<background scene="教室" /><bgimg>high school classroom, morning light</bgimg>\n<p>beat</p>\n</gametxt>';
+    const r = shapeMessage(raw, 12);
+    expect(r.stats.strippedBgimg).toBe(1);
+    expect(r.text).not.toContain('<bgimg>');
+    expect(r.text).not.toContain('classroom');
+  });
+  it('comment-hides <classmate_trait_check> so POST keeps the data but nothing displays', () => {
+    const block = '<classmate_trait_check>\nPending: Mana. TRAITS: STA50 INT25.\n</classmate_trait_check>';
+    const raw = `<gametxt>\n<p>beat</p>\n${block}\n</gametxt>`;
+    const r = shapeMessage(raw, 13);
+    expect(r.stats.hidden).toBe(1);
+    expect(r.text).toContain(`<!--gc:hidden\n${block}\n-->`); // data survives for POST's inputRegex
+    expect(r.text).not.toContain('<p><!--'); // the hider itself never becomes a beat
+  });
+  it('bridge output is idempotent (second run is a no-op)', () => {
+    const raw =
+      '<gametxt>\n<background scene="舊" /><bgimg>tags</bgimg>\n<p>b1</p>\n\n裸旁白。\n\n<classmate_trait_check>\nc\n</classmate_trait_check>\n</gametxt>';
+    const r1 = shapeMessage(raw, 14);
+    expect(r1.changed).toBe(true);
+    const r2 = shapeMessage(r1.text, 14);
+    expect(r2.changed).toBe(false);
+    expect(r2.text).toBe(r1.text);
+  });
+});
+
 describe('idempotency', () => {
   const sample = `pre-planning\n<maintext>\n<background scene="舊場景" />\n<bgm>Song</bgm>\n\n裸旁白第一段。\n\n<p>橘美月[微笑,女聲]: "對話"</p>\n\n${img(1)}\n\n又一段旁白。\n\n${img(2)}\n\n<p>結尾</p>\n</maintext>\npost`;
   it('second run is a no-op (changed=false, identical text)', () => {

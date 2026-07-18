@@ -48,7 +48,7 @@ const GAL_TTS_ENABLED_KEY = 'galgame-ui-plugin_tts_enabled';  // TTS enable live
 const GAL_INIT_LOCK = '__galgame_init_lock__';                // set by galgame init, same sync block as loadSettings()
 const SEED_FLAG_KEY = 'galgame-companion_seed_version';       // localStorage version gate (see SEED_VERSION RULE)
 const RELOAD_MARKER = 'galgame-companion_seed_reload';        // sessionStorage: # of seed-reloads this session
-const SEED_VERSION = 2;                                       // bumped 1→2: re-heal installs clobbered under v0.5.15
+const SEED_VERSION = 3;                                       // 1→2 re-heal of v0.5.15 clobber; 2→3 adds ctrlKeySkip:false
 const MAX_RELOADS = 2;                                        // hard cap per session — never a reload loop
 
 // Card-intended values + galgame's own DEFAULT_SETTINGS value (`def`, verified against
@@ -64,6 +64,7 @@ const MANAGED = [
   { key: 'effectsEnabled', value: false, def: true },            // Pixi effects off
   { key: 'showSprites', value: false, def: true },               // Sprites off
   { key: 'bgmEnabled', value: false, def: true },                // BGM off (also drops <bgm> from galgame's COT)
+  { key: 'ctrlKeySkip', value: false, def: true },               // Hold-Ctrl fast-forward off (eats Ctrl while typing)
 ];
 const SEEDED_TTS_ENABLED = false; // TTS voice off (separate key; also drops TTS from galgame's COT)
 

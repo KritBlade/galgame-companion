@@ -65,7 +65,9 @@ async function onMessageEvent(messageId) {
   try {
     await window.setChatMessages([{ message_id: id, message: text }], { refresh: 'affected' });
     log.info(
-      `beat-shaper msg=${id}: wrapped=${stats.wrapped}p scenes=${stats.scenes}${stats.scenes ? ' (hoisted #1)' : ''} strippedScenes=${stats.strippedScenes}`,
+      `beat-shaper msg=${id}:${stats.renamed ? ' gametxt→maintext' : ''} wrapped=${stats.wrapped}p ` +
+      `scenes=${stats.scenes}${stats.scenes ? ' (hoisted #1)' : ''} strippedScenes=${stats.strippedScenes}` +
+      `${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ''}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ''}`,
     );
   } catch (e) {
     log.warn(`beat-shaper: setChatMessages(${id}) failed — message left unshaped:`, e);

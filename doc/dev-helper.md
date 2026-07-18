@@ -27,7 +27,7 @@ The companion seeds galgame's per-browser display prefs so the card's VN present
 the parent origin):
 
 ```js
-localStorage.getItem('galgame-companion_seed_version')   // version gate — current "2"; ≥ SEED_VERSION ⇒ done
+localStorage.getItem('galgame-companion_seed_version')   // version gate — current "3"; ≥ SEED_VERSION ⇒ done
 JSON.parse(localStorage.getItem('galgame-ui-plugin_settings'))   // galgame's blob — managed fields below
 localStorage.getItem('galgame-ui-plugin_tts_enabled')    // "false" (TTS off; separate key)
 sessionStorage.getItem('galgame-companion_seed_reload')  // # seed-reloads this session (transient; absent = steady state)
@@ -43,6 +43,7 @@ Managed fields (seeded once per SEED_VERSION):
 | `showSprites` | `false` | `true` |
 | `bgmEnabled` | `false` | `true` |
 | `typewriterEnabled` / `typewriterSoundEnabled` | `false` | `true` |
+| `ctrlKeySkip` | `false` | `true` |
 | `hideOtherFloors` | `true` | `true` (already matches) |
 | `cgAsBackground` | `false` | `false` (already matches) |
 
@@ -69,7 +70,8 @@ every later save preserves them, so user tweaks after convergence stick forever:
 Steady state (every normal session): flag check → return. Zero work, zero polling.
 
 **`SEED_VERSION` bump rule:** bump ONLY when the seeded DATA changes — a default value, a managed
-field added/removed, or a forced re-heal of broken installs (1→2 healed the v0.5.15 clobber). A bump
+field added/removed, or a forced re-heal of broken installs (1→2 healed the v0.5.15 clobber; 2→3
+added `ctrlKeySkip:false`). A bump
 re-applies card values ONCE per install, overwriting user tweaks to managed fields one time. Logic-only
 changes ship as a normal script release with NO bump.
 
