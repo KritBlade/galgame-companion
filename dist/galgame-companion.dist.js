@@ -1,8 +1,8 @@
-// galgame-companion v0.5.18 — built 2026-07-18T13:19:32.203Z
+// galgame-companion v0.5.19 — built 2026-07-18T15:01:31.399Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.5.18";
+  var VERSION = "0.5.19";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || document;
   var topWindow = typeof window !== "undefined" && window.parent || window;
   var DEBUG = true;
@@ -1333,20 +1333,21 @@
 
   // src/toolbar.js
   var ACTION = "school-stats";
-  var TOOLBAR_SEL = "#gal-global-overlay .gal-bottom-toolbar";
+  var OVERLAY_SEL = "#gal-global-overlay";
   var MOBILE_MENU_SEL = "#gal-global-overlay #gal-mobile-menu";
-  var TOOLBAR_BTN_HTML = `<button class="gal-footer-btn" data-action="${ACTION}" title="School Menu"><i class="fa-solid fa-users"></i> <span class="gal-btn-text">MENU</span></button>`;
+  var CORNER_CLASS = "school-corner-btn";
+  var CORNER_BTN_HTML = `<button class="gal-footer-btn ${CORNER_CLASS}" data-action="${ACTION}" title="School Menu"><i class="fa-solid fa-users"></i> <span class="gal-btn-text">MENU</span></button>`;
   var MOBILE_BTN_HTML = `<button class="gal-menu-btn" data-action="${ACTION}"><i class="fa-solid fa-users"></i> Menu</button>`;
-  function injectInto(sel, html) {
-    const bar = DOC.querySelector(sel);
-    if (!bar || bar.querySelector(`[data-action="${ACTION}"]`)) return false;
-    bar.insertAdjacentHTML("beforeend", html);
+  function injectInto(containerSel, existsSel, html) {
+    const c = DOC.querySelector(containerSel);
+    if (!c || c.querySelector(existsSel)) return false;
+    c.insertAdjacentHTML("beforeend", html);
     return true;
   }
   function injectAll() {
-    const a = injectInto(TOOLBAR_SEL, TOOLBAR_BTN_HTML);
-    const b = injectInto(MOBILE_MENU_SEL, MOBILE_BTN_HTML);
-    if (a || b) log.info(`button injected (toolbar=${a}, mobile=${b})`);
+    const a = injectInto(OVERLAY_SEL, `.${CORNER_CLASS}`, CORNER_BTN_HTML);
+    const b = injectInto(MOBILE_MENU_SEL, `[data-action="${ACTION}"]`, MOBILE_BTN_HTML);
+    if (a || b) log.info(`button injected (corner=${a}, mobile=${b})`);
   }
   function startToolbar() {
     if (!DOC || !DOC.body) return setTimeout(startToolbar, 200);
@@ -1382,6 +1383,26 @@
    overlaps the status pills; the icon is self-explanatory. Covers both states (全屏/退出) —
    a dict blank can't, because 退出 is also the mobile menu's Exit label. */
 .gal-fullscreen-btn span { display: none !important; }
+
+/* School Menu button — upper-left corner (proven live 2026-07-18): galgame's bottom toolbar is a
+   fixed-width, flex-nowrap row already filled to the panel edge by LOG…NEXT, and it sits inside
+   .gal-text-panel (overflow:hidden) — appending our button there clipped it, and reclaiming room
+   fought galgame's own buttons. Instead toolbar.js injects it as a DIRECT child of the overlay
+   (which is already position:relative — its own top-right status pills anchor to it the same way),
+   and we pin it to the top-left corner: out of every crowded row, no clipping at any dialogue scale,
+   mirrors galgame's top-right pills. Keyed on our own class → cannot touch galgame's layout. */
+#gal-global-overlay .school-corner-btn { position: absolute; top: 12px; left: 14px; z-index: 30; }
+
+/* Right-gutter buttons un-clip (galgame upstream bug, proven live 2026-07-18): galgame's right-edge
+   column — sprite-toggle (👁) + the location/time status-popup triggers — is positioned right:-40px,
+   hung into the gutter past the dialog panel, but clipped by .gal-game-container(overflow:hidden). At
+   galgame's default ~120% dialogue-box scale that gutter is only ~17px, so the 40px hang overflows
+   ~20px and the buttons are cut off (they survive only at ~100% scale / mobile reflow — an untested
+   default-desktop combo). We can't per-side-unclip, and overflow:visible would leak sprites/CG on
+   cards that use them; instead trim the (centred) dialog column ~88px to widen the gutter enough for
+   the buttons at the seeded scale. Tuned for the default scale; at a much larger dialogue-box scale
+   the top-right pills still show location/time. Can't edit galgame (CDN-imported untouched). */
+#gal-global-overlay .gal-dialog-layer { width: calc(100% - 88px) !important; }
 
 /* Overlay anti-collapse (galgame upstream structural quirk, proven live 2026-07-16):
    galgame appends #gal-global-overlay as a flex child of ST's #chat (display:flex;
@@ -1981,6 +2002,102 @@ ${m2}
     log.info("generating-guard active");
   }
 
+  // src/location-time-bridge.js
+  var FLOOR_LOOKBACK3 = 8;
+  var SHEET_UID = "sheet_global_data";
+  var SHEET_NAME = "全局数据表";
+  var COL_LOCATION = "当前详细地点";
+  var COL_TIME = "当前时间";
+  function mvuVal(x) {
+    return Array.isArray(x) ? x[0] : x;
+  }
+  function latestWorld() {
+    const gv = typeof window.getVariables === "function" ? window.getVariables : null;
+    let last = -1;
+    try {
+      const n = Number(window.getLastMessageId ? window.getLastMessageId() : NaN);
+      if (Number.isFinite(n) && n >= 0) last = n;
+    } catch (e) {
+    }
+    if (last < 0) {
+      try {
+        const chat = topWindow.SillyTavern && topWindow.SillyTavern.getContext && topWindow.SillyTavern.getContext().chat;
+        if (Array.isArray(chat)) last = chat.length - 1;
+      } catch (e) {
+      }
+    }
+    if (last < 0) return null;
+    for (let id = last; id >= 0 && id > last - FLOOR_LOOKBACK3; id--) {
+      let sd = null;
+      try {
+        if (gv) {
+          const v = gv({ type: "message", message_id: id });
+          sd = v && v.stat_data;
+        }
+      } catch (e) {
+      }
+      if (!sd) {
+        try {
+          const Mvu = topWindow.Mvu;
+          if (Mvu && Mvu.getMvuData) {
+            const d = Mvu.getMvuData({ type: "message", message_id: id });
+            sd = d && d.stat_data;
+          }
+        } catch (e) {
+        }
+      }
+      if (sd && sd.World) return sd.World;
+    }
+    return null;
+  }
+  function pills() {
+    const W = latestWorld();
+    if (!W) return null;
+    const location = String(mvuVal(W.Location) || "").trim();
+    const date = String(mvuVal(W.Date) || "").trim();
+    const time = String(mvuVal(W.Time) || "").trim();
+    const weekday = String(mvuVal(W.Weekday) || "").trim();
+    const weather = String(mvuVal(W.Weather) || "").trim();
+    const parts = [];
+    if (date) parts.push(weekday ? `${date} (${weekday})` : date);
+    if (time) parts.push(time);
+    let timeStr = parts.join(" ");
+    if (weather) timeStr += (timeStr ? " · " : "") + weather;
+    return { location, time: timeStr };
+  }
+  function startLocationTimeBridge() {
+    let existing = null;
+    try {
+      existing = topWindow.AutoCardUpdaterAPI;
+    } catch (e) {
+      log.warn("location-time-bridge: reading AutoCardUpdaterAPI threw — skipping shim:", e);
+      return;
+    }
+    if (existing && typeof existing.exportTableAsJson === "function") {
+      log.info("location-time-bridge: AutoCardUpdaterAPI already present — not shimming (respecting the real one).");
+      return;
+    }
+    try {
+      topWindow.AutoCardUpdaterAPI = {
+        // galgame reads content[0]=headers, content[1]=dataRow and maps 当前详细地点→detailedLocation,
+        // 当前时间→currentTime. Return {} while there's no World so galgame's isEmpty retry keeps polling.
+        exportTableAsJson() {
+          try {
+            const p = pills();
+            if (!p || !p.location && !p.time) return {};
+            return { global: { uid: SHEET_UID, name: SHEET_NAME, content: [[COL_LOCATION, COL_TIME], [p.location, p.time]] } };
+          } catch (e) {
+            log.warn("location-time-bridge: exportTableAsJson failed:", e);
+            return {};
+          }
+        }
+      };
+      log.info("location-time-bridge: AutoCardUpdaterAPI shim installed (galgame location/time pills ← stat_data.World).");
+    } catch (e) {
+      log.error("location-time-bridge: could not install AutoCardUpdaterAPI shim:", e);
+    }
+  }
+
   // src/index.js
   log.info(`v${VERSION} loading`);
   startGalgameDefaults();
@@ -1991,5 +2108,6 @@ ${m2}
   startBeatShaper();
   startImageSeam();
   startGeneratingGuard();
+  startLocationTimeBridge();
   log.info(`v${VERSION} ready`);
 })();

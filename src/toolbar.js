@@ -1,21 +1,30 @@
-// galgame-companion · toolbar — inject our Menu button into galgame's bars. v0.1
+// galgame-companion · toolbar — inject our Menu button into galgame's overlay. v0.2
 // galgame has NO button API; we inject via DOM (GCP §3). A NEW data-action matches none of
 // galgame's per-action delegated handlers → inert to galgame, zero conflict. Reusing its own
 // classes (gal-footer-btn / gal-menu-btn) inherits styling + skins automatically.
 // galgame rebuilds the overlay on chat change → a MutationObserver re-adds the button
-// whenever a bar (re)appears without it. Desktop toolbar + mobile menu both live inside
+// whenever the overlay (re)appears without it. Desktop button + mobile menu both live inside
 // #gal-global-overlay → ONE delegated click listener covers both.
+//
+// DESKTOP PLACEMENT (v0.2, 2026-07-18): pinned to the overlay's upper-left corner, NOT the bottom
+// toolbar. galgame's footer is a fixed-width flex-nowrap row already filled edge-to-edge by
+// LOG…NEXT and clipped by .gal-text-panel(overflow:hidden), so an appended button was cut off and
+// reclaiming room fought galgame's own buttons. The overlay is already position:relative (its own
+// top-right status pills anchor to it), so a direct-child button + corner CSS (style.js) sits clear
+// of every crowded row at any dialogue scale.
 
 import { DOC, log } from './env.js';
 import { openMenuModal } from './menu-modal.js';
 
 export const ACTION = 'school-stats';
 
-const TOOLBAR_SEL = '#gal-global-overlay .gal-bottom-toolbar';
+const OVERLAY_SEL = '#gal-global-overlay';
 const MOBILE_MENU_SEL = '#gal-global-overlay #gal-mobile-menu';
+const CORNER_CLASS = 'school-corner-btn';
 
-const TOOLBAR_BTN_HTML =
-  `<button class="gal-footer-btn" data-action="${ACTION}" title="School Menu">` +
+// Desktop: corner-pinned by style.js's .school-corner-btn rule; .gal-footer-btn carries galgame's look.
+const CORNER_BTN_HTML =
+  `<button class="gal-footer-btn ${CORNER_CLASS}" data-action="${ACTION}" title="School Menu">` +
   `<i class="fa-solid fa-users"></i> <span class="gal-btn-text">MENU</span></button>`;
 
 // mirrors buildGalMobileMenuButtonsHtml()'s .gal-menu-btn markup for native look
@@ -23,17 +32,20 @@ const MOBILE_BTN_HTML =
   `<button class="gal-menu-btn" data-action="${ACTION}">` +
   `<i class="fa-solid fa-users"></i> Menu</button>`;
 
-function injectInto(sel, html) {
-  const bar = DOC.querySelector(sel);
-  if (!bar || bar.querySelector(`[data-action="${ACTION}"]`)) return false;
-  bar.insertAdjacentHTML('beforeend', html);
+// Inject `html` into `containerSel` unless `existsSel` already matches inside it (dedupe). Added → true.
+function injectInto(containerSel, existsSel, html) {
+  const c = DOC.querySelector(containerSel);
+  if (!c || c.querySelector(existsSel)) return false;
+  c.insertAdjacentHTML('beforeend', html);
   return true;
 }
 
 function injectAll() {
-  const a = injectInto(TOOLBAR_SEL, TOOLBAR_BTN_HTML);
-  const b = injectInto(MOBILE_MENU_SEL, MOBILE_BTN_HTML);
-  if (a || b) log.info(`button injected (toolbar=${a}, mobile=${b})`);
+  // Desktop dedupe is by OUR corner class (the mobile button shares data-action but lives in the
+  // mobile menu, so a data-action check would wrongly suppress the corner button).
+  const a = injectInto(OVERLAY_SEL, `.${CORNER_CLASS}`, CORNER_BTN_HTML);
+  const b = injectInto(MOBILE_MENU_SEL, `[data-action="${ACTION}"]`, MOBILE_BTN_HTML);
+  if (a || b) log.info(`button injected (corner=${a}, mobile=${b})`);
 }
 
 export function startToolbar() {
