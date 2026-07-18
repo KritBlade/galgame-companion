@@ -1,8 +1,8 @@
-// galgame-companion v0.5.15 — built 2026-07-17T23:31:01.608Z
+// galgame-companion v0.5.16 — built 2026-07-18T12:38:43.014Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.5.15";
+  var VERSION = "0.5.16";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || document;
   var topWindow = typeof window !== "undefined" && window.parent || window;
   var DEBUG = true;
@@ -17,30 +17,33 @@
   // src/galgame-defaults.js
   var GAL_SETTINGS_KEY = "galgame-ui-plugin_settings";
   var GAL_TTS_ENABLED_KEY = "galgame-ui-plugin_tts_enabled";
+  var GAL_INIT_LOCK = "__galgame_init_lock__";
   var SEED_FLAG_KEY = "galgame-companion_seed_version";
-  var SEED_VERSION = 1;
-  var SEEDED_SETTINGS = {
-    dialogSegLengthOverride: 460,
-    // Words per page — Auto measures with a CJK glyph, under-counting English ~2× → tiny pages
-    hideOtherFloors: true,
-    // Immersive mode (hide other message floors)
-    typewriterEnabled: false,
-    // Typewriter effect: off
-    typewriterSoundEnabled: false,
-    // Typing sound: off
-    bgFillMode: "contain",
-    // Background fill: Contain (show whole)
-    cgAsBackground: false,
-    // CG replaces background directly: off
-    effectsEnabled: false,
-    // Pixi effects: off
-    showSprites: false,
-    // Show sprites: off
-    bgmEnabled: false
-    // Enable BGM: off (also drops the <bgm> spec from galgame's COT)
-  };
+  var RELOAD_MARKER = "galgame-companion_seed_reload";
+  var SEED_VERSION = 2;
+  var MAX_RELOADS = 2;
+  var MANAGED = [
+    { key: "dialogSegLengthOverride", value: 460, def: 0 },
+    // Words per page (Auto under-counts English ~2×)
+    { key: "hideOtherFloors", value: true, def: true },
+    // Immersive mode
+    { key: "typewriterEnabled", value: false, def: true },
+    // Typewriter effect off
+    { key: "typewriterSoundEnabled", value: false, def: true },
+    // Typing sound off
+    { key: "bgFillMode", value: "contain", def: "cover" },
+    // Background fill: show whole image
+    { key: "cgAsBackground", value: false, def: false },
+    // CG replaces background off
+    { key: "effectsEnabled", value: false, def: true },
+    // Pixi effects off
+    { key: "showSprites", value: false, def: true },
+    // Sprites off
+    { key: "bgmEnabled", value: false, def: true }
+    // BGM off (also drops <bgm> from galgame's COT)
+  ];
   var SEEDED_TTS_ENABLED = false;
-  function store() {
+  function localStore() {
     try {
       return topWindow.localStorage;
     } catch (e) {
@@ -48,45 +51,116 @@
       return null;
     }
   }
-  function seedGalgameDefaults() {
-    const ls = store();
-    if (!ls) return;
-    let seededVer;
+  function sessionStore() {
     try {
-      seededVer = Number(ls.getItem(SEED_FLAG_KEY)) || 0;
+      return topWindow.sessionStorage;
     } catch (e) {
-      log.warn("galgame-defaults: reading seed flag failed — seed skipped:", e);
-      return;
+      log.warn("galgame-defaults: topWindow.sessionStorage unreachable:", e);
+      return null;
     }
-    if (seededVer >= SEED_VERSION) return;
-    let blob = {};
+  }
+  function readBlob(ls) {
     try {
       const raw = ls.getItem(GAL_SETTINGS_KEY);
-      if (raw) blob = JSON.parse(raw) || {};
+      return raw ? JSON.parse(raw) || {} : {};
     } catch (e) {
-      log.warn("galgame-defaults: existing settings blob unparsable — writing a fresh managed set:", e);
-      blob = {};
+      log.warn("galgame-defaults: settings blob unparsable — seeding a fresh managed set:", e);
+      return {};
     }
-    Object.assign(blob, SEEDED_SETTINGS);
+  }
+  function seedValues(ls) {
+    const blob = readBlob(ls);
+    for (const f of MANAGED) blob[f.key] = f.value;
     try {
       ls.setItem(GAL_SETTINGS_KEY, JSON.stringify(blob));
     } catch (e) {
       log.error("galgame-defaults: could not write settings blob — seed aborted:", e);
-      return;
+      return false;
     }
     try {
       ls.setItem(GAL_TTS_ENABLED_KEY, String(SEEDED_TTS_ENABLED));
     } catch (e) {
       log.warn("galgame-defaults: could not write TTS-enable key:", e);
     }
+    return true;
+  }
+  function blobClobbered(ls) {
+    const blob = readBlob(ls);
+    return MANAGED.filter((f) => f.value !== f.def).every((f) => blob[f.key] === f.def || blob[f.key] === void 0);
+  }
+  function reloadAttempts(ss) {
+    if (!ss) return 0;
+    try {
+      return Number(ss.getItem(RELOAD_MARKER)) || 0;
+    } catch (e) {
+      log.warn("galgame-defaults: reading reload marker failed:", e);
+      return 0;
+    }
+  }
+  function seedAndConverge(ls, ss, why) {
+    if (!seedValues(ls)) return;
     try {
       ls.setItem(SEED_FLAG_KEY, String(SEED_VERSION));
     } catch (e) {
-      log.warn("galgame-defaults: could not write seed flag (harmless — will re-seed next load):", e);
+      log.warn("galgame-defaults: could not write seed flag (will re-seed next load):", e);
     }
-    log.info(
-      `galgame-defaults: seeded galgame display settings (v${SEED_VERSION}) — words/page=${SEEDED_SETTINGS.dialogSegLengthOverride}, immersive=on, typewriter/typing-sound/sprites/TTS/BGM/pixi=off, bgFill=contain. Takes effect on the next galgame load.`
-    );
+    if (!topWindow[GAL_INIT_LOCK]) {
+      log.info(`galgame-defaults: seeded v${SEED_VERSION} (${why}) before galgame init — no reload needed.`);
+      return;
+    }
+    const attempts = reloadAttempts(ss);
+    if (!ss || attempts >= MAX_RELOADS) {
+      log.error(
+        `galgame-defaults: seeded v${SEED_VERSION} (${why}) but galgame already read stale settings and ` + (ss ? `${attempts} reload(s) did not converge` : "sessionStorage is unavailable to guard a reload") + " — giving up. Reload SillyTavern manually; values apply on the next clean load."
+      );
+      return;
+    }
+    try {
+      ss.setItem(RELOAD_MARKER, String(attempts + 1));
+    } catch (e) {
+      log.error("galgame-defaults: could not write reload marker — NOT reloading (loop guard):", e);
+      return;
+    }
+    log.info(`galgame-defaults: seeded v${SEED_VERSION} (${why}) after galgame init — reloading ST once to apply (${attempts + 1}/${MAX_RELOADS}).`);
+    topWindow.location.reload();
+  }
+  function startGalgameDefaults() {
+    const ls = localStore();
+    if (!ls) return;
+    const ss = sessionStore();
+    let ver = 0;
+    try {
+      ver = Number(ls.getItem(SEED_FLAG_KEY)) || 0;
+    } catch (e) {
+      log.warn("galgame-defaults: reading seed flag failed — assuming unseeded:", e);
+    }
+    if (ver >= SEED_VERSION) {
+      const attempts = reloadAttempts(ss);
+      if (!attempts) return;
+      if (!blobClobbered(ls)) {
+        try {
+          ss.removeItem(RELOAD_MARKER);
+        } catch (e) {
+          log.warn("galgame-defaults: could not clear reload marker:", e);
+        }
+        log.info("galgame-defaults: converged — galgame read the seeded settings.");
+        return;
+      }
+      if (attempts >= MAX_RELOADS) {
+        try {
+          ss.removeItem(RELOAD_MARKER);
+        } catch (e) {
+          log.warn("galgame-defaults: could not clear reload marker:", e);
+        }
+        log.error(
+          `galgame-defaults: seed clobbered again after ${attempts} reload(s) — giving up this session. Something saves galgame settings during boot every load; set the display settings manually once.`
+        );
+        return;
+      }
+      seedAndConverge(ls, ss, "post-reload retry");
+      return;
+    }
+    seedAndConverge(ls, ss, ver ? `upgrade ${ver}→${SEED_VERSION}` : "first install");
   }
 
   // src/i18n-dict.js
@@ -1601,10 +1675,10 @@
       if (!stale.length) return 0;
       await new Promise((resolve, reject) => {
         const tx = db.transaction([STORE], "readwrite");
-        const store2 = tx.objectStore(STORE);
+        const store = tx.objectStore(STORE);
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
-        for (const k of stale) store2.delete(k);
+        for (const k of stale) store.delete(k);
       });
       return stale.length;
     } catch (e) {
@@ -1876,7 +1950,7 @@
 
   // src/index.js
   log.info(`v${VERSION} loading`);
-  seedGalgameDefaults();
+  startGalgameDefaults();
   injectStyle();
   startI18n();
   startToolbar();

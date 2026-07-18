@@ -11,7 +11,7 @@
 // ============================================================
 
 import { SCRIPT_NAME, VERSION, log } from './env.js';
-import { seedGalgameDefaults } from './galgame-defaults.js';
+import { startGalgameDefaults } from './galgame-defaults.js';
 import { startI18n } from './i18n.js';
 import { startToolbar } from './toolbar.js';
 import { injectStyle } from './style.js';
@@ -22,10 +22,11 @@ import { startGeneratingGuard } from './generating-guard.js';
 
 log.info(`v${VERSION} loading`);
 
-// FIRST: seed galgame's display settings once per install (words/page, immersive, no typewriter/
-// sprites/TTS/BGM/pixi, contain-fit). galgame reads settings only at its own init, so writing this
-// as early as possible gives it the best chance to apply THIS session; otherwise it lands next load.
-seedGalgameDefaults();
+// FIRST: seed galgame's display settings (words/page, immersive, no typewriter/sprites/TTS/BGM/pixi,
+// contain-fit), then make galgame READ them — no-op if galgame hasn't initialized yet, else ONE guarded
+// full reload (first install only). Once one galgame init reads the seed, its saves preserve it forever;
+// user tweaks after that stick. Version-gated by SEED_VERSION (see galgame-defaults.js header).
+startGalgameDefaults();
 
 injectStyle();
 startI18n();

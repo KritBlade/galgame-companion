@@ -19,6 +19,67 @@ as `DOC` in `env.js`). The companion runs in its own iframe but shares that same
 so it can inject CSS, listen for events in the capture phase, and read/flip galgame's state —
 all from the outside.
 
+
+### Check config file — galgame display settings (`galgame-defaults.js`)
+
+The companion seeds galgame's per-browser display prefs so the card's VN presentation works with
+**no manual setup**. Everything lives in the **top window's** storage (galgame's srcdoc iframe shares
+the parent origin):
+
+```js
+localStorage.getItem('galgame-companion_seed_version')   // version gate — current "2"; ≥ SEED_VERSION ⇒ done
+JSON.parse(localStorage.getItem('galgame-ui-plugin_settings'))   // galgame's blob — managed fields below
+localStorage.getItem('galgame-ui-plugin_tts_enabled')    // "false" (TTS off; separate key)
+sessionStorage.getItem('galgame-companion_seed_reload')  // # seed-reloads this session (transient; absent = steady state)
+```
+
+Managed fields (seeded once per SEED_VERSION):
+
+| field | card value | galgame default |
+| --- | --- | --- |
+| `dialogSegLengthOverride` | `460` | `0` |
+| `bgFillMode` | `'contain'` | `'cover'` |
+| `effectsEnabled` | `false` | `true` |
+| `showSprites` | `false` | `true` |
+| `bgmEnabled` | `false` | `true` |
+| `typewriterEnabled` / `typewriterSoundEnabled` | `false` | `true` |
+| `hideOtherFloors` | `true` | `true` (already matches) |
+| `cgAsBackground` | `false` | `false` (already matches) |
+
+**How it converges (design decided 2026-07-18, replacing the failed plain one-shot).** Root cause of
+the original failure: galgame reads the blob into module memory ONLY at its own init
+(`loadSettings()`, init.js:71) and never re-reads; if it read *before* our seed, any of its 120+
+`saveSettings()` callers (settings panel, wizard, map autopregen…) serializes that **stale memory back
+over our seed** — and a plain one-shot flag then blocked retry forever (UAT: flag `"1"`, every field
+default). The fix is to make galgame **re-read** rather than fight its saves — galgame's load-merge
+`{...DEFAULT_SETTINGS, ...parsed}` (settings.js:1273) keeps our values once ONE init reads them, and
+every later save preserves them, so user tweaks after convergence stick forever:
+
+1. Seed the blob, set the flag.
+2. If `topWindow['__galgame_init_lock__']` is **absent**, galgame hasn't run `loadSettings()` yet
+   (lock-set and load are one synchronous block, init.js:68→71; same-origin iframes share one JS
+   thread — race-free) → it reads the seed this session. **No reload.**
+3. Lock present → galgame already read stale → **one full `topWindow.location.reload()`**.
+   (Iframe-only reload does NOT work: the topWindow init lock survives so galgame's init self-skips;
+   clearing it leaves dead event bindings behind the `*_BOUND_FLAG`s.)
+4. Post-reload (sessionStorage marker): verify the seed survived — galgame's rare legacy-skin boot
+   save (init.js:81) or an early auto-save can clobber in the seed→reload window. Clobbered → re-seed
+   + reload once more. Hard cap 2 reloads/session, then `log.error` + give up. Never a loop.
+
+Steady state (every normal session): flag check → return. Zero work, zero polling.
+
+**`SEED_VERSION` bump rule:** bump ONLY when the seeded DATA changes — a default value, a managed
+field added/removed, or a forced re-heal of broken installs (1→2 healed the v0.5.15 clobber). A bump
+re-applies card values ONCE per install, overwriting user tweaks to managed fields one time. Logic-only
+changes ship as a normal script release with NO bump.
+
+#### Force a re-seed on one install
+```js
+localStorage.removeItem('galgame-companion_seed_version');
+location.reload();   // companion re-seeds; converges per the flow above (at most one more reload)
+```
+
+
 ### Why this is safe against auto-update
 
 Every hack is anchored to a galgame-owned hook: a stable id (`#gal-global-overlay`), a class the
