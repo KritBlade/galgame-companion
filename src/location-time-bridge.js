@@ -12,6 +12,7 @@
 // GUARD: install ONLY if nothing else owns AutoCardUpdaterAPI — never clobber a real AutoCardUpdater.
 
 import { topWindow, log } from './env.js';
+import { getOptionSheet } from './choices.js';
 
 const FLOOR_LOOKBACK = 8;              // newest floor with stat_data (MVU carries it forward)
 const SHEET_UID = 'sheet_global_data'; // galgame matches this uid (or name 全局数据表) in getGlobalLocationAndTime
@@ -99,9 +100,15 @@ export function startLocationTimeBridge() {
       // 当前时间→currentTime. Return {} while there's no World so galgame's isEmpty retry keeps polling.
       exportTableAsJson() {
         try {
+          const out = {};
           const p = pills();
-          if (!p || (!p.location && !p.time)) return {};
-          return { global: { uid: SHEET_UID, name: SHEET_NAME, content: [[COL_LOCATION, COL_TIME], [p.location, p.time]] } };
+          if (p && (p.location || p.time)) {
+            out.global = { uid: SHEET_UID, name: SHEET_NAME, content: [[COL_LOCATION, COL_TIME], [p.location, p.time]] };
+          }
+          // story choices (choices.js parses the current reply's <choices> block into a 选项表 sheet).
+          const opt = getOptionSheet();
+          if (opt) out[opt.key] = opt.sheet;
+          return out; // {} while nothing to report → galgame keeps polling (its isEmpty retry)
         } catch (e) {
           log.warn('location-time-bridge: exportTableAsJson failed:', e);
           return {};

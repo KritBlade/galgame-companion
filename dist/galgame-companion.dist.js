@@ -1,8 +1,8 @@
-// galgame-companion v0.6.0 — built 2026-07-18T22:56:35.911Z
+// galgame-companion v0.6.1 — built 2026-07-19T20:56:19.390Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.6.0";
+  var VERSION = "0.6.1";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || document;
   var topWindow = typeof window !== "undefined" && window.parent || window;
   var DEBUG = false;
@@ -2064,6 +2064,115 @@ ${m2}
     log.info("generating-guard active");
   }
 
+  // src/choices.js
+  var INJECT_KEY = "galgame-companion-choices";
+  var OPTION_SHEET_KEY = "sheet_gal_companion_options";
+  var OPTION_SHEET_NAME = "选项表";
+  var COL_TEXT = "选项内容";
+  var COL_VALUE = "选项值";
+  var MAX_CHOICES = 6;
+  var CHOICES_INSTRUCTION = [
+    "At the very END of your reply, AFTER the closing tag of your narration (e.g. </maintext> or </gametxt>),",
+    "output a player-choice block. Offer 3 to 5 distinct next actions — pick the count that fits the scene",
+    "(more when the moment genuinely branches, fewer when it does not):",
+    '<choices><c v="first-person action text">Verb-first action label</c>...</choices>',
+    "- `v` = what the player does or says, in first person — sent verbatim as the player's next input.",
+    "- Each label is an ACTION the player takes: START WITH A VERB and convey tone + target,",
+    '  e.g. "Tease Mitsuki about her blush", "Coolly brush off Mana", "Pull Aoi aside to apologize".',
+    "  NEVER a bare line of dialogue and never a lone verb — always verb + who/what + how.",
+    "Write nothing after </choices>. Omit the block ONLY if the scene genuinely allows no meaningful choice."
+  ].join("\n");
+  var RE_CHOICES = /<choices>([\s\S]*?)<\/choices>/i;
+  var RE_C = /<c\b([^>]*)>([\s\S]*?)<\/c>/gi;
+  var RE_V = /\bv\s*=\s*"([^"]*)"/i;
+  function parseChoices(raw) {
+    if (typeof raw !== "string") return [];
+    const block = raw.match(RE_CHOICES);
+    if (!block) return [];
+    const out = [];
+    let m;
+    RE_C.lastIndex = 0;
+    while ((m = RE_C.exec(block[1])) !== null) {
+      const text = m[2].replace(/<[^>]+>/g, "").trim();
+      if (!text) continue;
+      const vAttr = (m[1].match(RE_V) || [])[1];
+      const value = (vAttr != null ? vAttr : text).trim();
+      if (value) out.push({ text, value });
+    }
+    return out.slice(0, MAX_CHOICES);
+  }
+  function currentGalMesId() {
+    try {
+      const el = DOC.querySelector("#gal-global-overlay .gal-game-container");
+      const v = el && el.getAttribute("data-mes-id");
+      if (v == null || v === "") return -1;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : -1;
+    } catch (e) {
+      log.warn("choices: reading current gal mes id failed:", e);
+      return -1;
+    }
+  }
+  function rawMessage3(id) {
+    try {
+      const arr = window.getChatMessages(id);
+      const msg = Array.isArray(arr) ? arr[0] : arr;
+      if (!msg) return null;
+      if (msg.role && msg.role !== "assistant") return null;
+      return typeof msg.message === "string" ? msg.message : typeof msg.mes === "string" ? msg.mes : null;
+    } catch (e) {
+      log.warn(`choices: getChatMessages(${id}) failed:`, e);
+      return null;
+    }
+  }
+  var _cache = { id: -1, len: -1, sheet: null };
+  function getOptionSheet() {
+    const id = currentGalMesId();
+    if (id < 0) return null;
+    const raw = rawMessage3(id);
+    if (raw == null) return null;
+    if (_cache.id === id && _cache.len === raw.length) return _cache.sheet;
+    const parsed = parseChoices(raw);
+    const sheet = parsed.length ? { key: OPTION_SHEET_KEY, sheet: { name: OPTION_SHEET_NAME, content: [[COL_TEXT, COL_VALUE], ...parsed.map((o) => [o.text, o.value])] } } : null;
+    _cache = { id, len: raw.length, sheet };
+    return sheet;
+  }
+  function applyInject(dryRun) {
+    if (dryRun) return;
+    let ctx = null;
+    try {
+      ctx = topWindow.SillyTavern && topWindow.SillyTavern.getContext && topWindow.SillyTavern.getContext();
+    } catch (e) {
+      log.warn("choices: getContext threw:", e);
+      return;
+    }
+    if (!ctx || typeof ctx.setExtensionPrompt !== "function") return;
+    const on = !!topWindow.galgame;
+    try {
+      ctx.setExtensionPrompt(INJECT_KEY, on ? CHOICES_INSTRUCTION : "", 1, 0, false, 0);
+    } catch (e) {
+      log.warn("choices: setExtensionPrompt failed:", e);
+    }
+  }
+  function startChoices() {
+    if (typeof window.getChatMessages !== "function" || typeof window.eventOn !== "function") {
+      log.warn("choices: TH globals (getChatMessages/eventOn) absent — choices provider disabled");
+      return;
+    }
+    const te = window.tavern_events || {};
+    if (!te.GENERATION_STARTED) {
+      log.warn("choices: tavern_events.GENERATION_STARTED absent — inject disabled (shim reader still active)");
+    } else {
+      try {
+        window.eventOn(te.GENERATION_STARTED, (_type, _option, dryRun) => applyInject(dryRun));
+      } catch (e) {
+        log.warn("choices: bind GENERATION_STARTED failed:", e);
+      }
+    }
+    applyInject(false);
+    log.info("choices active (inject + 选项表 shim reader)");
+  }
+
   // src/location-time-bridge.js
   var FLOOR_LOOKBACK3 = 8;
   var SHEET_UID = "sheet_global_data";
@@ -2167,9 +2276,14 @@ ${m2}
         // 当前时间→currentTime. Return {} while there's no World so galgame's isEmpty retry keeps polling.
         exportTableAsJson() {
           try {
+            const out = {};
             const p = pills();
-            if (!p || !p.location && !p.time) return {};
-            return { global: { uid: SHEET_UID, name: SHEET_NAME, content: [[COL_LOCATION, COL_TIME], [p.location, p.time]] } };
+            if (p && (p.location || p.time)) {
+              out.global = { uid: SHEET_UID, name: SHEET_NAME, content: [[COL_LOCATION, COL_TIME], [p.location, p.time]] };
+            }
+            const opt = getOptionSheet();
+            if (opt) out[opt.key] = opt.sheet;
+            return out;
           } catch (e) {
             log.warn("location-time-bridge: exportTableAsJson failed:", e);
             return {};
@@ -2506,6 +2620,7 @@ ${m2}
   startImageSeam();
   startGeneratingGuard();
   startLocationTimeBridge();
+  startChoices();
   startNextBlock();
   startImageViewer();
   startImageRegen();

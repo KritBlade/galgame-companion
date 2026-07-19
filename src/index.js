@@ -20,6 +20,7 @@ import { startImageSeam } from './image-seam.js';
 import { startBeatShaper } from './beat-shaper.js';
 import { startGeneratingGuard } from './generating-guard.js';
 import { startLocationTimeBridge } from './location-time-bridge.js';
+import { startChoices } from './choices.js';
 import { startNextBlock } from './next-block.js';
 import { startImageViewer } from './image-viewer.js';
 import { startImageRegen } from './image-regen.js';
@@ -43,6 +44,7 @@ startBeatShaper();      // dumb-terminal C1: <p>-wrap prose + inject msg-scoped 
 startImageSeam();       // G4b: mvu-helper images → galgame backdrop DB (msg-scoped names only) + ForceImageType flip
 startGeneratingGuard(); // clear galgame's "Generating" indicator when it latches on with no real generation (load-race / 120s-hang)
 startLocationTimeBridge(); // feed galgame's location/time pills from stat_data.World (AutoCardUpdaterAPI shim; MVU cards have none)
+startChoices();            // A2 all-genre: inject a <choices> format instruction + feed galgame's Story-choices UI via the same shim's 选项表 sheet
 startNextBlock();          // surface the engine's manual Next-Block advance (World_Calc.BlockDone) top-right, driving the real stat-menu checkbox
 startImageViewer();        // top-right button → near-full-viewport lightbox of galgame's current backdrop image
 startImageRegen();         // top-right button (under 🖼) → click mvu-helper's regen control for the current backdrop
