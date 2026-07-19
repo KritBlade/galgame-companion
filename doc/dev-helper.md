@@ -148,6 +148,38 @@ click lands on the fullscreen backdrop.
 is still in native fullscreen, exit it. `exitFullscreen` needs no user gesture, and we're inside
 a click anyway. Full multi-vendor prefix handling and non-swallowing error logs in the module.
 
+### 3. Stuck "Generating" indicator — `generating-guard.js` (v0.5.15, proven 2026-07-18)
+
+**Symptom:** on a fresh load / new chat, galgame's `正在生成内容…` (Generating) indicator latches
+`.active` with **no** generation running and hangs over the greeting for up to ~120 s.
+
+**Mechanism:** galgame shows `#gal-generating-indicator` when it thinks a reply is mid-stream (last
+message has no closed `</p>`, or on `GENERATION_STARTED` while the overlay is open) and hides it via
+the `.active` class. A load-time race can turn it ON without a matching hide; its only self-heal is a
+~120 s timeout. galgame's internal gen-state is module-scoped inside its iframe (unreachable), but the
+indicator element lives in the parent document.
+
+**Patch:** poll (750 ms) from the parent; clear `.active` whenever ST is **provably idle** — no tracked
+loud `GENERATION_STARTED` in flight and ST's own `is_send_press` / `streamingProcessor` unset (mirrors
+galgame's own dry-run / quiet-gen filter, so a real stream is never hidden). Degrades to no-op if the
+element/anchor is gone.
+
+### 4. Right-gutter buttons un-clip — `style.js` (v0.5.20, proven 2026-07-18)
+
+**Symptom:** galgame's right-edge column — sprite-toggle (👁) + the location/time status-popup triggers
+(`弹窗一/二`) — is cut off at the default ~120 % dialogue-box scale.
+
+**Mechanism:** galgame positions that column at `right:-40px`, hung into the gutter past the dialog
+panel, but `.gal-game-container` is `overflow:hidden`. At ~120 % scale the gutter is only ~17 px, so the
+40 px hang overflows and clips (survives only at ~100 % / mobile reflow). Can't per-side-unclip, and
+`overflow:visible` would leak sprites/CG on cards that use them.
+
+**Patch:** trim the centred dialog column ~88 px to widen the gutter — `#gal-global-overlay
+.gal-dialog-layer { width: calc(100% - 88px) !important; }`. Tuned for the seeded scale; at much larger
+scales the companion's own top-right pills still surface location/time. (Companion-owned buttons —
+Next-Block, image viewer/regen, corner Menu — are also styled in `style.js` but are features, not
+galgame patches.)
+
 ## Adding one — checklist
 
 - [ ] Reproduced live in the real ST tab; captured the before-state number.
