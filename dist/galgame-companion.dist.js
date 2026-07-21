@@ -1,4 +1,4 @@
-// galgame-companion v0.6.1 — built 2026-07-19T20:56:19.390Z
+// galgame-companion v0.6.1 — built 2026-07-21T23:46:10.422Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
@@ -1858,33 +1858,58 @@ ${m2}
     }
     return last;
   }
-  async function setForceImageType(on) {
+  async function attemptForceImageType(on) {
     const Mvu = topMvu();
     if (!Mvu || typeof Mvu.setMvuVariable !== "function") {
-      log.warn("image-seam: Mvu unavailable on top window — cannot flip ForceImageType");
-      return;
+      log.warn("image-seam: Mvu unavailable on top window — cannot flip ForceImageType (will retry)");
+      return "retry";
     }
     const id = latestDataFloor();
     if (id < 0) {
-      log.warn("image-seam: no data floor — cannot flip ForceImageType");
-      return;
+      log.warn("image-seam: no data floor — cannot flip ForceImageType (will retry)");
+      return "retry";
     }
     try {
       const data = Mvu.getMvuData({ type: "message", message_id: id });
       if (!data || !data.stat_data) {
-        log.warn("image-seam: floor has no stat_data — skip ForceImageType flip");
-        return;
+        log.warn("image-seam: floor has no stat_data — will retry ForceImageType flip");
+        return "retry";
       }
       const okSet = Mvu.setMvuVariable(data, FORCE_PATH, on, { reason: `galgame ${on ? "enter" : "exit"}` });
       if (okSet === false) {
         log.warn(`image-seam: ${FORCE_PATH} not on this card (card-side init missing) — skip flip`);
-        return;
+        return "skip";
       }
       await Mvu.replaceMvuData(data, { type: "message", message_id: id });
       log.info(`image-seam: ForceImageType → ${on} (floor ${id})`);
+      return "ok";
     } catch (e) {
-      log.warn("image-seam: setForceImageType failed:", e);
+      log.warn("image-seam: setForceImageType failed (will retry):", e);
+      return "retry";
     }
+  }
+  var FORCE_RETRY_MS = 1500;
+  var FORCE_RETRY_MAX = 10;
+  var desiredForceState = null;
+  var forceRetryRunning = false;
+  function setForceImageType(on) {
+    desiredForceState = on;
+    if (forceRetryRunning) return;
+    forceRetryRunning = true;
+    (async () => {
+      for (let i = 0; i < FORCE_RETRY_MAX; i++) {
+        const target = desiredForceState;
+        const result = await attemptForceImageType(target);
+        if ((result === "ok" || result === "skip") && desiredForceState === target) {
+          forceRetryRunning = false;
+          return;
+        }
+        if (result === "ok" || result === "skip") continue;
+        await new Promise((res) => setTimeout(res, FORCE_RETRY_MS));
+      }
+      log.warn(`image-seam: ForceImageType flip gave up after ${FORCE_RETRY_MAX} attempts (target=${desiredForceState}) — the galgame stage may receive non-uniform image types this session.`);
+      forceRetryRunning = false;
+    })();
   }
   function overlayActive() {
     const ov = DOC.getElementById(OVERLAY_ID);

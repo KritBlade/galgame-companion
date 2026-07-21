@@ -212,29 +212,66 @@ function latestDataFloor() {
   return last;
 }
 
-async function setForceImageType(on) {
+// Single flip attempt. Returns 'ok' (written) | 'retry' (transient — Mvu/floor not ready yet, worth
+// trying again) | 'skip' (PERMANENT — setMvuVariable returned false, meaning this card has no
+// World_Calc.ForceImageType path at all; retrying can never create it).
+async function attemptForceImageType(on) {
   const Mvu = topMvu();
   if (!Mvu || typeof Mvu.setMvuVariable !== 'function') {
-    log.warn('image-seam: Mvu unavailable on top window — cannot flip ForceImageType');
-    return;
+    log.warn('image-seam: Mvu unavailable on top window — cannot flip ForceImageType (will retry)');
+    return 'retry';
   }
   const id = latestDataFloor();
-  if (id < 0) { log.warn('image-seam: no data floor — cannot flip ForceImageType'); return; }
+  if (id < 0) { log.warn('image-seam: no data floor — cannot flip ForceImageType (will retry)'); return 'retry'; }
   try {
     const data = Mvu.getMvuData({ type: 'message', message_id: id });
-    if (!data || !data.stat_data) { log.warn('image-seam: floor has no stat_data — skip ForceImageType flip'); return; }
+    if (!data || !data.stat_data) { log.warn('image-seam: floor has no stat_data — will retry ForceImageType flip'); return 'retry'; }
     // setMvuVariable returns false on an unknown path — i.e. a card WITHOUT the G4a init. Tri-state
-    // on the mvu-helper side means that's fine (absent latch = honor the tag); we just skip.
+    // on the mvu-helper side means that's fine (absent latch = honor the tag); we just skip for good.
     const okSet = Mvu.setMvuVariable(data, FORCE_PATH, on, { reason: `galgame ${on ? 'enter' : 'exit'}` });
     if (okSet === false) {
       log.warn(`image-seam: ${FORCE_PATH} not on this card (card-side init missing) — skip flip`);
-      return;
+      return 'skip';
     }
     await Mvu.replaceMvuData(data, { type: 'message', message_id: id });
     log.info(`image-seam: ForceImageType → ${on} (floor ${id})`);
+    return 'ok';
   } catch (e) {
-    log.warn('image-seam: setForceImageType failed:', e);
+    log.warn('image-seam: setForceImageType failed (will retry):', e);
+    return 'retry';
   }
+}
+
+// RETRY WRAPPER (live-verified bug, 2026-07-22): topMvu() reads window.top.Mvu, which JS-Slash-Runner
+// attaches ASYNCHRONOUSLY — a syncGalState() firing right on galgame-mode ENTRY (e.g. page just loaded,
+// or the overlay opens before the iframe script finishes) can hit "Mvu unavailable" and the OLD
+// single-shot setForceImageType just gave up silently. Since the caller only re-invokes on the NEXT
+// active-class edge (an exit→enter cycle), one bad-timing miss meant EVERY image for that whole galgame
+// session generated at the narrator's own (unforced) <pic type=> — e.g. a "portrait" tag rendered
+// full-bleed as the stage backdrop. Mirrors mvu-helper's OWN index.js initial-load-race retry shape
+// (bounded loop, 1.5s spacing) — this is the SAME race, just on the other side of the seam.
+const FORCE_RETRY_MS = 1500;
+const FORCE_RETRY_MAX = 10;
+let desiredForceState = null;   // the MOST RECENT requested on-value — a rapid exit-before-retry-lands must chase this, not a stale target
+let forceRetryRunning = false;
+function setForceImageType(on) {
+  desiredForceState = on;
+  if (forceRetryRunning) return;   // a loop is already chasing — it re-reads desiredForceState every attempt
+  forceRetryRunning = true;
+  (async () => {
+    for (let i = 0; i < FORCE_RETRY_MAX; i++) {
+      const target = desiredForceState;
+      // eslint-disable-next-line no-await-in-loop -- intentionally serial: each attempt must see the latest desired state
+      const result = await attemptForceImageType(target);
+      if ((result === 'ok' || result === 'skip') && desiredForceState === target) { forceRetryRunning = false; return; }
+      if (result === 'ok' || result === 'skip') continue;   // desired changed mid-write — loop again for the new target now
+      // eslint-disable-next-line no-await-in-loop -- bounded retry delay, not a busy loop
+      await new Promise((res) => setTimeout(res, FORCE_RETRY_MS));
+    }
+    log.warn(`image-seam: ForceImageType flip gave up after ${FORCE_RETRY_MAX} attempts (target=${desiredForceState}) — ` +
+      'the galgame stage may receive non-uniform image types this session.');
+    forceRetryRunning = false;
+  })();
 }
 
 // ── immersive enter/exit detection (overlay .active) ──────────────────────────
