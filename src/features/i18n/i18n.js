@@ -4,7 +4,7 @@
 // UI or dynamic content (GCP §2). Untranslated new strings just stay Chinese.
 // Harvest mode records every miss → __galI18nDump() downloads the key list (phase G1 loop).
 
-import { DOC, log } from './env.js';
+import { DOC, log } from '../../env.js';
 import { DICT, PATTERNS } from './i18n-dict.js';
 
 const HARVEST = false; // true while the dictionary is being filled (G1); false for release (G5)

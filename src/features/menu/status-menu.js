@@ -14,7 +14,7 @@
 //  - so: copy the functions from OUR window, copy Mvu from window.parent, onto the popup
 //    BEFORE writing HTML. The menu then resolves targetWindow = its own window.
 
-import { DOC, log } from './env.js';
+import { DOC, log } from '../../env.js';
 
 const MENU_MARKER = 'VARIABLE_UPDATE_ENDED';
 

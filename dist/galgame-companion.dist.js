@@ -1,8 +1,8 @@
-// galgame-companion v0.6.2 — built 2026-07-22T09:09:37.367Z
+// galgame-companion v0.6.4 — built 2026-07-22T23:06:12.425Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.6.2";
+  var VERSION = "0.6.4";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || document;
   var topWindow = typeof window !== "undefined" && window.parent || window;
   var DEBUG = false;
@@ -14,7 +14,7 @@
     error: (...a) => console.error(`[${SCRIPT_NAME}]`, ...a)
   };
 
-  // src/galgame-defaults.js
+  // src/app/galgame-defaults.js
   var GAL_SETTINGS_KEY = "galgame-ui-plugin_settings";
   var GAL_TTS_ENABLED_KEY = "galgame-ui-plugin_tts_enabled";
   var GAL_INIT_LOCK = "__galgame_init_lock__";
@@ -170,7 +170,94 @@
     seedAndConverge(ls, ss, ver ? `upgrade ${ver}→${SEED_VERSION}` : "first install");
   }
 
-  // src/i18n-dict.js
+  // src/app/style.js
+  var STYLE_ID = "school-companion-style";
+  var CSS = `
+/* Fullscreen toggle: icon-only. The EN label ("Fullscreen") outgrows the Chinese 全屏 and
+   overlaps the status pills; the icon is self-explanatory. Covers both states (全屏/退出) —
+   a dict blank can't, because 退出 is also the mobile menu's Exit label. */
+.gal-fullscreen-btn span { display: none !important; }
+
+/* School Menu button — upper-left corner (proven live 2026-07-18): galgame's bottom toolbar is a
+   fixed-width, flex-nowrap row already filled to the panel edge by LOG…NEXT, and it sits inside
+   .gal-text-panel (overflow:hidden) — appending our button there clipped it, and reclaiming room
+   fought galgame's own buttons. Instead toolbar.js injects it as a DIRECT child of the overlay
+   (which is already position:relative — its own top-right status pills anchor to it the same way),
+   and we pin it to the top-left corner: out of every crowded row, no clipping at any dialogue scale,
+   mirrors galgame's top-right pills. Keyed on our own class → cannot touch galgame's layout. */
+#gal-global-overlay .school-corner-btn { position: absolute; top: 12px; left: 14px; z-index: 30; }
+
+/* Next-Block control (next-block.js) — the engine's manual time-block advance (World_Calc.BlockDone),
+   surfaced on the overlay under the fullscreen button so it works with the stat-menu hidden. Ticking
+   OUR checkbox drives the real (hidden) stat-menu checkbox. Small dark chip to read over the artwork. */
+#gal-global-overlay .school-nextblock {
+  position: absolute; top: 56px; right: 15px; z-index: 30;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 4px 9px; border-radius: 8px; cursor: pointer;
+  background: rgba(20, 22, 34, 0.72); border: 1px solid rgba(120, 140, 200, 0.42);
+  color: #fff; font-size: 0.72rem; font-weight: 700; line-height: 1; user-select: none;
+}
+#gal-global-overlay .school-nextblock-cb {
+  width: 16px; height: 16px; margin: 0; cursor: pointer; accent-color: #29b6f6;
+}
+
+/* Image-viewer button (image-viewer.js) — stacked under the Next control (fullscreen · Next · 🖼), same dark chip
+   look. Opens a near-full-viewport lightbox of galgame's current backdrop. Kept in our top-right control column,
+   NOT galgame's absolutely-positioned right gutter (that would be fragile to couple to). */
+#gal-global-overlay .school-imgview-btn {
+  position: absolute; top: 104px; right: 15px; z-index: 30;
+  width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
+  padding: 0; border-radius: 8px; cursor: pointer;
+  background: rgba(20, 22, 34, 0.72); border: 1px solid rgba(120, 140, 200, 0.42);
+  color: #fff; font-size: 0.95rem; line-height: 1;
+}
+
+/* Regenerate-image button (image-regen.js) — stacked under the 🖼 image-viewer. Clicks mvu-helper's own
+   .auto-img-regen for the current backdrop. Spins while "triggered". */
+#gal-global-overlay .school-imgregen-btn {
+  position: absolute; top: 142px; right: 15px; z-index: 30;
+  width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
+  padding: 0; border-radius: 8px; cursor: pointer;
+  background: rgba(20, 22, 34, 0.72); border: 1px solid rgba(120, 140, 200, 0.42);
+  color: #fff; font-size: 0.95rem; line-height: 1;
+}
+#gal-global-overlay .school-imgregen-btn.is-spinning i { animation: school-spin 0.9s linear infinite; }
+@keyframes school-spin { to { transform: rotate(360deg); } }
+
+/* Right-gutter buttons un-clip (galgame upstream bug, proven live 2026-07-18): galgame's right-edge
+   column — sprite-toggle (👁) + the location/time status-popup triggers — is positioned right:-40px,
+   hung into the gutter past the dialog panel, but clipped by .gal-game-container(overflow:hidden). At
+   galgame's default ~120% dialogue-box scale that gutter is only ~17px, so the 40px hang overflows
+   ~20px and the buttons are cut off (they survive only at ~100% scale / mobile reflow — an untested
+   default-desktop combo). We can't per-side-unclip, and overflow:visible would leak sprites/CG on
+   cards that use them; instead trim the (centred) dialog column ~88px to widen the gutter enough for
+   the buttons at the seeded scale. Tuned for the default scale; at a much larger dialogue-box scale
+   the top-right pills still show location/time. Can't edit galgame (CDN-imported untouched). */
+#gal-global-overlay .gal-dialog-layer { width: calc(100% - 88px) !important; }
+
+/* Overlay anti-collapse (galgame upstream structural quirk, proven live 2026-07-16):
+   galgame appends #gal-global-overlay as a flex child of ST's #chat (display:flex;
+   flex-direction:column) and gives it inline flex-shrink:1 + min-height:0. Immersive mode
+   (沉浸模式 / hideNonLastFloors) works by display:none-ing every sibling .mes row, so the
+   overlay is the ONLY flex item and keeps its full height. With immersive OFF the message
+   floors stay as flex items; flex-shrink:1 + min-height:0 then lets the overlay be squeezed
+   to 0px — entering galgame mode activates an INVISIBLE overlay (toast fires, no UI shows).
+   We can't edit galgame (imported untouched from CDN); pin the ACTIVE overlay's size so it
+   survives the flex squeeze and displays inline (below the chat) even with immersive off.
+   Keyed on .active — only present while the overlay is meant to be shown. */
+#gal-global-overlay.active { flex-shrink: 0 !important; min-height: 70vh !important; }
+`;
+  function injectStyle() {
+    if (!DOC || !DOC.head) return setTimeout(injectStyle, 200);
+    if (DOC.getElementById(STYLE_ID)) return;
+    const el = DOC.createElement("style");
+    el.id = STYLE_ID;
+    el.textContent = CSS;
+    DOC.head.appendChild(el);
+    log.info("style injected");
+  }
+
+  // src/features/i18n/i18n-dict.js
   var DICT = {
     // --- common actions / buttons ---
     "导入": "Import",
@@ -1046,7 +1133,7 @@
     // … add more as harvest surfaces them …
   ];
 
-  // src/i18n.js
+  // src/features/i18n/i18n.js
   var HARVEST = false;
   var ATTRS = ["placeholder", "title", "aria-label"];
   var CJK = /[一-鿿㐀-䶿豈-﫿]/;
@@ -1138,7 +1225,7 @@
     log.info("i18n active" + (HARVEST ? " (harvest mode — run __galI18nDump() when done)" : ""));
   }
 
-  // src/status-menu.js
+  // src/features/menu/status-menu.js
   var MENU_MARKER = "VARIABLE_UPDATE_ENDED";
   function pickMenuScript(scripts) {
     const markers = scripts.filter((s) => (s.replaceString || "").includes(MENU_MARKER));
@@ -1257,7 +1344,7 @@
     return frame;
   }
 
-  // src/fullscreen-guard.js
+  // src/features/galgame-quirks/fullscreen-guard.js
   function currentFullscreenEl() {
     return DOC.fullscreenElement || DOC.webkitFullscreenElement || DOC.mozFullScreenElement || DOC.msFullscreenElement || null;
   }
@@ -1291,17 +1378,73 @@
     log.info("fullscreen-guard active");
   }
 
-  // src/menu-modal.js
+  // src/features/galgame-quirks/generating-guard.js
+  var INDICATOR_ID = "gal-generating-indicator";
+  var POLL_MS = 750;
+  var generating = false;
+  function stBusy() {
+    if (generating) return true;
+    try {
+      if (topWindow.is_send_press) return true;
+      const ctx = topWindow.SillyTavern && topWindow.SillyTavern.getContext && topWindow.SillyTavern.getContext();
+      if (ctx && ctx.streamingProcessor) return true;
+    } catch (e) {
+    }
+    return false;
+  }
+  function clearIfStuck() {
+    const el = DOC.getElementById(INDICATOR_ID);
+    if (!el || !el.classList.contains("active")) return;
+    if (stBusy()) return;
+    el.classList.remove("active");
+    log.info("generating-guard: cleared a stuck Generating indicator (ST idle, no generation)");
+  }
+  function startGeneratingGuard() {
+    const te = window.tavern_events || {};
+    const on = typeof window.eventOn === "function" ? window.eventOn : null;
+    if (on) {
+      if (te.GENERATION_STARTED) {
+        try {
+          on(te.GENERATION_STARTED, (type, option, dry_run) => {
+            if (dry_run) return;
+            if (type === "quiet" && !(option && option.quietToLoud)) return;
+            generating = true;
+          });
+        } catch (e) {
+          log.warn("generating-guard: bind GENERATION_STARTED failed:", e);
+        }
+      }
+      for (const ev of [te.GENERATION_ENDED, te.GENERATION_STOPPED]) {
+        if (ev) {
+          try {
+            on(ev, () => {
+              generating = false;
+              clearIfStuck();
+            });
+          } catch (e) {
+            log.warn("generating-guard: bind end/stop failed:", e);
+          }
+        }
+      }
+    } else {
+      log.warn("generating-guard: TH eventOn absent — relying on ST live flags only");
+    }
+    (topWindow.setInterval || setInterval)(clearIfStuck, POLL_MS);
+    clearIfStuck();
+    log.info("generating-guard active");
+  }
+
+  // src/features/menu/menu-modal.js
   var MODAL_ID = "school-companion-modal";
-  var STYLE_ID = "school-companion-modal-css";
+  var STYLE_ID2 = "school-companion-modal-css";
   var Z_INDEX = 2147483e3;
   function modalParent() {
     return currentFullscreenEl() || DOC.body;
   }
   function ensureStyles() {
-    if (DOC.getElementById(STYLE_ID)) return;
+    if (DOC.getElementById(STYLE_ID2)) return;
     const style = DOC.createElement("style");
-    style.id = STYLE_ID;
+    style.id = STYLE_ID2;
     style.textContent = `
 #${MODAL_ID} {
   position: fixed; inset: 0; z-index: ${Z_INDEX};
@@ -1390,7 +1533,7 @@
     log.info("menu modal opened");
   }
 
-  // src/toolbar.js
+  // src/features/menu/toolbar.js
   var ACTION = "school-stats";
   var OVERLAY_SEL = "#gal-global-overlay";
   var MOBILE_MENU_SEL = "#gal-global-overlay #gal-mobile-menu";
@@ -1435,94 +1578,7 @@
     log.info("toolbar watcher active");
   }
 
-  // src/style.js
-  var STYLE_ID2 = "school-companion-style";
-  var CSS = `
-/* Fullscreen toggle: icon-only. The EN label ("Fullscreen") outgrows the Chinese 全屏 and
-   overlaps the status pills; the icon is self-explanatory. Covers both states (全屏/退出) —
-   a dict blank can't, because 退出 is also the mobile menu's Exit label. */
-.gal-fullscreen-btn span { display: none !important; }
-
-/* School Menu button — upper-left corner (proven live 2026-07-18): galgame's bottom toolbar is a
-   fixed-width, flex-nowrap row already filled to the panel edge by LOG…NEXT, and it sits inside
-   .gal-text-panel (overflow:hidden) — appending our button there clipped it, and reclaiming room
-   fought galgame's own buttons. Instead toolbar.js injects it as a DIRECT child of the overlay
-   (which is already position:relative — its own top-right status pills anchor to it the same way),
-   and we pin it to the top-left corner: out of every crowded row, no clipping at any dialogue scale,
-   mirrors galgame's top-right pills. Keyed on our own class → cannot touch galgame's layout. */
-#gal-global-overlay .school-corner-btn { position: absolute; top: 12px; left: 14px; z-index: 30; }
-
-/* Next-Block control (next-block.js) — the engine's manual time-block advance (World_Calc.BlockDone),
-   surfaced on the overlay under the fullscreen button so it works with the stat-menu hidden. Ticking
-   OUR checkbox drives the real (hidden) stat-menu checkbox. Small dark chip to read over the artwork. */
-#gal-global-overlay .school-nextblock {
-  position: absolute; top: 56px; right: 15px; z-index: 30;
-  display: flex; flex-direction: column; align-items: center; gap: 3px;
-  padding: 4px 9px; border-radius: 8px; cursor: pointer;
-  background: rgba(20, 22, 34, 0.72); border: 1px solid rgba(120, 140, 200, 0.42);
-  color: #fff; font-size: 0.72rem; font-weight: 700; line-height: 1; user-select: none;
-}
-#gal-global-overlay .school-nextblock-cb {
-  width: 16px; height: 16px; margin: 0; cursor: pointer; accent-color: #29b6f6;
-}
-
-/* Image-viewer button (image-viewer.js) — stacked under the Next control (fullscreen · Next · 🖼), same dark chip
-   look. Opens a near-full-viewport lightbox of galgame's current backdrop. Kept in our top-right control column,
-   NOT galgame's absolutely-positioned right gutter (that would be fragile to couple to). */
-#gal-global-overlay .school-imgview-btn {
-  position: absolute; top: 104px; right: 15px; z-index: 30;
-  width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
-  padding: 0; border-radius: 8px; cursor: pointer;
-  background: rgba(20, 22, 34, 0.72); border: 1px solid rgba(120, 140, 200, 0.42);
-  color: #fff; font-size: 0.95rem; line-height: 1;
-}
-
-/* Regenerate-image button (image-regen.js) — stacked under the 🖼 image-viewer. Clicks mvu-helper's own
-   .auto-img-regen for the current backdrop. Spins while "triggered". */
-#gal-global-overlay .school-imgregen-btn {
-  position: absolute; top: 142px; right: 15px; z-index: 30;
-  width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
-  padding: 0; border-radius: 8px; cursor: pointer;
-  background: rgba(20, 22, 34, 0.72); border: 1px solid rgba(120, 140, 200, 0.42);
-  color: #fff; font-size: 0.95rem; line-height: 1;
-}
-#gal-global-overlay .school-imgregen-btn.is-spinning i { animation: school-spin 0.9s linear infinite; }
-@keyframes school-spin { to { transform: rotate(360deg); } }
-
-/* Right-gutter buttons un-clip (galgame upstream bug, proven live 2026-07-18): galgame's right-edge
-   column — sprite-toggle (👁) + the location/time status-popup triggers — is positioned right:-40px,
-   hung into the gutter past the dialog panel, but clipped by .gal-game-container(overflow:hidden). At
-   galgame's default ~120% dialogue-box scale that gutter is only ~17px, so the 40px hang overflows
-   ~20px and the buttons are cut off (they survive only at ~100% scale / mobile reflow — an untested
-   default-desktop combo). We can't per-side-unclip, and overflow:visible would leak sprites/CG on
-   cards that use them; instead trim the (centred) dialog column ~88px to widen the gutter enough for
-   the buttons at the seeded scale. Tuned for the default scale; at a much larger dialogue-box scale
-   the top-right pills still show location/time. Can't edit galgame (CDN-imported untouched). */
-#gal-global-overlay .gal-dialog-layer { width: calc(100% - 88px) !important; }
-
-/* Overlay anti-collapse (galgame upstream structural quirk, proven live 2026-07-16):
-   galgame appends #gal-global-overlay as a flex child of ST's #chat (display:flex;
-   flex-direction:column) and gives it inline flex-shrink:1 + min-height:0. Immersive mode
-   (沉浸模式 / hideNonLastFloors) works by display:none-ing every sibling .mes row, so the
-   overlay is the ONLY flex item and keeps its full height. With immersive OFF the message
-   floors stay as flex items; flex-shrink:1 + min-height:0 then lets the overlay be squeezed
-   to 0px — entering galgame mode activates an INVISIBLE overlay (toast fires, no UI shows).
-   We can't edit galgame (imported untouched from CDN); pin the ACTIVE overlay's size so it
-   survives the flex squeeze and displays inline (below the chat) even with immersive off.
-   Keyed on .active — only present while the overlay is meant to be shown. */
-#gal-global-overlay.active { flex-shrink: 0 !important; min-height: 70vh !important; }
-`;
-  function injectStyle() {
-    if (!DOC || !DOC.head) return setTimeout(injectStyle, 200);
-    if (DOC.getElementById(STYLE_ID2)) return;
-    const el = DOC.createElement("style");
-    el.id = STYLE_ID2;
-    el.textContent = CSS;
-    DOC.head.appendChild(el);
-    log.info("style injected");
-  }
-
-  // src/beat-shaper-core.js
+  // src/features/beat-shaper/beat-shaper-core.js
   var SCENE_NAME_RE = /^msg(\d+)_scene_(\d+)(?:_([0-9a-z]+))?$/;
   function sceneName(messageId, n, hash) {
     const base = `msg${messageId}_scene_${n}`;
@@ -1662,7 +1718,77 @@ ${m2}
     return parts.join("");
   }
 
-  // src/image-seam.js
+  // src/features/beat-shaper/beat-shaper.js
+  var inFlight = /* @__PURE__ */ new Set();
+  var deferralLogged = /* @__PURE__ */ new Set();
+  function rawMessage(id) {
+    try {
+      const arr = window.getChatMessages(id);
+      const msg = Array.isArray(arr) ? arr[0] : arr;
+      if (!msg) return null;
+      if (msg.role && msg.role !== "assistant") return null;
+      return typeof msg.message === "string" ? msg.message : typeof msg.mes === "string" ? msg.mes : null;
+    } catch (e) {
+      log.warn(`beat-shaper: getChatMessages(${id}) failed:`, e);
+      return null;
+    }
+  }
+  async function onMessageEvent(messageId) {
+    const id = Number(messageId);
+    if (!Number.isFinite(id) || id < 0) return;
+    if (inFlight.has(id)) return;
+    if (!topWindow.galgame) return;
+    const raw = rawMessage(id);
+    if (raw === null) return;
+    const { text, changed, deferred, stats } = shapeMessage(raw, id);
+    if (deferred) {
+      const key = `${id}:${deferred}`;
+      if (!deferralLogged.has(key)) {
+        deferralLogged.add(key);
+        log.info(`beat-shaper msg=${id}: deferred (${deferred}) — will retry on next message event`);
+      }
+      return;
+    }
+    deferralLogged.forEach((k) => {
+      if (k.startsWith(`${id}:`)) deferralLogged.delete(k);
+    });
+    if (!changed) return;
+    inFlight.add(id);
+    try {
+      await window.setChatMessages([{ message_id: id, message: text }], { refresh: "affected" });
+      log.info(
+        `beat-shaper msg=${id}:${stats.renamed ? " gametxt→maintext" : ""} wrapped=${stats.wrapped}p scenes=${stats.scenes}${stats.scenes ? " (hoisted #1)" : ""} strippedScenes=${stats.strippedScenes}${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ""}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ""}`
+      );
+    } catch (e) {
+      log.warn(`beat-shaper: setChatMessages(${id}) failed — message left unshaped:`, e);
+    } finally {
+      inFlight.delete(id);
+    }
+  }
+  function startBeatShaper() {
+    if (typeof window.getChatMessages !== "function" || typeof window.setChatMessages !== "function" || typeof window.eventOn !== "function") {
+      log.warn("beat-shaper: TH globals (getChatMessages/setChatMessages/eventOn) absent — shaper disabled");
+      return;
+    }
+    const te = window.tavern_events || {};
+    let bound = 0;
+    for (const ev of [te.MESSAGE_RECEIVED, te.MESSAGE_UPDATED]) {
+      if (!ev) continue;
+      try {
+        window.eventOn(ev, onMessageEvent);
+        bound++;
+      } catch (e) {
+        log.warn(`beat-shaper: eventOn(${ev}) failed:`, e);
+      }
+    }
+    if (bound === 0) {
+      log.warn("beat-shaper: no tavern message events available — shaper disabled");
+      return;
+    }
+    log.info(`beat-shaper active (${bound} event(s) bound)`);
+  }
+
+  // src/features/image/image-seam.js
   var DB_NAME = "GalgameUIPluginDB";
   var STORE = "backgrounds";
   var CURRENT_PACK_LS = "galgame-ui-plugin_current_pack";
@@ -1756,7 +1882,7 @@ ${m2}
     }
     return pairs;
   }
-  function rawMessage(id) {
+  function rawMessage2(id) {
     try {
       const arr = window.getChatMessages(id);
       const msg = Array.isArray(arr) ? arr[0] : arr;
@@ -1808,7 +1934,7 @@ ${m2}
     }
   }
   async function processMessage(id) {
-    const raw = rawMessage(id);
+    const raw = rawMessage2(id);
     if (!raw) return;
     const pairs = pairImagesToScenes(raw);
     if (!pairs.length) return;
@@ -1963,133 +2089,172 @@ ${m2}
     log.info("image-seam active");
   }
 
-  // src/beat-shaper.js
-  var inFlight = /* @__PURE__ */ new Set();
-  var deferralLogged = /* @__PURE__ */ new Set();
-  function rawMessage2(id) {
-    try {
-      const arr = window.getChatMessages(id);
-      const msg = Array.isArray(arr) ? arr[0] : arr;
-      if (!msg) return null;
-      if (msg.role && msg.role !== "assistant") return null;
-      return typeof msg.message === "string" ? msg.message : typeof msg.mes === "string" ? msg.mes : null;
-    } catch (e) {
-      log.warn(`beat-shaper: getChatMessages(${id}) failed:`, e);
-      return null;
-    }
+  // src/features/image/image-viewer.js
+  var OVERLAY_SEL2 = "#gal-global-overlay";
+  var BTN_CLASS = "school-imgview-btn";
+  var MODAL_ID2 = "school-imgview-modal";
+  var Z_INDEX2 = 2147483e3;
+  function modalParent2() {
+    return currentFullscreenEl() || DOC.body;
   }
-  async function onMessageEvent(messageId) {
-    const id = Number(messageId);
-    if (!Number.isFinite(id) || id < 0) return;
-    if (inFlight.has(id)) return;
-    if (!topWindow.galgame) return;
-    const raw = rawMessage2(id);
-    if (raw === null) return;
-    const { text, changed, deferred, stats } = shapeMessage(raw, id);
-    if (deferred) {
-      const key = `${id}:${deferred}`;
-      if (!deferralLogged.has(key)) {
-        deferralLogged.add(key);
-        log.info(`beat-shaper msg=${id}: deferred (${deferred}) — will retry on next message event`);
-      }
-      return;
+  function currentBgUrl() {
+    const ov = DOC.querySelector(OVERLAY_SEL2);
+    if (!ov) return null;
+    for (const sel of [".gal-bg-front", ".gal-bg-base"]) {
+      const el = ov.querySelector(sel);
+      if (!el) continue;
+      const bg = getComputedStyle(el).backgroundImage;
+      const m = bg && bg.match(/url\((['"]?)(.*?)\1\)/);
+      if (m && m[2]) return m[2];
     }
-    deferralLogged.forEach((k) => {
-      if (k.startsWith(`${id}:`)) deferralLogged.delete(k);
-    });
-    if (!changed) return;
-    inFlight.add(id);
-    try {
-      await window.setChatMessages([{ message_id: id, message: text }], { refresh: "affected" });
-      log.info(
-        `beat-shaper msg=${id}:${stats.renamed ? " gametxt→maintext" : ""} wrapped=${stats.wrapped}p scenes=${stats.scenes}${stats.scenes ? " (hoisted #1)" : ""} strippedScenes=${stats.strippedScenes}${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ""}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ""}`
-      );
-    } catch (e) {
-      log.warn(`beat-shaper: setChatMessages(${id}) failed — message left unshaped:`, e);
-    } finally {
-      inFlight.delete(id);
-    }
+    return null;
   }
-  function startBeatShaper() {
-    if (typeof window.getChatMessages !== "function" || typeof window.setChatMessages !== "function" || typeof window.eventOn !== "function") {
-      log.warn("beat-shaper: TH globals (getChatMessages/setChatMessages/eventOn) absent — shaper disabled");
-      return;
-    }
-    const te = window.tavern_events || {};
-    let bound = 0;
-    for (const ev of [te.MESSAGE_RECEIVED, te.MESSAGE_UPDATED]) {
-      if (!ev) continue;
+  var cleanup = null;
+  function closeImageViewer() {
+    if (cleanup) {
       try {
-        window.eventOn(ev, onMessageEvent);
-        bound++;
+        cleanup();
       } catch (e) {
-        log.warn(`beat-shaper: eventOn(${ev}) failed:`, e);
+        log.warn("image-viewer: cleanup failed:", e);
       }
+      cleanup = null;
     }
-    if (bound === 0) {
-      log.warn("beat-shaper: no tavern message events available — shaper disabled");
-      return;
-    }
-    log.info(`beat-shaper active (${bound} event(s) bound)`);
+    const el = DOC.getElementById(MODAL_ID2);
+    if (el) el.remove();
   }
-
-  // src/generating-guard.js
-  var INDICATOR_ID = "gal-generating-indicator";
-  var POLL_MS = 750;
-  var generating = false;
-  function stBusy() {
-    if (generating) return true;
-    try {
-      if (topWindow.is_send_press) return true;
-      const ctx = topWindow.SillyTavern && topWindow.SillyTavern.getContext && topWindow.SillyTavern.getContext();
-      if (ctx && ctx.streamingProcessor) return true;
-    } catch (e) {
-    }
-    return false;
-  }
-  function clearIfStuck() {
-    const el = DOC.getElementById(INDICATOR_ID);
-    if (!el || !el.classList.contains("active")) return;
-    if (stBusy()) return;
-    el.classList.remove("active");
-    log.info("generating-guard: cleared a stuck Generating indicator (ST idle, no generation)");
-  }
-  function startGeneratingGuard() {
-    const te = window.tavern_events || {};
-    const on = typeof window.eventOn === "function" ? window.eventOn : null;
-    if (on) {
-      if (te.GENERATION_STARTED) {
-        try {
-          on(te.GENERATION_STARTED, (type, option, dry_run) => {
-            if (dry_run) return;
-            if (type === "quiet" && !(option && option.quietToLoud)) return;
-            generating = true;
-          });
-        } catch (e) {
-          log.warn("generating-guard: bind GENERATION_STARTED failed:", e);
-        }
-      }
-      for (const ev of [te.GENERATION_ENDED, te.GENERATION_STOPPED]) {
-        if (ev) {
-          try {
-            on(ev, () => {
-              generating = false;
-              clearIfStuck();
-            });
-          } catch (e) {
-            log.warn("generating-guard: bind end/stop failed:", e);
-          }
-        }
-      }
+  function openImageViewer() {
+    if (DOC.getElementById(MODAL_ID2)) return;
+    const url = currentBgUrl();
+    const wrap = DOC.createElement("div");
+    wrap.id = MODAL_ID2;
+    wrap.style.cssText = `position:fixed;inset:0;z-index:${Z_INDEX2};width:100vw;height:100dvh;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.9);cursor:zoom-out;`;
+    if (url) {
+      const img = DOC.createElement("img");
+      img.src = url;
+      img.alt = "Current scene image";
+      img.style.cssText = "max-width:96vw;max-height:96dvh;width:auto;height:auto;object-fit:contain;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,0.7);cursor:default;";
+      img.addEventListener("click", (e) => e.stopPropagation());
+      wrap.appendChild(img);
     } else {
-      log.warn("generating-guard: TH eventOn absent — relying on ST live flags only");
+      const msg = DOC.createElement("div");
+      msg.textContent = "No image is showing right now.";
+      msg.style.cssText = "color:#ccc;font-size:1rem;";
+      wrap.appendChild(msg);
     }
-    (topWindow.setInterval || setInterval)(clearIfStuck, POLL_MS);
-    clearIfStuck();
-    log.info("generating-guard active");
+    const close = DOC.createElement("button");
+    close.type = "button";
+    close.setAttribute("aria-label", "Close");
+    close.textContent = "✕";
+    close.style.cssText = "position:absolute;top:14px;right:16px;background:rgba(0,0,0,0.55);border:0;color:#fff;font-size:1.3rem;line-height:1;cursor:pointer;padding:6px 12px;border-radius:8px;";
+    wrap.appendChild(close);
+    wrap.addEventListener("click", (e) => {
+      if (e.target === wrap || e.target === close) closeImageViewer();
+    });
+    const onKey = (e) => {
+      if (e.key === "Escape") closeImageViewer();
+    };
+    DOC.addEventListener("keydown", onKey);
+    cleanup = () => DOC.removeEventListener("keydown", onKey);
+    modalParent2().appendChild(wrap);
+    log.info("image-viewer: opened (" + (url ? "showing current backdrop" : "no image") + ")");
+  }
+  function injectButton() {
+    const overlay = DOC.querySelector(OVERLAY_SEL2);
+    if (!overlay || overlay.querySelector("." + BTN_CLASS)) return false;
+    const btn = DOC.createElement("button");
+    btn.type = "button";
+    btn.className = BTN_CLASS;
+    btn.title = "View the current image";
+    btn.setAttribute("aria-label", "View the current image");
+    btn.innerHTML = '<i class="fa-solid fa-image"></i>';
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openImageViewer();
+    });
+    overlay.appendChild(btn);
+    return true;
+  }
+  function startImageViewer() {
+    if (!DOC || !DOC.body) return setTimeout(startImageViewer, 200);
+    let scheduled2 = false;
+    const observer2 = new MutationObserver(() => {
+      if (scheduled2) return;
+      scheduled2 = true;
+      requestAnimationFrame(() => {
+        scheduled2 = false;
+        injectButton();
+      });
+    });
+    observer2.observe(DOC.body, { childList: true, subtree: true });
+    injectButton();
+    log.info("image-viewer active");
   }
 
-  // src/choices.js
+  // src/features/image/image-regen.js
+  var OVERLAY_SEL3 = "#gal-global-overlay";
+  var BTN_CLASS2 = "school-imgregen-btn";
+  function basename(u) {
+    return (u || "").split("/").pop().split("?")[0];
+  }
+  function regenForCurrentBg() {
+    const target = basename(currentBgUrl());
+    if (!target) return null;
+    for (const img of DOC.querySelectorAll('[class*="auto-img-wrap"] img')) {
+      if (basename(img.getAttribute("src") || img.src) === target) {
+        const wrap = img.closest('[class*="auto-img-wrap"]');
+        const regen = wrap && wrap.querySelector('[class*="auto-img-regen"]');
+        if (regen) return regen;
+      }
+    }
+    return null;
+  }
+  function fireRegen(btn) {
+    const span = regenForCurrentBg();
+    if (!span) {
+      log.warn("image-regen: no regen control matches the current backdrop — nothing to regenerate");
+      return false;
+    }
+    span.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    log.info("image-regen: triggered regenerate for the current backdrop");
+    if (btn) {
+      btn.classList.add("is-spinning");
+      setTimeout(() => btn.classList.remove("is-spinning"), 2e3);
+    }
+    return true;
+  }
+  function injectButton2() {
+    const overlay = DOC.querySelector(OVERLAY_SEL3);
+    if (!overlay || overlay.querySelector("." + BTN_CLASS2)) return false;
+    const btn = DOC.createElement("button");
+    btn.type = "button";
+    btn.className = BTN_CLASS2;
+    btn.title = "Regenerate the current image";
+    btn.setAttribute("aria-label", "Regenerate the current image");
+    btn.innerHTML = '<i class="fa-solid fa-arrows-rotate"></i>';
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      fireRegen(btn);
+    });
+    overlay.appendChild(btn);
+    return true;
+  }
+  function startImageRegen() {
+    if (!DOC || !DOC.body) return setTimeout(startImageRegen, 200);
+    let scheduled2 = false;
+    const observer2 = new MutationObserver(() => {
+      if (scheduled2) return;
+      scheduled2 = true;
+      requestAnimationFrame(() => {
+        scheduled2 = false;
+        injectButton2();
+      });
+    });
+    observer2.observe(DOC.body, { childList: true, subtree: true });
+    injectButton2();
+    log.info("image-regen active");
+  }
+
+  // src/features/galgame-bridge/choices.js
   var INJECT_KEY = "galgame-companion-choices";
   var OPTION_SHEET_KEY = "sheet_gal_companion_options";
   var OPTION_SHEET_NAME = "选项表";
@@ -2198,7 +2363,7 @@ ${m2}
     log.info("choices active (inject + 选项表 shim reader)");
   }
 
-  // src/location-time-bridge.js
+  // src/features/galgame-bridge/location-time-bridge.js
   var FLOOR_LOOKBACK3 = 8;
   var SHEET_UID = "sheet_global_data";
   var SHEET_NAME = "全局数据表";
@@ -2321,11 +2486,11 @@ ${m2}
     }
   }
 
-  // src/next-block.js
+  // src/features/galgame-bridge/next-block.js
   var WRAP_CLASS = "school-nextblock";
   var CB_CLASS = "school-nextblock-cb";
   var BIND_PATH = "World_Calc.BlockDone";
-  var OVERLAY_SEL2 = "#gal-global-overlay";
+  var OVERLAY_SEL4 = "#gal-global-overlay";
   var snapshot = null;
   var snapshotMid = -1;
   var HTML = `<label class="${WRAP_CLASS}" title="Advance one time block — uncheck to undo (until you send a message)"><span class="school-nextblock-label">Next</span><input type="checkbox" class="${CB_CLASS}" aria-label="Advance one time block; uncheck to undo" /></label>`;
@@ -2409,7 +2574,7 @@ ${m2}
     log.info("next-block: new generation — committed the turn (undo cleared, box reset)");
   }
   function injectInto2() {
-    const overlay = DOC.querySelector(OVERLAY_SEL2);
+    const overlay = DOC.querySelector(OVERLAY_SEL4);
     if (!overlay || overlay.querySelector(`.${WRAP_CLASS}`)) return false;
     overlay.insertAdjacentHTML("beforeend", HTML);
     const chip = overlay.querySelector(`.${WRAP_CLASS}`);
@@ -2469,172 +2634,7 @@ ${m2}
     log.info("next-block active");
   }
 
-  // src/image-viewer.js
-  var OVERLAY_SEL3 = "#gal-global-overlay";
-  var BTN_CLASS = "school-imgview-btn";
-  var MODAL_ID2 = "school-imgview-modal";
-  var Z_INDEX2 = 2147483e3;
-  function modalParent2() {
-    return currentFullscreenEl() || DOC.body;
-  }
-  function currentBgUrl() {
-    const ov = DOC.querySelector(OVERLAY_SEL3);
-    if (!ov) return null;
-    for (const sel of [".gal-bg-front", ".gal-bg-base"]) {
-      const el = ov.querySelector(sel);
-      if (!el) continue;
-      const bg = getComputedStyle(el).backgroundImage;
-      const m = bg && bg.match(/url\((['"]?)(.*?)\1\)/);
-      if (m && m[2]) return m[2];
-    }
-    return null;
-  }
-  var cleanup = null;
-  function closeImageViewer() {
-    if (cleanup) {
-      try {
-        cleanup();
-      } catch (e) {
-        log.warn("image-viewer: cleanup failed:", e);
-      }
-      cleanup = null;
-    }
-    const el = DOC.getElementById(MODAL_ID2);
-    if (el) el.remove();
-  }
-  function openImageViewer() {
-    if (DOC.getElementById(MODAL_ID2)) return;
-    const url = currentBgUrl();
-    const wrap = DOC.createElement("div");
-    wrap.id = MODAL_ID2;
-    wrap.style.cssText = `position:fixed;inset:0;z-index:${Z_INDEX2};width:100vw;height:100dvh;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.9);cursor:zoom-out;`;
-    if (url) {
-      const img = DOC.createElement("img");
-      img.src = url;
-      img.alt = "Current scene image";
-      img.style.cssText = "max-width:96vw;max-height:96dvh;width:auto;height:auto;object-fit:contain;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,0.7);cursor:default;";
-      img.addEventListener("click", (e) => e.stopPropagation());
-      wrap.appendChild(img);
-    } else {
-      const msg = DOC.createElement("div");
-      msg.textContent = "No image is showing right now.";
-      msg.style.cssText = "color:#ccc;font-size:1rem;";
-      wrap.appendChild(msg);
-    }
-    const close = DOC.createElement("button");
-    close.type = "button";
-    close.setAttribute("aria-label", "Close");
-    close.textContent = "✕";
-    close.style.cssText = "position:absolute;top:14px;right:16px;background:rgba(0,0,0,0.55);border:0;color:#fff;font-size:1.3rem;line-height:1;cursor:pointer;padding:6px 12px;border-radius:8px;";
-    wrap.appendChild(close);
-    wrap.addEventListener("click", (e) => {
-      if (e.target === wrap || e.target === close) closeImageViewer();
-    });
-    const onKey = (e) => {
-      if (e.key === "Escape") closeImageViewer();
-    };
-    DOC.addEventListener("keydown", onKey);
-    cleanup = () => DOC.removeEventListener("keydown", onKey);
-    modalParent2().appendChild(wrap);
-    log.info("image-viewer: opened (" + (url ? "showing current backdrop" : "no image") + ")");
-  }
-  function injectButton() {
-    const overlay = DOC.querySelector(OVERLAY_SEL3);
-    if (!overlay || overlay.querySelector("." + BTN_CLASS)) return false;
-    const btn = DOC.createElement("button");
-    btn.type = "button";
-    btn.className = BTN_CLASS;
-    btn.title = "View the current image";
-    btn.setAttribute("aria-label", "View the current image");
-    btn.innerHTML = '<i class="fa-solid fa-image"></i>';
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      openImageViewer();
-    });
-    overlay.appendChild(btn);
-    return true;
-  }
-  function startImageViewer() {
-    if (!DOC || !DOC.body) return setTimeout(startImageViewer, 200);
-    let scheduled2 = false;
-    const observer2 = new MutationObserver(() => {
-      if (scheduled2) return;
-      scheduled2 = true;
-      requestAnimationFrame(() => {
-        scheduled2 = false;
-        injectButton();
-      });
-    });
-    observer2.observe(DOC.body, { childList: true, subtree: true });
-    injectButton();
-    log.info("image-viewer active");
-  }
-
-  // src/image-regen.js
-  var OVERLAY_SEL4 = "#gal-global-overlay";
-  var BTN_CLASS2 = "school-imgregen-btn";
-  function basename(u) {
-    return (u || "").split("/").pop().split("?")[0];
-  }
-  function regenForCurrentBg() {
-    const target = basename(currentBgUrl());
-    if (!target) return null;
-    for (const img of DOC.querySelectorAll('[class*="auto-img-wrap"] img')) {
-      if (basename(img.getAttribute("src") || img.src) === target) {
-        const wrap = img.closest('[class*="auto-img-wrap"]');
-        const regen = wrap && wrap.querySelector('[class*="auto-img-regen"]');
-        if (regen) return regen;
-      }
-    }
-    return null;
-  }
-  function fireRegen(btn) {
-    const span = regenForCurrentBg();
-    if (!span) {
-      log.warn("image-regen: no regen control matches the current backdrop — nothing to regenerate");
-      return false;
-    }
-    span.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    log.info("image-regen: triggered regenerate for the current backdrop");
-    if (btn) {
-      btn.classList.add("is-spinning");
-      setTimeout(() => btn.classList.remove("is-spinning"), 2e3);
-    }
-    return true;
-  }
-  function injectButton2() {
-    const overlay = DOC.querySelector(OVERLAY_SEL4);
-    if (!overlay || overlay.querySelector("." + BTN_CLASS2)) return false;
-    const btn = DOC.createElement("button");
-    btn.type = "button";
-    btn.className = BTN_CLASS2;
-    btn.title = "Regenerate the current image";
-    btn.setAttribute("aria-label", "Regenerate the current image");
-    btn.innerHTML = '<i class="fa-solid fa-arrows-rotate"></i>';
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      fireRegen(btn);
-    });
-    overlay.appendChild(btn);
-    return true;
-  }
-  function startImageRegen() {
-    if (!DOC || !DOC.body) return setTimeout(startImageRegen, 200);
-    let scheduled2 = false;
-    const observer2 = new MutationObserver(() => {
-      if (scheduled2) return;
-      scheduled2 = true;
-      requestAnimationFrame(() => {
-        scheduled2 = false;
-        injectButton2();
-      });
-    });
-    observer2.observe(DOC.body, { childList: true, subtree: true });
-    injectButton2();
-    log.info("image-regen active");
-  }
-
-  // src/index.js
+  // src/app/index.js
   log.info(`v${VERSION} loading`);
   startGalgameDefaults();
   injectStyle();

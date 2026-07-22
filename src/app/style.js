@@ -2,7 +2,7 @@
 // Only cosmetic nudges that a dictionary swap can't express. Keep tiny; anything galgame
 // renames simply stops matching (graceful).
 
-import { DOC, log } from './env.js';
+import { DOC, log } from '../env.js';
 
 const STYLE_ID = 'school-companion-style';
 

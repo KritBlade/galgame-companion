@@ -1,0 +1,7 @@
+{
+  "id": "school-galgame-companion-dev",
+  "name": "galgame-companion (DEV — ArtificKoi)",
+  "content": "import 'http://127.0.0.1:5500/dist/galgame-companion.dist.js?v=dev1'",
+  "info": "LOCAL DEV build of galgame-companion, for smoke-testing the ArtificKoi (School v3) card. Distinct `id` from the released `galgame-companion.import.json`, so both can sit in the Tavern-Helper script library at once — keep only ONE enabled or the whole companion starts twice. Requires `npm run serve` (dev-server on :5500, sends the CORS headers TH's srcdoc iframe needs) and `npm run build` / `npm run dev` for a fresh dist. Cache-bust by bumping ?v=devN — TH's iframe caches the module URL. Nothing here touches mvu-helper: the ST extension keeps running whatever is deployed, so a companion-only change can be tested in isolation.",
+  "buttons": []
+}

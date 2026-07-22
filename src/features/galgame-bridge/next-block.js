@@ -25,7 +25,7 @@
 // (wire_resolver). We target the NEWEST reply's iframe (highest id) so both advance and undo hit the current turn,
 // not an old snapshot (schoolv3 concurrency audit). Degrades to a no-op + warn if unreachable — never throws.
 
-import { DOC, topWindow, log } from './env.js';
+import { DOC, topWindow, log } from '../../env.js';
 import { refreshLocationTimePills } from './location-time-bridge.js';
 
 const WRAP_CLASS = 'school-nextblock';

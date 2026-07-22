@@ -251,12 +251,32 @@ fixes bump `0.X.N`; a new capability bumps `0.X` (README §Versioning).
 
 ## Where things live
 
+Layout follows the standard template in `Dev/CLAUDE.md` → *Directory structure* (adopted 2026-07-22;
+see `plans/src-structure-plan.md`).
+
+```
+src/
+├── app/                    bootstrap: index.js (esbuild entry) · style.js · galgame-defaults.js
+├── env.js                  host wrapper — parent-document access, logging, VERSION
+└── features/
+    ├── i18n/               the zh-TW/EN string overlay (i18n-dict.js is 56 KB — internal)
+    ├── menu/               toolbar button → modal → StatusMenu
+    ├── image/              mvu-helper seam · lightbox viewer · regen button
+    ├── beat-shaper/        <p>-wrap prose + msg-scoped <background scene>
+    ├── galgame-bridge/     feeds galgame's own UI: choices sheet · location/time pills · Next-Block
+    └── galgame-quirks/     workarounds for upstream misbehaviour (fullscreen leak, stuck "Generating")
+```
+
+**The one import rule:** a cross-feature import must end at `features/<name>/index.js` — the barrel is
+the feature's public API. Reaching a file inside another feature is a violation you can see in a diff.
+Anything not re-exported by a barrel is internal and free to change.
+
 | Concern | File |
 | --- | --- |
 | Parent document + logging + `VERSION` | `src/env.js` |
-| CSS overrides / structural quirks | `src/style.js` |
-| Behavioural leak-guards | `src/*-guard.js` (e.g. `fullscreen-guard.js`) |
-| Wiring (start order) | `src/index.js` |
+| CSS overrides / structural quirks | `src/app/style.js` |
+| Behavioural leak-guards | `src/features/galgame-quirks/` |
+| Wiring (start order) | `src/app/index.js` |
 | Build (esbuild → `dist/`) | `build.mjs`, `npm run dev` |
 
 Design docs (build phases, image-seam contract) live in the MvuGameMaker project:

@@ -39,7 +39,7 @@
 // overwriting user tweaks to managed fields one time. Logic-only changes ship as a normal script
 // release with NO bump — converged installs skip straight through. (1→2 was the UAT re-heal.)
 
-import { topWindow, log } from './env.js';
+import { topWindow, log } from '../env.js';
 
 // galgame constants (SCRIPT_ID = 'galgame-ui-plugin'; lock from init.js. Re-verify BOTH on an
 // upstream bump, GCP §10.4 — if the lock is renamed we just reload once unnecessarily, still correct).

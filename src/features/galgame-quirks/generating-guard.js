@@ -14,7 +14,7 @@
 // in flight, OR ST's own is_send_press / streamingProcessor is set. We mirror galgame's own filter
 // (ignore dry-run prompt-builds + background 'quiet' gens) so those never count as generating.
 
-import { DOC, topWindow, log } from './env.js';
+import { DOC, topWindow, log } from '../../env.js';
 
 const INDICATOR_ID = 'gal-generating-indicator';
 const POLL_MS = 750;

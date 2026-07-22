@@ -12,7 +12,7 @@
 // symptom: when the quit button is clicked, if the document is still in native fullscreen, exit it.
 // exitFullscreen needs no user gesture (only ENTERING does), and we're inside a click anyway.
 
-import { DOC, log } from './env.js';
+import { DOC, log } from '../../env.js';
 
 // The document's current native-fullscreen element (cross-vendor), or null. Exported so other modules
 // (menu-modal) can mount INTO it — native fullscreen paints only the fullscreen subtree in the browser's

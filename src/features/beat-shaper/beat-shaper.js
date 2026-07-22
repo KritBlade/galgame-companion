@@ -18,7 +18,7 @@
 //   .mes_text MutationObserver picks the re-render up and re-parses. Belt-and-braces: the
 //   transform is idempotent, and a per-floor in-flight set blocks re-entry.
 
-import { topWindow, log } from './env.js';
+import { topWindow, log } from '../../env.js';
 import { shapeMessage } from './beat-shaper-core.js';
 
 const inFlight = new Set(); // message ids currently being shaped (re-entrancy guard)

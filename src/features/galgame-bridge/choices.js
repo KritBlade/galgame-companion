@@ -22,7 +22,7 @@
 // GUARD: the inject is re-asserted per generation and cleared when galgame is absent, so a non-galgame
 // chat sharing this script never gets the instruction.
 
-import { DOC, topWindow, log } from './env.js';
+import { DOC, topWindow, log } from '../../env.js';
 
 const INJECT_KEY = 'galgame-companion-choices';
 const OPTION_SHEET_KEY = 'sheet_gal_companion_options'; // galgame REQUIRES a "sheet_"-prefixed key (getOptionsFromDatabase)

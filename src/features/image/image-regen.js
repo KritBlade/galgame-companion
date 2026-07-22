@@ -9,7 +9,7 @@
 // element still fires its click listeners under a programmatic dispatch, so it works even with the row hidden.
 // galgame stays untouched (we only READ its background layer + click an existing mvu-helper control).
 
-import { DOC, log } from './env.js';
+import { DOC, log } from '../../env.js';
 import { currentBgUrl } from './image-viewer.js';
 
 const OVERLAY_SEL = '#gal-global-overlay';

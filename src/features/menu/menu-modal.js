@@ -8,9 +8,9 @@
 // it on a small screen — the user returns to galgame with the ✕ button. Sizing lives in an
 // injected stylesheet (not inline) so a media query can flip it responsively.
 
-import { DOC, log } from './env.js';
+import { DOC, log } from '../../env.js';
 import { mountStatusMenu } from './status-menu.js';
-import { currentFullscreenEl } from './fullscreen-guard.js';
+import { currentFullscreenEl } from '../galgame-quirks/index.js';
 
 const MODAL_ID = 'school-companion-modal';
 const STYLE_ID = 'school-companion-modal-css';

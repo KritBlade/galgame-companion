@@ -13,7 +13,7 @@
 // top-right status pills anchor to it), so a direct-child button + corner CSS (style.js) sits clear
 // of every crowded row at any dialogue scale.
 
-import { DOC, log } from './env.js';
+import { DOC, log } from '../../env.js';
 import { openMenuModal } from './menu-modal.js';
 
 export const ACTION = 'school-stats';

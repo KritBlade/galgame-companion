@@ -1,6 +1,6 @@
 // beat-shaper-core unit tests — pure transform (plan GALGAME_DUMB_TERMINAL_PLAN.md §5.1). v0.1
 import { describe, it, expect } from 'vitest';
-import { shapeMessage, sceneName, shortHash, SCENE_NAME_RE } from '../src/beat-shaper-core.js';
+import { shapeMessage, sceneName, shortHash, SCENE_NAME_RE } from '../src/features/beat-shaper/beat-shaper-core.js';
 
 // A rendered image block exactly as mvu-helper's imagegen REPLACE path writes it.
 const imgSrc = (n) => `http://127.0.0.1:8000/img${n}.png`;

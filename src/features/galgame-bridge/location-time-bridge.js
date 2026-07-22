@@ -11,7 +11,7 @@
 //
 // GUARD: install ONLY if nothing else owns AutoCardUpdaterAPI — never clobber a real AutoCardUpdater.
 
-import { topWindow, log } from './env.js';
+import { topWindow, log } from '../../env.js';
 import { getOptionSheet } from './choices.js';
 
 const FLOOR_LOOKBACK = 8;              // newest floor with stat_data (MVU carries it forward)

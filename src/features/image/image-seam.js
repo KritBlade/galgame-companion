@@ -12,8 +12,8 @@
 // `backgrounds` (keyPath `id`), record shape from db/backgrounds.js saveBackground(); packId from
 // localStorage `galgame-ui-plugin_current_pack` (default `pack_default`), db/image-packs.js.
 
-import { DOC, topWindow, log } from './env.js';
-import { SCENE_NAME_RE } from './beat-shaper-core.js';
+import { DOC, topWindow, log } from '../../env.js';
+import { SCENE_NAME_RE } from '../beat-shaper/index.js';
 
 // ── galgame constants (do NOT drift — re-verify on an upstream bump, GCP §10.4 §5) ──
 const DB_NAME = 'GalgameUIPluginDB';

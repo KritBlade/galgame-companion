@@ -7,8 +7,8 @@
 // (same top-layer reason as menu-modal) so it shows over galgame's fullscreen stage. galgame stays untouched —
 // we only READ its background layers.
 
-import { DOC, log } from './env.js';
-import { currentFullscreenEl } from './fullscreen-guard.js';
+import { DOC, log } from '../../env.js';
+import { currentFullscreenEl } from '../galgame-quirks/index.js';
 
 const OVERLAY_SEL = '#gal-global-overlay';
 const BTN_CLASS = 'school-imgview-btn';

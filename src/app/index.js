@@ -10,20 +10,15 @@
 //                     · 4 image seam: saveBackground writer + ForceImageType flip (G4b)
 // ============================================================
 
-import { SCRIPT_NAME, VERSION, log } from './env.js';
+import { SCRIPT_NAME, VERSION, log } from '../env.js';
 import { startGalgameDefaults } from './galgame-defaults.js';
-import { startI18n } from './i18n.js';
-import { startToolbar } from './toolbar.js';
 import { injectStyle } from './style.js';
-import { startFullscreenGuard } from './fullscreen-guard.js';
-import { startImageSeam } from './image-seam.js';
-import { startBeatShaper } from './beat-shaper.js';
-import { startGeneratingGuard } from './generating-guard.js';
-import { startLocationTimeBridge } from './location-time-bridge.js';
-import { startChoices } from './choices.js';
-import { startNextBlock } from './next-block.js';
-import { startImageViewer } from './image-viewer.js';
-import { startImageRegen } from './image-regen.js';
+import { startI18n } from '../features/i18n/index.js';
+import { startToolbar } from '../features/menu/index.js';
+import { startFullscreenGuard, startGeneratingGuard } from '../features/galgame-quirks/index.js';
+import { startImageSeam, startImageViewer, startImageRegen } from '../features/image/index.js';
+import { startBeatShaper } from '../features/beat-shaper/index.js';
+import { startChoices, startLocationTimeBridge, startNextBlock } from '../features/galgame-bridge/index.js';
 
 log.info(`v${VERSION} loading`);
 

@@ -1,4 +1,4 @@
-// galgame-companion build — bundles src/ into one IIFE dist file (mirrors galgame's
+// galgame-companion build — bundles src/ (entry src/app/index.js) into one IIFE dist file (mirrors galgame's
 // esbuild setup, minus its CSS/vendor plumbing we don't need). v0.1
 //   node build.mjs           one-shot build
 //   node build.mjs --watch   rebuild on change (pair with a static server for live dev)
@@ -41,7 +41,7 @@ const logMessages = {
 };
 
 const options = {
-  entryPoints: [join(root, 'src', 'index.js')],
+  entryPoints: [join(root, 'src', 'app', 'index.js')],
   bundle: true,
   format: 'iife',
   charset: 'utf8',
