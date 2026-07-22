@@ -1,6 +1,6 @@
 {
   "name": "galgame-companion",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "private": true,
   "description": "Companion Tavern-Helper script for bigmalove/galgame — i18n overlay, custom toolbar buttons, MVU stat_data HUD, and the mvu-helper image seam. Rides on galgame untouched.",
   "type": "module",

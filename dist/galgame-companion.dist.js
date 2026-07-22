@@ -1,8 +1,8 @@
-// galgame-companion v0.6.1 — built 2026-07-21T23:46:10.422Z
+// galgame-companion v0.6.2 — built 2026-07-22T09:09:37.367Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.6.1";
+  var VERSION = "0.6.2";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || document;
   var topWindow = typeof window !== "undefined" && window.parent || window;
   var DEBUG = false;
