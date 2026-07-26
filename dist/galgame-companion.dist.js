@@ -1,4 +1,4 @@
-// galgame-companion v0.6.5 — built 2026-07-26T15:24:01.588Z
+// galgame-companion v0.6.5 — built 2026-07-26T17:47:09.262Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
@@ -2345,6 +2345,17 @@ ${m2}
       log.warn("choices: setExtensionPrompt failed:", e);
     }
   }
+  function dismissStaleChoices() {
+    try {
+      const layer = DOC.getElementById("gal-layer-choices");
+      if (layer && layer.classList.contains("active")) {
+        layer.click();
+        log.info("choices: dismissed stale choice panel for new generation (read-gate re-applies)");
+      }
+    } catch (e) {
+      log.warn("choices: dismissStaleChoices failed:", e);
+    }
+  }
   function startChoices() {
     if (typeof window.getChatMessages !== "function" || typeof window.eventOn !== "function") {
       log.warn("choices: TH globals (getChatMessages/eventOn) absent — choices provider disabled");
@@ -2355,7 +2366,10 @@ ${m2}
       log.warn("choices: tavern_events.GENERATION_STARTED absent — inject disabled (shim reader still active)");
     } else {
       try {
-        window.eventOn(te.GENERATION_STARTED, (_type, _option, dryRun) => applyInject(dryRun));
+        window.eventOn(te.GENERATION_STARTED, (_type, _option, dryRun) => {
+          if (!dryRun) dismissStaleChoices();
+          applyInject(dryRun);
+        });
       } catch (e) {
         log.warn("choices: bind GENERATION_STARTED failed:", e);
       }

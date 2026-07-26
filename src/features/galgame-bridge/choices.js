@@ -1,4 +1,8 @@
-// galgame-companion · choices — card-agnostic story-choice provider. v0.1
+// galgame-companion · choices — card-agnostic story-choice provider. v0.2
+// v0.2 — READ-FIRST: on each real new generation, dismiss any open choice panel so galgame's OWN read-gate
+//   (pop only when the reader reaches the last beat) re-applies per message. Fixes the carry-over where an
+//   already-visible panel makes the NEXT reply's options pop instantly over unread narration (galgame
+//   choices.js:211). The pending-choices BUTTON still shows immediately — options are never lost.
 //
 // A2 design (all-genre): galgame's "剧情选项 / Story choices" UI is a PURE READER of
 // AutoCardUpdaterAPI.exportTableAsJson() → the 选项表/行动选项 sheet (galgame/src/ui/choices.js
@@ -138,6 +142,25 @@ function applyInject(dryRun) {
   }
 }
 
+// Break galgame's choice CARRY-OVER (upstream choices.js checkAndRenderOptions): once its panel is visible,
+// the next reply's options auto-pop INSTANTLY, skipping galgame's own read-gate (it otherwise pops only when
+// the reader reaches the last beat). On each REAL new generation we fire galgame's OWN dismiss — a backdrop
+// click on #gal-layer-choices, whose handler (`e.target === this` → hideGalgameChoices(true)) sets its internal
+// _galgameChoicesVisible=false — so the read-gate re-applies per message and choices auto-show only AFTER the
+// story is read. `layer.click()` sets e.target to the layer itself, exactly matching the backdrop-click guard.
+// The panel is mounted in the parent doc (DOC), same as the overlay. Degrades to a no-op if it isn't open.
+function dismissStaleChoices() {
+  try {
+    const layer = DOC.getElementById('gal-layer-choices');
+    if (layer && layer.classList.contains('active')) {
+      layer.click();
+      log.info('choices: dismissed stale choice panel for new generation (read-gate re-applies)');
+    }
+  } catch (e) {
+    log.warn('choices: dismissStaleChoices failed:', e);
+  }
+}
+
 export function startChoices() {
   if (typeof window.getChatMessages !== 'function' || typeof window.eventOn !== 'function') {
     log.warn('choices: TH globals (getChatMessages/eventOn) absent — choices provider disabled');
@@ -148,7 +171,7 @@ export function startChoices() {
     log.warn('choices: tavern_events.GENERATION_STARTED absent — inject disabled (shim reader still active)');
   } else {
     try {
-      window.eventOn(te.GENERATION_STARTED, (_type, _option, dryRun) => applyInject(dryRun));
+      window.eventOn(te.GENERATION_STARTED, (_type, _option, dryRun) => { if (!dryRun) dismissStaleChoices(); applyInject(dryRun); });
     } catch (e) {
       log.warn('choices: bind GENERATION_STARTED failed:', e);
     }
