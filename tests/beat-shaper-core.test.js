@@ -106,18 +106,26 @@ describe('scene strip + inject', () => {
     expect(r.stats.scenes).toBe(1);
     expect((r.text.match(/<background\b/g) || []).length).toBe(1);
   });
-  it('N images → scene_1 top, scene_n directly above image n', () => {
+  it('N images → scene_1 top; scene_n OPENS beat n (leads its prose, right after image n-1)', () => {
     const raw = `<maintext>\n<p>b1</p>\n${img(1)}\n<p>b2</p>\n${img(2)}\n<p>b3</p>\n</maintext>`;
     const r = shapeMessage(raw, 9);
     const s1 = r.text.indexOf(nameFor(9, 1));
+    const p1 = r.text.indexOf('<p>b1</p>');
     const i1 = r.text.indexOf('img1.png');
     const s2 = r.text.indexOf(nameFor(9, 2));
+    const p2 = r.text.indexOf('<p>b2</p>');
     const i2 = r.text.indexOf('img2.png');
     expect(s1).toBeGreaterThan(-1);
     expect(s2).toBeGreaterThan(-1);
-    expect(s1).toBeLessThan(i1);
+    // scene 1 LEADS beat 1; beat-1 prose precedes image 1
+    expect(s1).toBeLessThan(p1);
+    expect(p1).toBeLessThan(i1);
+    // scene 2 sits AFTER image 1 but BEFORE beat-2 prose, so galgame's nearest-preceding resolve renders
+    // <p>b2> on scene 2. REGRESSION LOCK: v0.3 placed scene 2 above image 2 (AFTER <p>b2>), so b2 rendered
+    // on scene 1 and scene 2's backdrop never displayed — s2 < p2 is exactly what that bug violated.
     expect(i1).toBeLessThan(s2);
-    expect(s2).toBeLessThan(i2);
+    expect(s2).toBeLessThan(p2);
+    expect(p2).toBeLessThan(i2);
     // no scene tag other than ours
     expect((r.text.match(/<background\b/g) || []).length).toBe(2);
   });

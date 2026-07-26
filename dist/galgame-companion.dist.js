@@ -1,8 +1,8 @@
-// galgame-companion v0.6.4 — built 2026-07-22T23:06:12.425Z
+// galgame-companion v0.6.5 — built 2026-07-26T15:24:01.588Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.6.4";
+  var VERSION = "0.6.5";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || document;
   var topWindow = typeof window !== "undefined" && window.parent || window;
   var DEBUG = false;
@@ -1671,12 +1671,13 @@ ${m2}
     const imgs = [];
     RE_IMG_WRAP.lastIndex = 0;
     let m;
-    while ((m = RE_IMG_WRAP.exec(inner)) !== null) imgs.push({ index: m.index, src: imgSrcOf(m[0]) });
+    while ((m = RE_IMG_WRAP.exec(inner)) !== null) imgs.push({ index: m.index, end: m.index + m[0].length, src: imgSrcOf(m[0]) });
     for (let n = imgs.length; n >= 2; n--) {
       const nm = sceneName(messageId, n, shortHash(imgs[n - 1].src));
       const tag = `<background scene="${nm}" />
 `;
-      inner = inner.slice(0, imgs[n - 1].index) + tag + inner.slice(imgs[n - 1].index);
+      const at = imgs[n - 2].end;
+      inner = inner.slice(0, at) + tag + inner.slice(at);
       stats.scenes++;
     }
     if (imgs.length >= 1) {

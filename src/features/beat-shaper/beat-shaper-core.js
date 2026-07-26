@@ -1,4 +1,4 @@
-// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v0.3
+// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v0.4
 //
 // Deterministically reshapes an AI reply into galgame's beat contract (plan: mvu-helper
 // plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). galgame's standard parser builds display beats ONLY
@@ -10,8 +10,10 @@
 // <classmate_trait_check> hidden in an HTML comment so POST's inputRegex still reads it while
 // ST's renderer — which p-wraps bare lines before galgame parses the HTML — can't display it),
 // and (3) inject our own message-scoped scene per rendered image: scene #1 hoisted to the very
-// top of <maintext> (image #1 backdrops the reply from beat 1), scene #n directly above image #n
-// (backdrop switches when the reader advances past that beat).
+// top of <maintext> (image #1 backdrops beat 1), scene #n right AFTER image #(n-1) so the tag OPENS
+// beat #n — galgame binds a beat to the nearest PRECEDING <background>, so the scene tag must LEAD the
+// beat's prose, not trail it just above the image (that left beat #n on scene #(n-1)'s backdrop and
+// scene #n never showed — the "2nd image never displays" bug, live-fixed 2026-07-26).
 //
 // The transform must be IDEMPOTENT: shape(shape(x)) === shape(x). It re-derives all scene tags
 // from scratch each run (strip-then-inject) and unwraps-then-rehides its own gc:hidden comments,
@@ -175,17 +177,23 @@ export function shapeMessage(raw, messageId) {
   // 2) <p>-wrap bare prose between protected blocks, per natural paragraph (blank-line split).
   inner = wrapBareProse(inner, stats);
 
-  // 3) Inject our scenes: enumerate rendered images in document order (capturing each image's src so
-  //    the scene name carries its content hash, §2.1), insert back-to-front so earlier offsets stay
-  //    valid; then hoist scene #1 to the very top of <maintext>.
+  // 3) Inject our scenes. galgame resolves a beat's backdrop to the nearest <background> tag AT-OR-BEFORE
+  //    that beat's position (parser.js getBackgroundAtPosition), so a scene tag governs the prose that
+  //    FOLLOWS it. Image #n illustrates beat #n = the prose between image #(n-1) and image #n, so scene #n
+  //    must OPEN that beat: sit right AFTER image #(n-1), before beat #n's prose. Placing it just above
+  //    image #n (v0.3) landed it AFTER beat #n's prose, so beat #n rendered with scene #(n-1)'s backdrop
+  //    and scene #n never displayed. Enumerate images in document order (capturing each src for the §2.1
+  //    content hash + each end offset = the next beat's start); insert back-to-front so earlier offsets
+  //    stay valid; scene #1 hoists to the very top.
   const imgs = [];
   RE_IMG_WRAP.lastIndex = 0;
   let m;
-  while ((m = RE_IMG_WRAP.exec(inner)) !== null) imgs.push({ index: m.index, src: imgSrcOf(m[0]) });
+  while ((m = RE_IMG_WRAP.exec(inner)) !== null) imgs.push({ index: m.index, end: m.index + m[0].length, src: imgSrcOf(m[0]) });
   for (let n = imgs.length; n >= 2; n--) {
     const nm = sceneName(messageId, n, shortHash(imgs[n - 1].src));
     const tag = `<background scene="${nm}" />\n`;
-    inner = inner.slice(0, imgs[n - 1].index) + tag + inner.slice(imgs[n - 1].index);
+    const at = imgs[n - 2].end; // right after image #(n-1) = the start of beat #n, before its prose
+    inner = inner.slice(0, at) + tag + inner.slice(at);
     stats.scenes++;
   }
   if (imgs.length >= 1) {
