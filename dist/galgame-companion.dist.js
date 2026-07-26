@@ -1,4 +1,4 @@
-// galgame-companion v0.6.5 — built 2026-07-26T17:47:09.262Z
+// galgame-companion v0.6.5 — built 2026-07-26T23:45:20.110Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
@@ -1607,6 +1607,8 @@
   var RE_BACKGROUND_TAG = /[ \t]*<background\b[^>]*\/?>(?:\s*<\/background>)?[ \t]*\r?\n?/gi;
   var RE_PIC_TAG = /<pic\b/i;
   var RE_IMG_WRAP = /<span class="(?:custom-)?auto-img-wrap"[^>]*>[\s\S]*?<\/span>\s*<\/span>/gi;
+  var RE_P_OPEN = /<p(?:\s[^>]*)?>/gi;
+  var RE_THINK_CLOSE = /<\/think(?:ing)?>/gi;
   var PROTECTED_BLOCK_RE = new RegExp(
     [
       "<p(?:\\s[^>]*)?>[\\s\\S]*?<\\/p>",
@@ -1625,13 +1627,13 @@
   );
   var RE_TAG_ONLY_PARAGRAPH = /^(?:\s|<[^>]+>)*$/;
   function shapeMessage(raw, messageId) {
-    const stats = { wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false, strippedBgimg: 0, hidden: 0 };
+    const stats = { wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false, strippedBgimg: 0, hidden: 0, strippedThink: 0 };
     const unchanged = (deferred = null) => ({
       text: raw,
       // ALWAYS the caller's original — a rename ahead of a defer is discarded with it
       changed: false,
       deferred,
-      stats: { wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false, strippedBgimg: 0, hidden: 0 }
+      stats: { wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false, strippedBgimg: 0, hidden: 0, strippedThink: 0 }
     });
     if (typeof raw !== "string" || raw.length === 0) return unchanged();
     let text0 = raw;
@@ -1647,9 +1649,16 @@
     const innerStart = openMatch.index + openMatch[0].length;
     const innerEnd = closeMatch.index;
     if (innerEnd < innerStart) return unchanged();
-    const head = text0.slice(0, innerStart);
+    let head = text0.slice(0, innerStart);
     const tail = text0.slice(innerEnd);
     let inner = text0.slice(innerStart, innerEnd);
+    RE_THINK_CLOSE.lastIndex = 0;
+    let thinkM, lastThinkEnd = -1;
+    while ((thinkM = RE_THINK_CLOSE.exec(head)) !== null) lastThinkEnd = thinkM.index + thinkM[0].length;
+    if (lastThinkEnd !== -1) {
+      head = head.slice(lastThinkEnd).replace(/^\s+/, "");
+      stats.strippedThink = 1;
+    }
     if (RE_PIC_TAG.test(inner)) return unchanged("pics-pending");
     inner = inner.replace(RE_BACKGROUND_TAG, () => {
       stats.strippedScenes++;
@@ -1671,19 +1680,37 @@ ${m2}
     const imgs = [];
     RE_IMG_WRAP.lastIndex = 0;
     let m;
-    while ((m = RE_IMG_WRAP.exec(inner)) !== null) imgs.push({ index: m.index, end: m.index + m[0].length, src: imgSrcOf(m[0]) });
-    for (let n = imgs.length; n >= 2; n--) {
-      const nm = sceneName(messageId, n, shortHash(imgs[n - 1].src));
-      const tag = `<background scene="${nm}" />
-`;
-      const at = imgs[n - 2].end;
-      inner = inner.slice(0, at) + tag + inner.slice(at);
-      stats.scenes++;
-    }
-    if (imgs.length >= 1) {
-      const nm = sceneName(messageId, 1, shortHash(imgs[0].src));
+    while ((m = RE_IMG_WRAP.exec(inner)) !== null) imgs.push({ index: m.index, src: imgSrcOf(m[0]) });
+    const beatStarts = [];
+    RE_P_OPEN.lastIndex = 0;
+    let pm;
+    while ((pm = RE_P_OPEN.exec(inner)) !== null) beatStarts.push(pm.index);
+    if (imgs.length >= 1 && beatStarts.length >= 1) {
+      const owner = beatStarts.map((b) => {
+        const after = imgs.findIndex((im) => im.index > b);
+        return after === -1 ? imgs.length - 1 : after;
+      });
+      if (new Set(owner).size < imgs.length && beatStarts.length >= imgs.length) {
+        for (let n = 0; n < imgs.length; n++) owner[beatStarts.length - imgs.length + n] = n;
+      }
+      for (let n = imgs.length - 1; n >= 1; n--) {
+        const firstBeat = owner.indexOf(n);
+        if (firstBeat === -1) continue;
+        const nm = sceneName(messageId, n + 1, shortHash(imgs[n].src));
+        const at = beatStarts[firstBeat];
+        inner = inner.slice(0, at) + `<background scene="${nm}" />
+` + inner.slice(at);
+        stats.scenes++;
+      }
+      const nm1 = sceneName(messageId, 1, shortHash(imgs[0].src));
       inner = `
-<background scene="${nm}" />
+<background scene="${nm1}" />
+` + inner.replace(/^\n+/, "");
+      stats.scenes++;
+    } else if (imgs.length >= 1) {
+      const nm1 = sceneName(messageId, 1, shortHash(imgs[0].src));
+      inner = `
+<background scene="${nm1}" />
 ` + inner.replace(/^\n+/, "");
       stats.scenes++;
     }

@@ -129,6 +129,41 @@ describe('scene strip + inject', () => {
     // no scene tag other than ours
     expect((r.text.match(/<background\b/g) || []).length).toBe(2);
   });
+  it('TAIL-CLUSTERED images (both at the end, no prose between) still bind BOTH scenes to beats', () => {
+    // Reasoning-model failure mode: all prose first, then img1 img2 adjacent at the tail. The old code
+    // anchored scene #2 right after image #1 (past every beat) so it governed NO beat and image #2 never
+    // displayed. v0.5 binds scenes to beats + steals a trailing beat for the starved image.
+    const raw = `<maintext>\n<p>b1</p>\n\n<p>b2</p>\n\n<p>b3</p>\n${img(1)}\n${img(2)}\n</maintext>`;
+    const r = shapeMessage(raw, 11);
+    const s1 = r.text.indexOf(nameFor(11, 1));
+    const s2 = r.text.indexOf(nameFor(11, 2));
+    const p3 = r.text.indexOf('<p>b3</p>');
+    expect(s1).toBeGreaterThan(-1);
+    expect(s2).toBeGreaterThan(-1);
+    expect(r.stats.scenes).toBe(2);
+    expect(s1).toBeLessThan(s2); // scene 1 top, scene 2 later
+    expect(s2).toBeLessThan(p3); // scene 2 LEADS the last beat → galgame renders b3 on image #2 (it displays)
+    expect((r.text.match(/<background\b/g) || []).length).toBe(2);
+  });
+});
+
+describe('leaked-reasoning strip (Fix §0b)', () => {
+  it('strips an ORPHAN </think> (+ the CoT before it) ahead of <maintext>, keeping maintext + tail intent', () => {
+    // A reasoning model emitted planning + a bare </think> (no surviving <think> open) into .mes; the real
+    // /Intent/ emission lives in the post-maintext <UpdateVariable> block and MUST survive.
+    const raw = 'The user goes to the ruins. Plan: 1 do this 2 that.\nLet us go.\n</think>\n\n<maintext>\n<p>narration</p>\n</maintext>\n\n<UpdateVariable>/Intent/eventFire: leila_1</UpdateVariable>';
+    const r = shapeMessage(raw, 3);
+    expect(r.stats.strippedThink).toBe(1);
+    expect(r.text.startsWith('<maintext>')).toBe(true); // reasoning + </think> gone; maintext leads
+    expect(r.text).not.toContain('</think>');
+    expect(r.text).not.toContain('Plan:');
+    expect(r.text).toContain('<p>narration</p>');
+    expect(r.text).toContain('/Intent/eventFire: leila_1'); // TAIL preserved — real intent survives
+  });
+  it('does not flag strippedThink on a clean message (no </think>)', () => {
+    const r = shapeMessage('<maintext>\n<p>clean beat</p>\n</maintext>', 3);
+    expect(r.stats.strippedThink).toBe(0);
+  });
 });
 
 describe('gametxt→maintext bridge + engine display-noise', () => {

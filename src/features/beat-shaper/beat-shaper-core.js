@@ -1,4 +1,4 @@
-// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v0.4
+// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v0.5
 //
 // Deterministically reshapes an AI reply into galgame's beat contract (plan: mvu-helper
 // plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). galgame's standard parser builds display beats ONLY
@@ -9,11 +9,15 @@
 // narrator/galgame-COT emitted PLUS engine display-noise (<bgimg> prompt stripped;
 // <classmate_trait_check> hidden in an HTML comment so POST's inputRegex still reads it while
 // ST's renderer — which p-wraps bare lines before galgame parses the HTML — can't display it),
-// and (3) inject our own message-scoped scene per rendered image: scene #1 hoisted to the very
-// top of <maintext> (image #1 backdrops beat 1), scene #n right AFTER image #(n-1) so the tag OPENS
-// beat #n — galgame binds a beat to the nearest PRECEDING <background>, so the scene tag must LEAD the
-// beat's prose, not trail it just above the image (that left beat #n on scene #(n-1)'s backdrop and
-// scene #n never showed — the "2nd image never displays" bug, live-fixed 2026-07-26).
+// and (3) inject our own message-scoped scene per rendered image, bound to BEATS not raw image offsets:
+// each <p> beat is assigned to the image that depicts it (the nearest image AFTER it — the narrator is
+// taught to place a <pic> right after the beat it depicts), and each image's scene tag OPENS its beat run.
+// galgame binds a beat to the nearest PRECEDING <background>, so the scene must LEAD the beat's prose.
+// v0.5: beat-based binding also survives TAIL-CLUSTERING — a reasoning model sometimes dumps EVERY image
+// at the end (all prose, then img1 img2), which left image #2's scene governing no beat so it never showed
+// ("2nd image never displays"); we now guarantee every image owns >=1 beat (a starved tail image steals a
+// trailing beat). ALSO strips a leaked reasoning block (a </think>, matched OR orphan, before <maintext>).
+// v0.4 was the interspersed-only fix (scene #n right after image #(n-1)); v0.5 generalizes it.
 //
 // The transform must be IDEMPOTENT: shape(shape(x)) === shape(x). It re-derives all scene tags
 // from scratch each run (strip-then-inject) and unwraps-then-rehides its own gc:hidden comments,
@@ -85,6 +89,13 @@ const RE_PIC_TAG = /<pic\b/i;
 // <span class="auto-img-wrap" data-rawtag="…"><img …><span class="auto-img-regen" …></span></span>
 // The outer span contains exactly ONE nested span → match through the second </span>.
 const RE_IMG_WRAP = /<span class="(?:custom-)?auto-img-wrap"[^>]*>[\s\S]*?<\/span>\s*<\/span>/gi;
+// A prose BEAT open tag — <p> or <p class="…">. Requires a delimiter right after `p` (`>` or whitespace),
+// so it never false-matches <pixiPerform>/<pic>. Used to bind scenes to beats (§3 below), not raw images.
+const RE_P_OPEN = /<p(?:\s[^>]*)?>/gi;
+// A leaked chain-of-thought CLOSE that survived into the message before <maintext>: a reasoning model can
+// emit </think> without a paired <think> (the open gets consumed upstream), so galgame's matched-tag strip
+// misses it. Everything up to the LAST such close in the head is CoT; we drop through it (Fix, §0b).
+const RE_THINK_CLOSE = /<\/think(?:ing)?>/gi;
 
 // Blocks whose CONTENT must never be re-wrapped (protected verbatim during the <p>-wrap pass).
 // Built as alternatives of one scanning regex; order matters only for overlap (none in practice).
@@ -114,18 +125,19 @@ const RE_TAG_ONLY_PARAGRAPH = /^(?:\s|<[^>]+>)*$/;
  * @param {number|string} messageId  floor id — becomes part of the scene names
  * @returns {{ text: string, changed: boolean, deferred: string|null,
  *            stats: { wrapped: number, scenes: number, strippedScenes: number,
- *                     renamed: boolean, strippedBgimg: number, hidden: number } }}
+ *                     renamed: boolean, strippedBgimg: number, hidden: number,
+ *                     strippedThink: number } }}
  *   deferred ≠ null → text is returned UNCHANGED and the caller should retry on a later event
  *   ('maintext-unclosed'/'gametxt-unclosed' while streaming, 'pics-pending' while image
  *   generation is in flight).
  */
 export function shapeMessage(raw, messageId) {
-  const stats = { wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false, strippedBgimg: 0, hidden: 0 };
+  const stats = { wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false, strippedBgimg: 0, hidden: 0, strippedThink: 0 };
   const unchanged = (deferred = null) => ({
     text: raw, // ALWAYS the caller's original — a rename ahead of a defer is discarded with it
     changed: false,
     deferred,
-    stats: { wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false, strippedBgimg: 0, hidden: 0 },
+    stats: { wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false, strippedBgimg: 0, hidden: 0, strippedThink: 0 },
   });
 
   if (typeof raw !== 'string' || raw.length === 0) return unchanged();
@@ -147,9 +159,22 @@ export function shapeMessage(raw, messageId) {
   const innerStart = openMatch.index + openMatch[0].length;
   const innerEnd = closeMatch.index;
   if (innerEnd < innerStart) return unchanged(); // malformed (close before open) — leave alone
-  const head = text0.slice(0, innerStart);
+  let head = text0.slice(0, innerStart);
   const tail = text0.slice(innerEnd);
   let inner = text0.slice(innerStart, innerEnd);
+
+  // 0b) Strip a leaked reasoning block from the head. A </think> before <maintext> — matched OR ORPHAN (a
+  //     reasoning model can emit the close with no surviving <think> open, so galgame's own matched-tag
+  //     strip misses it) — means everything up to it is chain-of-thought that leaked into .mes. Drop
+  //     through the LAST such close; the <maintext> tag that follows is kept. SAFE: the real /Intent/
+  //     emissions live in the post-maintext <UpdateVariable> block (the untouched TAIL), never the head.
+  RE_THINK_CLOSE.lastIndex = 0;
+  let thinkM, lastThinkEnd = -1;
+  while ((thinkM = RE_THINK_CLOSE.exec(head)) !== null) lastThinkEnd = thinkM.index + thinkM[0].length;
+  if (lastThinkEnd !== -1) {
+    head = head.slice(lastThinkEnd).replace(/^\s+/, '');
+    stats.strippedThink = 1;
+  }
 
   // mvu-helper still owes this message rendered images — shaping now would invalidate the
   // string indices its REPLACE pass captured at detection time. Retry on its MESSAGE_UPDATED.
@@ -177,28 +202,52 @@ export function shapeMessage(raw, messageId) {
   // 2) <p>-wrap bare prose between protected blocks, per natural paragraph (blank-line split).
   inner = wrapBareProse(inner, stats);
 
-  // 3) Inject our scenes. galgame resolves a beat's backdrop to the nearest <background> tag AT-OR-BEFORE
-  //    that beat's position (parser.js getBackgroundAtPosition), so a scene tag governs the prose that
-  //    FOLLOWS it. Image #n illustrates beat #n = the prose between image #(n-1) and image #n, so scene #n
-  //    must OPEN that beat: sit right AFTER image #(n-1), before beat #n's prose. Placing it just above
-  //    image #n (v0.3) landed it AFTER beat #n's prose, so beat #n rendered with scene #(n-1)'s backdrop
-  //    and scene #n never displayed. Enumerate images in document order (capturing each src for the §2.1
-  //    content hash + each end offset = the next beat's start); insert back-to-front so earlier offsets
-  //    stay valid; scene #1 hoists to the very top.
+  // 3) Inject our scenes, bound to BEATS not raw image offsets. galgame resolves a beat's backdrop to the
+  //    nearest <background> AT-OR-BEFORE it (parser.js getBackgroundAtPosition), so a scene governs the
+  //    prose FOLLOWING it. Assign each <p> beat to the image that depicts it — the nearest image AFTER the
+  //    beat (the narrator is taught to place a <pic> right after the beat it depicts; a beat past the last
+  //    image keeps the last image) — then OPEN each image's beat-run with its scene tag. This reproduces
+  //    the interspersed mapping (beats before img1 → img1, prose between img1/img2 → img2) AND survives
+  //    TAIL-CLUSTERING: when a reasoning model dumps every image at the end (all prose, then img1 img2),
+  //    the natural map starves every image but the first, so image #2's scene would govern no beat and
+  //    never show. We guarantee each image owns >=1 beat by giving the starved (trailing) images the last
+  //    beats, in order. Insert back-to-front so earlier offsets stay valid; scene #1 hoists to the very top.
   const imgs = [];
   RE_IMG_WRAP.lastIndex = 0;
   let m;
-  while ((m = RE_IMG_WRAP.exec(inner)) !== null) imgs.push({ index: m.index, end: m.index + m[0].length, src: imgSrcOf(m[0]) });
-  for (let n = imgs.length; n >= 2; n--) {
-    const nm = sceneName(messageId, n, shortHash(imgs[n - 1].src));
-    const tag = `<background scene="${nm}" />\n`;
-    const at = imgs[n - 2].end; // right after image #(n-1) = the start of beat #n, before its prose
-    inner = inner.slice(0, at) + tag + inner.slice(at);
+  while ((m = RE_IMG_WRAP.exec(inner)) !== null) imgs.push({ index: m.index, src: imgSrcOf(m[0]) });
+  const beatStarts = [];
+  RE_P_OPEN.lastIndex = 0;
+  let pm;
+  while ((pm = RE_P_OPEN.exec(inner)) !== null) beatStarts.push(pm.index);
+
+  if (imgs.length >= 1 && beatStarts.length >= 1) {
+    // owner[j] = image that depicts beat j = the nearest image AFTER the beat (else the last image).
+    const owner = beatStarts.map((b) => {
+      const after = imgs.findIndex((im) => im.index > b);
+      return after === -1 ? imgs.length - 1 : after;
+    });
+    // Guarantee every image owns >=1 beat. Tail-clustering starves all but the first image; hand the
+    // starved (trailing) images the last beats, in order, so each one still opens a run and displays.
+    if (new Set(owner).size < imgs.length && beatStarts.length >= imgs.length) {
+      for (let n = 0; n < imgs.length; n++) owner[beatStarts.length - imgs.length + n] = n;
+    }
+    // Open each image's run with its scene tag (back-to-front keeps earlier offsets valid).
+    for (let n = imgs.length - 1; n >= 1; n--) {
+      const firstBeat = owner.indexOf(n);
+      if (firstBeat === -1) continue; // too few beats to bind this image (rare: more images than beats)
+      const nm = sceneName(messageId, n + 1, shortHash(imgs[n].src));
+      const at = beatStarts[firstBeat];
+      inner = inner.slice(0, at) + `<background scene="${nm}" />\n` + inner.slice(at);
+      stats.scenes++;
+    }
+    const nm1 = sceneName(messageId, 1, shortHash(imgs[0].src));
+    inner = `\n<background scene="${nm1}" />\n` + inner.replace(/^\n+/, ''); // scene #1 backdrops from the top
     stats.scenes++;
-  }
-  if (imgs.length >= 1) {
-    const nm = sceneName(messageId, 1, shortHash(imgs[0].src));
-    inner = `\n<background scene="${nm}" />\n` + inner.replace(/^\n+/, '');
+  } else if (imgs.length >= 1) {
+    // No prose beats to bind (all-image / tag-only reply) — keep a single top scene as before.
+    const nm1 = sceneName(messageId, 1, shortHash(imgs[0].src));
+    inner = `\n<background scene="${nm1}" />\n` + inner.replace(/^\n+/, '');
     stats.scenes++;
   }
 
