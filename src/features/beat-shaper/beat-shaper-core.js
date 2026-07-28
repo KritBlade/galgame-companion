@@ -1,4 +1,4 @@
-// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v0.5
+// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v0.6
 //
 // Deterministically reshapes an AI reply into galgame's beat contract (plan: mvu-helper
 // plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). galgame's standard parser builds display beats ONLY
@@ -9,7 +9,7 @@
 // narrator/galgame-COT emitted PLUS engine display-noise (<bgimg> prompt stripped;
 // <classmate_trait_check> hidden in an HTML comment so POST's inputRegex still reads it while
 // ST's renderer — which p-wraps bare lines before galgame parses the HTML — can't display it),
-// and (3) inject our own message-scoped scene per rendered image, bound to BEATS not raw image offsets:
+// and (3) inject our own per-message scene per rendered image, bound to BEATS not raw image offsets:
 // each <p> beat is assigned to the image that depicts it (the nearest image AFTER it — the narrator is
 // taught to place a <pic> right after the beat it depicts), and each image's scene tag OPENS its beat run.
 // galgame binds a beat to the nearest PRECEDING <background>, so the scene must LEAD the beat's prose.
@@ -18,26 +18,66 @@
 // ("2nd image never displays"); we now guarantee every image owns >=1 beat (a starved tail image steals a
 // trailing beat). ALSO strips a leaked reasoning block (a </think>, matched OR orphan, before <maintext>).
 // v0.4 was the interspersed-only fix (scene #n right after image #(n-1)); v0.5 generalizes it.
+// v0.6: scene names are keyed by a per-message UID instead of the chat index — see §2.1 for why the
+// index was actively wrong (deleting a message renumbered the chat and made two messages collide).
 //
 // The transform must be IDEMPOTENT: shape(shape(x)) === shape(x). It re-derives all scene tags
 // from scratch each run (strip-then-inject) and unwraps-then-rehides its own gc:hidden comments,
-// so re-runs converge with changed=false.
+// so re-runs converge with changed=false. The uid is the one piece it does NOT re-derive: it is
+// recovered from the previous run's own output (§2.1), which is exactly what makes re-runs converge.
 
-// ── §2.1 scene naming contract (shared with the image-seam prune — keep in ONE place) ─────────
-// Name = msg{id}_scene_{n}_{hash}. The trailing hash is a digest of the bound image's src, and it is
-// LOAD-BEARING, not decoration: galgame memoizes scene→url by NAME in an in-session Map
-// (backgrounds.js getBackground → sceneBackgrounds.has(name) short-circuits the DB). We write the DB
-// DIRECTLY (bypassing galgame's saveBackground, the only thing that updates that Map), so re-using a
-// name after a swipe/regen leaves galgame serving the STALE url until a full reload. A fresh image →
-// fresh src → fresh hash → a name galgame has never cached → guaranteed Map miss → fresh DB read. The
-// hash is content-derived (not time/random) so a re-shape of the SAME reply yields the SAME name and
-// the transform stays idempotent. The image-seam prunes superseded siblings (same msg+n, old hash).
-// The hash group is OPTIONAL in the regex so legacy hashless names still parse (prune can delete them).
-export const SCENE_NAME_RE = /^msg(\d+)_scene_(\d+)(?:_([0-9a-z]+))?$/;
+// ── §2.1 scene naming contract (shared with the image-seam prune/sweep — keep in ONE place) ────
+// Name = {uid}_scene_{n}_{hash},  where  uid = gc{chatKey}-{random}.
+//
+// WHY A UID AND NOT THE MESSAGE INDEX: SillyTavern has no stable message identifier — the chat[] index
+// IS the id — so deleting one message RENUMBERS every message after it. Scene names are baked into the
+// message TEXT, which moves with the message, so after a delete a message still carried its OLD
+// neighbour's msg{index} prefix and two different messages could claim the SAME name (live 2026-07-28:
+// messages 2 and 6 both referenced msg2_scene_2_159y58o). Worse, the sibling prune keys off that prefix,
+// so shaping message 2 DELETED message 6's backdrop record (msg2_scene_1_1rg3995 — referenced, absent).
+// A per-message random uid is index-free: renumbering cannot touch it, and two messages cannot collide.
+//
+// The uid is minted ONCE, on a message's first shape, and thereafter RECOVERED from that message's own
+// existing scene tags (RE_EXISTING_UID, read BEFORE the strip pass). That recovery is what keeps the
+// transform idempotent AND what makes the identity survive a delete: it travels inside the text it names.
+//
+// chatKey — a shortHash of SillyTavern's chat id — scopes the uid to one chat. galgame's background DB
+// is GLOBAL across every chat, so chatKey is the only thing that lets the orphan sweep tell "record from
+// a deleted message in THIS chat" (deletable) from "record from another chat" (must never be touched).
+//
+// The trailing hash digests the bound image's src and is LOAD-BEARING, not decoration: galgame memoizes
+// scene→url by NAME in an in-session Map (backgrounds.js getBackground → sceneBackgrounds.has(name)
+// short-circuits the DB). We write the DB DIRECTLY (bypassing galgame's saveBackground, the only thing
+// that updates that Map), so re-using a name after a swipe/regen leaves galgame serving the STALE url
+// until a full reload. A fresh image → fresh src → fresh hash → a name galgame has never cached →
+// guaranteed Map miss → fresh DB read. The hash is content-derived (not time/random) so a re-shape of
+// the SAME reply yields the SAME name. The image-seam prunes superseded siblings (same uid+n, old hash).
+//
+// Capture groups: 1 = uid, 2 = chatKey, 3 = beat number, 4 = image hash.
+export const SCENE_NAME_RE = /^(gc([0-9a-z]+)-[0-9a-z]+)_scene_(\d+)_([0-9a-z]+)$/;
 
-export function sceneName(messageId, n, hash) {
-  const base = `msg${messageId}_scene_${n}`;
-  return hash ? `${base}_${hash}` : base;
+// Pre-uid names (msg{index}_scene_{n} with an optional hash). NOTHING mints these any more — the regex
+// exists only so the image-seam's sweep can recognise a leftover as OURS and delete it.
+export const LEGACY_SCENE_NAME_RE = /^msg\d+_scene_\d+(?:_[0-9a-z]+)?$/;
+
+// `-` (not `_`) separates the two uid halves so `_scene_` stays an unambiguous split point.
+export function sceneUid(chatKey, random) {
+  return `gc${chatKey}-${random}`;
+}
+
+export function sceneName(uid, n, hash) {
+  return `${uid}_scene_${n}_${hash}`;
+}
+
+// null for anything that is not one of our uid-scoped names (foreign scene, legacy name, junk).
+export function uidOfSceneName(name) {
+  const m = SCENE_NAME_RE.exec(String(name || ''));
+  return m ? m[1] : null;
+}
+
+export function chatKeyOfSceneName(name) {
+  const m = SCENE_NAME_RE.exec(String(name || ''));
+  return m ? m[2] : null;
 }
 
 // FNV-1a 32-bit → base36. Pure, deterministic, ~7 chars in [0-9a-z] (matches SCENE_NAME_RE's group).
@@ -92,6 +132,10 @@ const RE_IMG_WRAP = /<span class="(?:custom-)?auto-img-wrap"[^>]*>[\s\S]*?<\/spa
 // A prose BEAT open tag — <p> or <p class="…">. Requires a delimiter right after `p` (`>` or whitespace),
 // so it never false-matches <pixiPerform>/<pic>. Used to bind scenes to beats (§3 below), not raw images.
 const RE_P_OPEN = /<p(?:\s[^>]*)?>/gi;
+// This message's OWN uid, recovered from a scene tag a previous shape wrote (§2.1). Read BEFORE the
+// strip pass — the strip is what makes the transform idempotent, so this is the last moment the prior
+// identity is visible. Mirrors SCENE_NAME_RE's uid shape; not anchored, since it matches inside a tag.
+const RE_EXISTING_UID = /<background\s+scene="(gc[0-9a-z]+-[0-9a-z]+)_scene_\d+_[0-9a-z]+"/i;
 // A leaked chain-of-thought CLOSE that survived into the message before <maintext>: a reasoning model can
 // emit </think> without a paired <think> (the open gets consumed upstream), so galgame's matched-tag strip
 // misses it. Everything up to the LAST such close in the head is CoT; we drop through it (Fix, §0b).
@@ -122,22 +166,28 @@ const RE_TAG_ONLY_PARAGRAPH = /^(?:\s|<[^>]+>)*$/;
  * Shape one AI message into galgame's beat contract.
  *
  * @param {string} raw        full raw message text
- * @param {number|string} messageId  floor id — becomes part of the scene names
+ * @param {() => string} mintUid  mints a FRESH scene uid (§2.1) — called at most once, and only when
+ *   this message has images AND carries no uid from a previous shape. Required: the uid must be scoped
+ *   to the live chat, which this pure module cannot see. Use sceneUid(chatKey, random) to build one.
  * @returns {{ text: string, changed: boolean, deferred: string|null,
  *            stats: { wrapped: number, scenes: number, strippedScenes: number,
  *                     renamed: boolean, strippedBgimg: number, hidden: number,
- *                     strippedThink: number } }}
+ *                     strippedThink: number, uid: string|null } }}
  *   deferred ≠ null → text is returned UNCHANGED and the caller should retry on a later event
  *   ('maintext-unclosed'/'gametxt-unclosed' while streaming, 'pics-pending' while image
  *   generation is in flight).
  */
-export function shapeMessage(raw, messageId) {
-  const stats = { wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false, strippedBgimg: 0, hidden: 0, strippedThink: 0 };
+export function shapeMessage(raw, mintUid) {
+  const blankStats = () => ({
+    wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false,
+    strippedBgimg: 0, hidden: 0, strippedThink: 0, uid: null, uidMinted: false,
+  });
+  const stats = blankStats();
   const unchanged = (deferred = null) => ({
     text: raw, // ALWAYS the caller's original — a rename ahead of a defer is discarded with it
     changed: false,
     deferred,
-    stats: { wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false, strippedBgimg: 0, hidden: 0, strippedThink: 0 },
+    stats: blankStats(),
   });
 
   if (typeof raw !== 'string' || raw.length === 0) return unchanged();
@@ -180,6 +230,12 @@ export function shapeMessage(raw, messageId) {
   // string indices its REPLACE pass captured at detection time. Retry on its MESSAGE_UPDATED.
   if (RE_PIC_TAG.test(inner)) return unchanged('pics-pending');
 
+  // 0c) Recover this message's uid from the scene tags a previous shape wrote, BEFORE step 1 strips
+  //     them away (§2.1). Found → the identity is reused, so the names stay stable across re-shapes,
+  //     image regens and — crucially — message deletions that renumber the chat. Not found → this is a
+  //     first shape and step 3 mints one.
+  const priorUid = RE_EXISTING_UID.exec(inner);
+
   // 1) Strip EVERY scene tag (foreign AND ours) — ours are re-derived below, which is what makes
   //    the whole transform idempotent instead of accumulating tags run over run. Same pass drops
   //    <bgimg> (raw prompt would display — ST's renderer p-wraps bare lines) and comment-hides
@@ -221,6 +277,12 @@ export function shapeMessage(raw, messageId) {
   let pm;
   while ((pm = RE_P_OPEN.exec(inner)) !== null) beatStarts.push(pm.index);
 
+  // Mint only once we know there is an image to name (a uid nobody writes into the text is a uid that
+  // can never be recovered). Reuse the recovered one whenever this message already has an identity.
+  const uid = imgs.length >= 1 ? (priorUid ? priorUid[1] : mintUid()) : null;
+  stats.uid = uid;
+  stats.uidMinted = Boolean(uid) && !priorUid; // logged: a message that CHANGES identity orphans its old backdrops
+
   if (imgs.length >= 1 && beatStarts.length >= 1) {
     // owner[j] = image that depicts beat j = the nearest image AFTER the beat (else the last image).
     const owner = beatStarts.map((b) => {
@@ -236,17 +298,17 @@ export function shapeMessage(raw, messageId) {
     for (let n = imgs.length - 1; n >= 1; n--) {
       const firstBeat = owner.indexOf(n);
       if (firstBeat === -1) continue; // too few beats to bind this image (rare: more images than beats)
-      const nm = sceneName(messageId, n + 1, shortHash(imgs[n].src));
+      const nm = sceneName(uid, n + 1, shortHash(imgs[n].src));
       const at = beatStarts[firstBeat];
       inner = inner.slice(0, at) + `<background scene="${nm}" />\n` + inner.slice(at);
       stats.scenes++;
     }
-    const nm1 = sceneName(messageId, 1, shortHash(imgs[0].src));
+    const nm1 = sceneName(uid, 1, shortHash(imgs[0].src));
     inner = `\n<background scene="${nm1}" />\n` + inner.replace(/^\n+/, ''); // scene #1 backdrops from the top
     stats.scenes++;
   } else if (imgs.length >= 1) {
     // No prose beats to bind (all-image / tag-only reply) — keep a single top scene as before.
-    const nm1 = sceneName(messageId, 1, shortHash(imgs[0].src));
+    const nm1 = sceneName(uid, 1, shortHash(imgs[0].src));
     inner = `\n<background scene="${nm1}" />\n` + inner.replace(/^\n+/, '');
     stats.scenes++;
   }

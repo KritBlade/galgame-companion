@@ -1,14 +1,29 @@
-// galgame-companion v0.6.11 — built 2026-07-28T09:19:21.861Z
+// galgame-companion v0.6.11 — built 2026-07-28T22:27:28.693Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
   var VERSION = "0.6.11";
-  var DOC = typeof window !== "undefined" && window.parent && window.parent.document || document;
-  var topWindow = typeof window !== "undefined" && window.parent || window;
+  var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
+  var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
+  var MVU_HELPER_EXT = "mvu-helper";
+  function debugDomainOn(name) {
+    try {
+      const ST = topWindow.SillyTavern || null;
+      const settings = ST && (ST.extensionSettings || ST.getContext && ST.getContext().extensionSettings);
+      return settings?.[MVU_HELPER_EXT]?.debug_domain?.[name] === true;
+    } catch (e) {
+      return false;
+    }
+  }
   var DEBUG = false;
   var log = {
     info: (...a) => {
       if (DEBUG) console.log(`[${SCRIPT_NAME}]`, ...a);
+    },
+    /** Image seam: beat-shaper scene naming + image-seam DB write/prune/sweep + viewer/regen.
+     *  Gated by mvu-helper's "Image gen" domain checkbox, or by the local DEBUG master switch. */
+    image: (...a) => {
+      if (DEBUG || debugDomainOn("imagegen")) console.log(`[${SCRIPT_NAME}]`, ...a);
     },
     warn: (...a) => console.warn(`[${SCRIPT_NAME}]`, ...a),
     error: (...a) => console.error(`[${SCRIPT_NAME}]`, ...a)
@@ -1579,10 +1594,21 @@
   }
 
   // src/features/beat-shaper/beat-shaper-core.js
-  var SCENE_NAME_RE = /^msg(\d+)_scene_(\d+)(?:_([0-9a-z]+))?$/;
-  function sceneName(messageId, n, hash) {
-    const base = `msg${messageId}_scene_${n}`;
-    return hash ? `${base}_${hash}` : base;
+  var SCENE_NAME_RE = /^(gc([0-9a-z]+)-[0-9a-z]+)_scene_(\d+)_([0-9a-z]+)$/;
+  var LEGACY_SCENE_NAME_RE = /^msg\d+_scene_\d+(?:_[0-9a-z]+)?$/;
+  function sceneUid(chatKey, random) {
+    return `gc${chatKey}-${random}`;
+  }
+  function sceneName(uid, n, hash) {
+    return `${uid}_scene_${n}_${hash}`;
+  }
+  function uidOfSceneName(name) {
+    const m = SCENE_NAME_RE.exec(String(name || ""));
+    return m ? m[1] : null;
+  }
+  function chatKeyOfSceneName(name) {
+    const m = SCENE_NAME_RE.exec(String(name || ""));
+    return m ? m[2] : null;
   }
   function shortHash(str) {
     let h = 2166136261;
@@ -1608,6 +1634,7 @@
   var RE_PIC_TAG = /<pic\b/i;
   var RE_IMG_WRAP = /<span class="(?:custom-)?auto-img-wrap"[^>]*>[\s\S]*?<\/span>\s*<\/span>/gi;
   var RE_P_OPEN = /<p(?:\s[^>]*)?>/gi;
+  var RE_EXISTING_UID = /<background\s+scene="(gc[0-9a-z]+-[0-9a-z]+)_scene_\d+_[0-9a-z]+"/i;
   var RE_THINK_CLOSE = /<\/think(?:ing)?>/gi;
   var PROTECTED_BLOCK_RE = new RegExp(
     [
@@ -1626,14 +1653,25 @@
     "gi"
   );
   var RE_TAG_ONLY_PARAGRAPH = /^(?:\s|<[^>]+>)*$/;
-  function shapeMessage(raw, messageId) {
-    const stats = { wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false, strippedBgimg: 0, hidden: 0, strippedThink: 0 };
+  function shapeMessage(raw, mintUid) {
+    const blankStats = () => ({
+      wrapped: 0,
+      scenes: 0,
+      strippedScenes: 0,
+      renamed: false,
+      strippedBgimg: 0,
+      hidden: 0,
+      strippedThink: 0,
+      uid: null,
+      uidMinted: false
+    });
+    const stats = blankStats();
     const unchanged = (deferred = null) => ({
       text: raw,
       // ALWAYS the caller's original — a rename ahead of a defer is discarded with it
       changed: false,
       deferred,
-      stats: { wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false, strippedBgimg: 0, hidden: 0, strippedThink: 0 }
+      stats: blankStats()
     });
     if (typeof raw !== "string" || raw.length === 0) return unchanged();
     let text0 = raw;
@@ -1660,6 +1698,7 @@
       stats.strippedThink = 1;
     }
     if (RE_PIC_TAG.test(inner)) return unchanged("pics-pending");
+    const priorUid = RE_EXISTING_UID.exec(inner);
     inner = inner.replace(RE_BACKGROUND_TAG, () => {
       stats.strippedScenes++;
       return "";
@@ -1685,6 +1724,9 @@ ${m2}
     RE_P_OPEN.lastIndex = 0;
     let pm;
     while ((pm = RE_P_OPEN.exec(inner)) !== null) beatStarts.push(pm.index);
+    const uid = imgs.length >= 1 ? priorUid ? priorUid[1] : mintUid() : null;
+    stats.uid = uid;
+    stats.uidMinted = Boolean(uid) && !priorUid;
     if (imgs.length >= 1 && beatStarts.length >= 1) {
       const owner = beatStarts.map((b) => {
         const after = imgs.findIndex((im) => im.index > b);
@@ -1696,19 +1738,19 @@ ${m2}
       for (let n = imgs.length - 1; n >= 1; n--) {
         const firstBeat = owner.indexOf(n);
         if (firstBeat === -1) continue;
-        const nm = sceneName(messageId, n + 1, shortHash(imgs[n].src));
+        const nm = sceneName(uid, n + 1, shortHash(imgs[n].src));
         const at = beatStarts[firstBeat];
         inner = inner.slice(0, at) + `<background scene="${nm}" />
 ` + inner.slice(at);
         stats.scenes++;
       }
-      const nm1 = sceneName(messageId, 1, shortHash(imgs[0].src));
+      const nm1 = sceneName(uid, 1, shortHash(imgs[0].src));
       inner = `
 <background scene="${nm1}" />
 ` + inner.replace(/^\n+/, "");
       stats.scenes++;
     } else if (imgs.length >= 1) {
-      const nm1 = sceneName(messageId, 1, shortHash(imgs[0].src));
+      const nm1 = sceneName(uid, 1, shortHash(imgs[0].src));
       inner = `
 <background scene="${nm1}" />
 ` + inner.replace(/^\n+/, "");
@@ -1749,6 +1791,38 @@ ${m2}
   // src/features/beat-shaper/beat-shaper.js
   var inFlight = /* @__PURE__ */ new Set();
   var deferralLogged = /* @__PURE__ */ new Set();
+  function currentChatId() {
+    try {
+      const getter = topWindow.getCurrentChatId;
+      if (typeof getter === "function") {
+        const id = getter.call(topWindow);
+        if (id) return String(id);
+      }
+    } catch (e) {
+      log.warn("beat-shaper: getCurrentChatId() threw — falling back to the context field:", e);
+    }
+    try {
+      const ctx = topWindow.SillyTavern && typeof topWindow.SillyTavern.getContext === "function" ? topWindow.SillyTavern.getContext() : null;
+      if (ctx && ctx.chatId) return String(ctx.chatId);
+    } catch (e) {
+      log.warn("beat-shaper: SillyTavern.getContext() threw — chat id unresolved:", e);
+    }
+    return null;
+  }
+  function currentChatKey() {
+    const id = currentChatId();
+    return id ? shortHash(id) : null;
+  }
+  var UNKNOWN_CHAT_KEY = "nochat";
+  var UID_RANDOM_LEN = 6;
+  function randomToken() {
+    let out = "";
+    while (out.length < UID_RANDOM_LEN) out += Math.random().toString(36).slice(2);
+    return out.slice(0, UID_RANDOM_LEN);
+  }
+  function mintUidForCurrentChat() {
+    return sceneUid(currentChatKey() || UNKNOWN_CHAT_KEY, randomToken());
+  }
   function rawMessage(id) {
     try {
       const arr = window.getChatMessages(id);
@@ -1768,12 +1842,12 @@ ${m2}
     if (!topWindow.galgame) return;
     const raw = rawMessage(id);
     if (raw === null) return;
-    const { text, changed, deferred, stats } = shapeMessage(raw, id);
+    const { text, changed, deferred, stats } = shapeMessage(raw, mintUidForCurrentChat);
     if (deferred) {
       const key = `${id}:${deferred}`;
       if (!deferralLogged.has(key)) {
         deferralLogged.add(key);
-        log.info(`beat-shaper msg=${id}: deferred (${deferred}) — will retry on next message event`);
+        log.image(`beat-shaper msg=${id}: deferred (${deferred}) — will retry on next message event`);
       }
       return;
     }
@@ -1784,8 +1858,8 @@ ${m2}
     inFlight.add(id);
     try {
       await window.setChatMessages([{ message_id: id, message: text }], { refresh: "affected" });
-      log.info(
-        `beat-shaper msg=${id}:${stats.renamed ? " gametxt→maintext" : ""} wrapped=${stats.wrapped}p scenes=${stats.scenes}${stats.scenes ? " (hoisted #1)" : ""} strippedScenes=${stats.strippedScenes}${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ""}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ""}`
+      log.image(
+        `beat-shaper msg=${id}:${stats.renamed ? " gametxt→maintext" : ""} wrapped=${stats.wrapped}p scenes=${stats.scenes}${stats.scenes ? " (hoisted #1)" : ""} strippedScenes=${stats.strippedScenes}${stats.uid ? ` uid=${stats.uid}(${stats.uidMinted ? "minted" : "kept"})` : ""}${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ""}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ""}`
       );
     } catch (e) {
       log.warn(`beat-shaper: setChatMessages(${id}) failed — message left unshaped:`, e);
@@ -1813,7 +1887,24 @@ ${m2}
       log.warn("beat-shaper: no tavern message events available — shaper disabled");
       return;
     }
-    log.info(`beat-shaper active (${bound} event(s) bound)`);
+    log.image(`beat-shaper active (${bound} event(s) bound)`);
+  }
+
+  // src/features/image/image-seam-core.js
+  function staleSiblingKeys(allKeys, uid, keep) {
+    if (!uid || !keep || keep.size === 0) return [];
+    const prefix = `${uid}_scene_`;
+    return (allKeys || []).filter(
+      (k) => typeof k === "string" && k.startsWith(prefix) && SCENE_NAME_RE.test(k) && !keep.has(k)
+    );
+  }
+  function deadBackgroundKeys(allKeys, liveSceneNames2, chatKey) {
+    if (!chatKey || !liveSceneNames2 || liveSceneNames2.size === 0) return [];
+    return (allKeys || []).filter((k) => {
+      if (typeof k !== "string" || liveSceneNames2.has(k)) return false;
+      if (LEGACY_SCENE_NAME_RE.test(k)) return true;
+      return chatKeyOfSceneName(k) === chatKey;
+    });
   }
 
   // src/features/image/image-seam.js
@@ -1902,7 +1993,7 @@ ${m2}
           continue;
         }
         if (!SCENE_NAME_RE.test(currentScene)) {
-          log.info(`image-seam: pre-shape scene "${currentScene}" — skipped (waiting for beat-shaper names)`);
+          log.image(`image-seam: scene "${currentScene}" is not a current uid-scoped name — skipped (waiting for beat-shaper)`);
           continue;
         }
         pairs.push({ scene: currentScene, url });
@@ -1922,13 +2013,12 @@ ${m2}
       return null;
     }
   }
-  async function pruneMessageSiblings(messageId, keep) {
-    const prefix = `msg${messageId}_scene_`;
+  async function pruneSceneSiblings(uid, keep) {
     let db;
     try {
       db = await openDb();
     } catch (e) {
-      log.warn(`image-seam: prune open failed (msg ${messageId}):`, e);
+      log.warn(`image-seam: prune open failed (uid ${uid}):`, e);
       return 0;
     }
     try {
@@ -1939,9 +2029,7 @@ ${m2}
         r.onsuccess = () => resolve(r.result || []);
         r.onerror = () => reject(r.error);
       });
-      const stale = keys.filter(
-        (k) => typeof k === "string" && k.startsWith(prefix) && SCENE_NAME_RE.test(k) && !keep.has(k)
-      );
+      const stale = staleSiblingKeys(keys, uid, keep);
       if (!stale.length) return 0;
       await new Promise((resolve, reject) => {
         const tx = db.transaction([STORE], "readwrite");
@@ -1952,7 +2040,7 @@ ${m2}
       });
       return stale.length;
     } catch (e) {
-      log.warn(`image-seam: pruneMessageSiblings(${messageId}) failed:`, e);
+      log.warn(`image-seam: pruneSceneSiblings(${uid}) failed:`, e);
       return 0;
     } finally {
       try {
@@ -1970,12 +2058,102 @@ ${m2}
     for (const { scene, url } of pairs) {
       if (await writeBackground(scene, url)) ok++;
     }
-    const removed = await pruneMessageSiblings(id, new Set(pairs.map((p) => p.scene)));
+    const keepByUid = /* @__PURE__ */ new Map();
+    for (const p of pairs) {
+      const uid = uidOfSceneName(p.scene);
+      if (!uid) continue;
+      if (!keepByUid.has(uid)) keepByUid.set(uid, /* @__PURE__ */ new Set());
+      keepByUid.get(uid).add(p.scene);
+    }
+    let removed = 0;
+    for (const [uid, keep] of keepByUid) {
+      removed += await pruneSceneSiblings(uid, keep);
+    }
     if (ok || removed) {
-      log.info(
+      log.image(
         `image-seam: wrote ${ok}/${pairs.length} background(s) from message ${id}` + (removed ? `, pruned ${removed} superseded` : "")
       );
     }
+  }
+  var RE_ANY_SCENE_NAME = /<background\s+scene="([^"]+)"/gi;
+  function liveSceneNames() {
+    let chat = null;
+    try {
+      const ctx = topWindow.SillyTavern && typeof topWindow.SillyTavern.getContext === "function" ? topWindow.SillyTavern.getContext() : null;
+      chat = ctx ? ctx.chat : null;
+    } catch (e) {
+      log.warn("image-seam: sweep could not read the chat array — skipped:", e);
+      return null;
+    }
+    if (!Array.isArray(chat) || chat.length === 0) return null;
+    const names = /* @__PURE__ */ new Set();
+    for (const msg of chat) {
+      if (!msg) continue;
+      const texts = [typeof msg.mes === "string" ? msg.mes : ""];
+      if (Array.isArray(msg.swipes)) {
+        for (const s of msg.swipes) if (typeof s === "string") texts.push(s);
+      }
+      for (const t of texts) {
+        RE_ANY_SCENE_NAME.lastIndex = 0;
+        let m;
+        while ((m = RE_ANY_SCENE_NAME.exec(t)) !== null) names.add(m[1].trim());
+      }
+    }
+    return names.size ? names : null;
+  }
+  async function sweepOrphanBackgrounds() {
+    const chatKey = currentChatKey();
+    if (!chatKey) {
+      log.warn("image-seam: orphan sweep skipped — SillyTavern chat id unresolvable, so the delete cannot be scoped to this chat and might hit another chat's backdrops.");
+      return 0;
+    }
+    const live = liveSceneNames();
+    if (!live) return 0;
+    let db;
+    try {
+      db = await openDb();
+    } catch (e) {
+      log.warn("image-seam: orphan sweep open failed:", e);
+      return 0;
+    }
+    try {
+      if (!db.objectStoreNames.contains(STORE)) return 0;
+      const keys = await new Promise((resolve, reject) => {
+        const tx = db.transaction([STORE], "readonly");
+        const r = tx.objectStore(STORE).getAllKeys();
+        r.onsuccess = () => resolve(r.result || []);
+        r.onerror = () => reject(r.error);
+      });
+      const dead = deadBackgroundKeys(keys, live, chatKey);
+      if (!dead.length) return 0;
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction([STORE], "readwrite");
+        const store = tx.objectStore(STORE);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        for (const k of dead) store.delete(k);
+      });
+      return dead.length;
+    } catch (e) {
+      log.warn("image-seam: orphan sweep failed:", e);
+      return 0;
+    } finally {
+      try {
+        db.close();
+      } catch (e) {
+      }
+    }
+  }
+  var SWEEP_DEBOUNCE_MS = 2e3;
+  var sweepTimer = null;
+  function scheduleSweep(why) {
+    if (sweepTimer) clearTimeout(sweepTimer);
+    sweepTimer = setTimeout(() => {
+      sweepTimer = null;
+      sweepOrphanBackgrounds().then((n) => {
+        if (n) log.image(`image-seam: swept ${n} orphaned backdrop(s) (${why})`);
+      }).catch((e) => log.warn("image-seam: orphan sweep rejected:", e));
+    }, SWEEP_DEBOUNCE_MS);
   }
   function topMvu() {
     try {
@@ -2035,7 +2213,7 @@ ${m2}
         return "skip";
       }
       await Mvu.replaceMvuData(data, { type: "message", message_id: id });
-      log.info(`image-seam: ForceImageType → ${on} (floor ${id})`);
+      log.image(`image-seam: ForceImageType → ${on} (floor ${id})`);
       return "ok";
     } catch (e) {
       log.warn("image-seam: setForceImageType failed (will retry):", e);
@@ -2099,6 +2277,15 @@ ${m2}
         }
       }
     }
+    for (const [ev, why] of [[te.MESSAGE_DELETED, "message deleted"], [te.CHAT_CHANGED, "chat loaded"]]) {
+      if (!ev) continue;
+      try {
+        window.eventOn(ev, () => scheduleSweep(why));
+      } catch (e) {
+        log.warn(`image-seam: eventOn(${ev}) failed — orphan sweep not bound to "${why}":`, e);
+      }
+    }
+    scheduleSweep("seam start");
     let scheduled2 = false;
     const obs = new MutationObserver(() => {
       if (scheduled2) return;
@@ -2114,7 +2301,7 @@ ${m2}
       log.warn("image-seam: could not observe for immersive enter/exit:", e);
     }
     syncGalState();
-    log.info("image-seam active");
+    log.image("image-seam active");
   }
 
   // src/features/image/image-viewer.js
@@ -2184,7 +2371,7 @@ ${m2}
     DOC.addEventListener("keydown", onKey);
     cleanup = () => DOC.removeEventListener("keydown", onKey);
     modalParent2().appendChild(wrap);
-    log.info("image-viewer: opened (" + (url ? "showing current backdrop" : "no image") + ")");
+    log.image("image-viewer: opened (" + (url ? "showing current backdrop" : "no image") + ")");
   }
   function injectButton() {
     const overlay = DOC.querySelector(OVERLAY_SEL2);
@@ -2215,7 +2402,7 @@ ${m2}
     });
     observer2.observe(DOC.body, { childList: true, subtree: true });
     injectButton();
-    log.info("image-viewer active");
+    log.image("image-viewer active");
   }
 
   // src/features/image/image-regen.js
@@ -2236,14 +2423,24 @@ ${m2}
     }
     return null;
   }
+  function newestImageRegenControl() {
+    const wraps = DOC.querySelectorAll('[class*="auto-img-wrap"]');
+    if (!wraps.length) return null;
+    return wraps[wraps.length - 1].querySelector('[class*="auto-img-regen"]') || null;
+  }
   function fireRegen(btn) {
-    const span = regenForCurrentBg();
+    let span = regenForCurrentBg();
+    let target = "the current backdrop";
     if (!span) {
-      log.warn("image-regen: no regen control matches the current backdrop — nothing to regenerate");
+      span = newestImageRegenControl();
+      target = "the NEWEST image — no backdrop was on screen to match (deleted from the Background Manager?)";
+    }
+    if (!span) {
+      log.warn("image-regen: no generated image in this chat to regenerate — nothing to do");
       return false;
     }
     span.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    log.info("image-regen: triggered regenerate for the current backdrop");
+    log.image(`image-regen: triggered regenerate for ${target}`);
     if (btn) {
       btn.classList.add("is-spinning");
       setTimeout(() => btn.classList.remove("is-spinning"), 2e3);
@@ -2279,7 +2476,7 @@ ${m2}
     });
     observer2.observe(DOC.body, { childList: true, subtree: true });
     injectButton2();
-    log.info("image-regen active");
+    log.image("image-regen active");
   }
 
   // src/features/galgame-bridge/choices.js

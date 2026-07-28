@@ -85,7 +85,7 @@ export function openImageViewer() {
   cleanup = () => DOC.removeEventListener('keydown', onKey);
 
   modalParent().appendChild(wrap);
-  log.info('image-viewer: opened (' + (url ? 'showing current backdrop' : 'no image') + ')');
+  log.image('image-viewer: opened (' + (url ? 'showing current backdrop' : 'no image') + ')');
 }
 
 function injectButton() {
@@ -114,5 +114,5 @@ export function startImageViewer() {
   });
   observer.observe(DOC.body, { childList: true, subtree: true });
   injectButton();
-  log.info('image-viewer active');
+  log.image('image-viewer active');
 }

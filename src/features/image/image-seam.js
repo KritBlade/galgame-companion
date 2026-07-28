@@ -1,5 +1,5 @@
 // galgame-companion · image-seam (G4b) — feed mvu-helper's generated images into galgame's own
-// backdrop library, and flip the ForceImageType latch on immersive enter/exit. GCP §10.3 / VPP §3. v0.3
+// backdrop library, and flip the ForceImageType latch on immersive enter/exit. GCP §10.3 / VPP §3. v0.4
 //
 // PIPELINE: the narrator writes `<background scene="X">` beats; mvu-helper draws each `<pic>` and
 // stamps `<span class="auto-img-wrap"><img src="…"></span>` into the message (then emits
@@ -13,7 +13,8 @@
 // localStorage `galgame-ui-plugin_current_pack` (default `pack_default`), db/image-packs.js.
 
 import { DOC, topWindow, log } from '../../env.js';
-import { SCENE_NAME_RE } from '../beat-shaper/index.js';
+import { SCENE_NAME_RE, uidOfSceneName, currentChatKey } from '../beat-shaper/index.js';
+import { staleSiblingKeys, deadBackgroundKeys } from './image-seam-core.js';
 
 // ── galgame constants (do NOT drift — re-verify on an upstream bump, GCP §10.4 §5) ──
 const DB_NAME = 'GalgameUIPluginDB';
@@ -86,7 +87,7 @@ async function writeBackground(sceneName, imageUrl) {
 
 // ── scan: bind each <img> to the nearest preceding <background scene> ──────────
 // Scan in document order; carry the latest scene forward. Since the beat-shaper (dumb-terminal C1)
-// owns ALL scene tags, only OUR msg-scoped names (SCENE_NAME_RE) are ever written to the store —
+// owns ALL scene tags, only OUR uid-scoped names (SCENE_NAME_RE) are ever written to the store —
 // a narrator/galgame-COT-named scene in a not-yet-shaped message is a transient we must NOT bind
 // (the prune's safety rule can never delete a foreign name, so writing one would pollute the store
 // forever). No preceding scene / foreign-only scene → skip quietly; the shaper's re-render fires
@@ -106,7 +107,9 @@ function pairImagesToScenes(rawMes) {
         continue;
       }
       if (!SCENE_NAME_RE.test(currentScene)) {
-        log.info(`image-seam: pre-shape scene "${currentScene}" — skipped (waiting for beat-shaper names)`);
+        // Foreign (narrator/COT) name on a not-yet-shaped message, OR a pre-uid msg{index} name on a
+        // message shaped by an older build — either way we wait for the shaper to mint the current form.
+        log.image(`image-seam: scene "${currentScene}" is not a current uid-scoped name — skipped (waiting for beat-shaper)`);
         continue;
       }
       pairs.push({ scene: currentScene, url });
@@ -129,17 +132,18 @@ function rawMessage(id) {
   }
 }
 
-// Delete this message's SUPERSEDED backdrop entries: same `msg{id}_scene_*` names that are NOT in the
-// current keep-set (older image-src hashes from a prior swipe/regen, or legacy hashless names). The
-// beat-shaper mints a fresh hash per image generation (§2.1), so without this the store would grow one
-// entry per swipe forever. SAFETY: only ever deletes OUR SCENE_NAME_RE names scoped to THIS message id
-// — never a foreign name, never another message. The caller guarantees keep is non-empty (we skip the
-// prune entirely on a transient empty pass, so we can't wipe good backdrops mid-stream).
-async function pruneMessageSiblings(messageId, keep) {
-  const prefix = `msg${messageId}_scene_`;
+// Delete this message's SUPERSEDED backdrop entries: same `{uid}_scene_*` names that are NOT in the
+// current keep-set (older image-src hashes from a prior swipe/regen). The beat-shaper mints a fresh
+// hash per image generation (§2.1), so without this the store would grow one entry per swipe forever.
+// SAFETY: only ever deletes OUR SCENE_NAME_RE names carrying THIS message's uid. The uid is what makes
+// that safe — the old msg{index} prefix was NOT per-message (deleting a message renumbered the chat, so
+// two messages could share a prefix and this prune reached across and deleted the other one's records —
+// live 2026-07-28). The caller guarantees keep is non-empty (we skip the prune entirely on a transient
+// empty pass, so we can't wipe good backdrops mid-stream).
+async function pruneSceneSiblings(uid, keep) {
   let db;
   try { db = await openDb(); }
-  catch (e) { log.warn(`image-seam: prune open failed (msg ${messageId}):`, e); return 0; }
+  catch (e) { log.warn(`image-seam: prune open failed (uid ${uid}):`, e); return 0; }
   try {
     if (!db.objectStoreNames.contains(STORE)) return 0;
     const keys = await new Promise((resolve, reject) => {
@@ -148,9 +152,7 @@ async function pruneMessageSiblings(messageId, keep) {
       r.onsuccess = () => resolve(r.result || []);
       r.onerror = () => reject(r.error);
     });
-    const stale = keys.filter(
-      (k) => typeof k === 'string' && k.startsWith(prefix) && SCENE_NAME_RE.test(k) && !keep.has(k),
-    );
+    const stale = staleSiblingKeys(keys, uid, keep);
     if (!stale.length) return 0;
     await new Promise((resolve, reject) => {
       const tx = db.transaction([STORE], 'readwrite');
@@ -161,7 +163,7 @@ async function pruneMessageSiblings(messageId, keep) {
     });
     return stale.length;
   } catch (e) {
-    log.warn(`image-seam: pruneMessageSiblings(${messageId}) failed:`, e);
+    log.warn(`image-seam: pruneSceneSiblings(${uid}) failed:`, e);
     return 0;
   } finally {
     try { db.close(); } catch (e) { /* EXPECTED: closing an already-closing db is harmless */ }
@@ -178,14 +180,119 @@ async function processMessage(id) {
     // eslint-disable-next-line no-await-in-loop -- serialize DB writes; a message has at most a few
     if (await writeBackground(scene, url)) ok++;
   }
-  // Drop superseded gens of THIS message's beats so swipe/regen doesn't accumulate (keep = current names).
-  const removed = await pruneMessageSiblings(id, new Set(pairs.map((p) => p.scene)));
+  // Drop superseded gens of THIS message's beats so swipe/regen doesn't accumulate (keep = current
+  // names). Grouped by uid: the shaper mints exactly one per message, but grouping keeps every prune
+  // scoped to a uid we actually saw here, so a hand-edited message carrying two can't widen the delete.
+  const keepByUid = new Map();
+  for (const p of pairs) {
+    const uid = uidOfSceneName(p.scene);
+    if (!uid) continue; // pairImagesToScenes already filtered to SCENE_NAME_RE — belt and braces
+    if (!keepByUid.has(uid)) keepByUid.set(uid, new Set());
+    keepByUid.get(uid).add(p.scene);
+  }
+  let removed = 0;
+  for (const [uid, keep] of keepByUid) {
+    // eslint-disable-next-line no-await-in-loop -- serialize DB work; a message has exactly one uid
+    removed += await pruneSceneSiblings(uid, keep);
+  }
   if (ok || removed) {
-    log.info(
+    log.image(
       `image-seam: wrote ${ok}/${pairs.length} background(s) from message ${id}` +
         (removed ? `, pruned ${removed} superseded` : ''),
     );
   }
+}
+
+// ── orphan sweep: drop backdrops whose message no longer exists ───────────────
+// The per-uid prune above only ever reaches records the CURRENT message still references. Deleting the
+// MESSAGE leaves its records behind with nothing left to prune them — live evidence 2026-07-28: the
+// store still held msg8_scene_2_jhd8qg long after message 8 was gone.
+//
+// SCOPING IS THE WHOLE DIFFICULTY — galgame's store is GLOBAL, one DB shared by every chat, so "not
+// referenced by this chat" does NOT mean "dead". That decision is image-seam-core's deadBackgroundKeys
+// (pure + unit-tested, since it is the one thing here that deletes someone else's data); this half only
+// supplies it with two honest inputs and refuses to run without both.
+
+// Every <background scene="…"> name currently referenced anywhere in the loaded chat, INCLUDING
+// non-active swipes — a swipe that merely isn't on screen is still live, and swiping back re-displays
+// it. Returns null (never an empty set) when the chat can't be read or holds no scene names at all, so
+// a transient/mid-switch read can never be mistaken for "nothing is alive".
+const RE_ANY_SCENE_NAME = /<background\s+scene="([^"]+)"/gi;
+function liveSceneNames() {
+  let chat = null;
+  try {
+    const ctx = topWindow.SillyTavern && typeof topWindow.SillyTavern.getContext === 'function'
+      ? topWindow.SillyTavern.getContext() : null;
+    chat = ctx ? ctx.chat : null;
+  } catch (e) {
+    log.warn('image-seam: sweep could not read the chat array — skipped:', e);
+    return null;
+  }
+  if (!Array.isArray(chat) || chat.length === 0) return null;
+  const names = new Set();
+  for (const msg of chat) {
+    if (!msg) continue;
+    const texts = [typeof msg.mes === 'string' ? msg.mes : ''];
+    if (Array.isArray(msg.swipes)) for (const s of msg.swipes) if (typeof s === 'string') texts.push(s);
+    for (const t of texts) {
+      RE_ANY_SCENE_NAME.lastIndex = 0;
+      let m;
+      while ((m = RE_ANY_SCENE_NAME.exec(t)) !== null) names.add(m[1].trim());
+    }
+  }
+  return names.size ? names : null;
+}
+
+async function sweepOrphanBackgrounds() {
+  const chatKey = currentChatKey();
+  if (!chatKey) {
+    log.warn('image-seam: orphan sweep skipped — SillyTavern chat id unresolvable, so the delete cannot ' +
+      'be scoped to this chat and might hit another chat\'s backdrops.');
+    return 0;
+  }
+  const live = liveSceneNames();
+  if (!live) return 0; // transient/empty read — see liveSceneNames()
+  let db;
+  try { db = await openDb(); }
+  catch (e) { log.warn('image-seam: orphan sweep open failed:', e); return 0; }
+  try {
+    if (!db.objectStoreNames.contains(STORE)) return 0;
+    const keys = await new Promise((resolve, reject) => {
+      const tx = db.transaction([STORE], 'readonly');
+      const r = tx.objectStore(STORE).getAllKeys();
+      r.onsuccess = () => resolve(r.result || []);
+      r.onerror = () => reject(r.error);
+    });
+    const dead = deadBackgroundKeys(keys, live, chatKey);
+    if (!dead.length) return 0;
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction([STORE], 'readwrite');
+      const store = tx.objectStore(STORE);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      for (const k of dead) store.delete(k);
+    });
+    return dead.length;
+  } catch (e) {
+    log.warn('image-seam: orphan sweep failed:', e);
+    return 0;
+  } finally {
+    try { db.close(); } catch (e) { /* EXPECTED: closing an already-closing db is harmless */ }
+  }
+}
+
+// Debounced so a multi-message delete (or a chat switch that fires several events) sweeps once, and so
+// the sweep reads a settled chat array rather than one mid-swap.
+const SWEEP_DEBOUNCE_MS = 2000;
+let sweepTimer = null;
+function scheduleSweep(why) {
+  if (sweepTimer) clearTimeout(sweepTimer);
+  sweepTimer = setTimeout(() => {
+    sweepTimer = null;
+    sweepOrphanBackgrounds()
+      .then((n) => { if (n) log.image(`image-seam: swept ${n} orphaned backdrop(s) (${why})`); })
+      .catch((e) => log.warn('image-seam: orphan sweep rejected:', e));
+  }, SWEEP_DEBOUNCE_MS);
 }
 
 // ── ForceImageType latch flip (paired with mvu-helper G4a) ────────────────────
@@ -234,7 +341,7 @@ async function attemptForceImageType(on) {
       return 'skip';
     }
     await Mvu.replaceMvuData(data, { type: 'message', message_id: id });
-    log.info(`image-seam: ForceImageType → ${on} (floor ${id})`);
+    log.image(`image-seam: ForceImageType → ${on} (floor ${id})`);
     return 'ok';
   } catch (e) {
     log.warn('image-seam: setForceImageType failed (will retry):', e);
@@ -304,6 +411,15 @@ export function startImageSeam() {
     if (ev) { try { window.eventOn(ev, onMsg); } catch (e) { log.warn(`image-seam: eventOn(${ev}) failed:`, e); } }
   }
 
+  // Orphan sweep triggers: a delete is the event that STRANDS records, and a chat load is when a
+  // previous session's strandings are first visible to us. Both debounced into one pass.
+  for (const [ev, why] of [[te.MESSAGE_DELETED, 'message deleted'], [te.CHAT_CHANGED, 'chat loaded']]) {
+    if (!ev) continue;
+    try { window.eventOn(ev, () => scheduleSweep(why)); }
+    catch (e) { log.warn(`image-seam: eventOn(${ev}) failed — orphan sweep not bound to "${why}":`, e); }
+  }
+  scheduleSweep('seam start'); // the chat already loaded before we wired up
+
   // Immersive enter/exit → flip the latch. Observe the parent doc for the overlay's presence + its
   // `active` class; a cheap rAF-coalesced overlayActive() check per burst (mirrors i18n's observer).
   let scheduled = false;
@@ -319,5 +435,5 @@ export function startImageSeam() {
   }
   syncGalState(); // initial: if galgame is already open on load, set the latch to match
 
-  log.info('image-seam active');
+  log.image('image-seam active');
 }

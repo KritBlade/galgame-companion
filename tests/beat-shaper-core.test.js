@@ -1,30 +1,69 @@
-// beat-shaper-core unit tests — pure transform (plan GALGAME_DUMB_TERMINAL_PLAN.md §5.1). v0.1
+// beat-shaper-core unit tests — pure transform (plan GALGAME_DUMB_TERMINAL_PLAN.md §5.1). v0.2
 import { describe, it, expect } from 'vitest';
-import { shapeMessage, sceneName, shortHash, SCENE_NAME_RE } from '../src/features/beat-shaper/beat-shaper-core.js';
+import {
+  shapeMessage, sceneName, sceneUid, shortHash, uidOfSceneName, chatKeyOfSceneName,
+  SCENE_NAME_RE, LEGACY_SCENE_NAME_RE,
+} from '../src/features/beat-shaper/beat-shaper-core.js';
 
 // A rendered image block exactly as mvu-helper's imagegen REPLACE path writes it.
 const imgSrc = (n) => `http://127.0.0.1:8000/img${n}.png`;
 const img = (n) =>
   `<span class="auto-img-wrap" data-rawtag="&lt;pic char=&quot;Mitsuki&quot;&gt;"><img src="${imgSrc(n)}" title="p${n}" alt="p${n}"><span class="auto-img-regen fa-solid fa-arrows-rotate" title="Regenerate image" role="button" tabindex="0" style="cursor:pointer;"></span></span>`;
-// Expected injected name for image #n of message id (name carries the src hash, §2.1).
-const nameFor = (id, n) => sceneName(id, n, shortHash(imgSrc(n)));
+
+// Deterministic stand-in for the live minter (beat-shaper.js mintUidForCurrentChat). Counts calls so a
+// test can assert the uid is minted at most ONCE per shape and never for an image-less message.
+const CHAT_KEY = 'k9f3x2';
+function stubMinter(uid = sceneUid(CHAT_KEY, 'a1b2c3')) {
+  const f = () => { f.calls++; return uid; };
+  f.calls = 0;
+  f.uid = uid;
+  return f;
+}
+const mint = () => stubMinter();
+// Expected injected name for image #n under a given uid (name carries the src hash, §2.1).
+const nameFor = (uid, n) => sceneName(uid, n, shortHash(imgSrc(n)));
 
 describe('scene naming contract (§2.1)', () => {
-  it('sceneName round-trips through SCENE_NAME_RE (hashless + hashed)', () => {
-    const m = sceneName(42, 3).match(SCENE_NAME_RE);
+  it('sceneName round-trips through SCENE_NAME_RE', () => {
+    const uid = sceneUid('k9f3x2', 'a1b2c3');
+    expect(uid).toBe('gck9f3x2-a1b2c3');
+    const m = sceneName(uid, 3, 'ab12z').match(SCENE_NAME_RE);
     expect(m).not.toBeNull();
-    expect(m[1]).toBe('42');
-    expect(m[2]).toBe('3');
-    expect(m[3]).toBeUndefined();
-    const h = sceneName(42, 3, 'ab12z').match(SCENE_NAME_RE);
-    expect(h[1]).toBe('42');
-    expect(h[2]).toBe('3');
-    expect(h[3]).toBe('ab12z');
+    expect(m[1]).toBe(uid);       // 1 = uid
+    expect(m[2]).toBe('k9f3x2');  // 2 = chatKey
+    expect(m[3]).toBe('3');       // 3 = beat number
+    expect(m[4]).toBe('ab12z');   // 4 = image hash
+  });
+  it('uidOfSceneName / chatKeyOfSceneName read the name back', () => {
+    const n = sceneName(sceneUid('c1', 'r1'), 2, 'h1');
+    expect(uidOfSceneName(n)).toBe('gcc1-r1');
+    expect(chatKeyOfSceneName(n)).toBe('c1');
+    expect(uidOfSceneName('櫻花飛舞的人光學園校門口')).toBeNull();
+    expect(chatKeyOfSceneName(null)).toBeNull();
   });
   it('rejects foreign names', () => {
     expect('櫻花飛舞的人光學園校門口').not.toMatch(SCENE_NAME_RE);
-    expect('msg42_scene_').not.toMatch(SCENE_NAME_RE);
-    expect('xmsg42_scene_1').not.toMatch(SCENE_NAME_RE);
+    expect('gcabc-def_scene_').not.toMatch(SCENE_NAME_RE);
+    expect('xgcabc-def_scene_1_h').not.toMatch(SCENE_NAME_RE);
+    expect('gcabc-def_scene_1').not.toMatch(SCENE_NAME_RE); // hash is mandatory now
+  });
+  it('rejects PRE-UID names, which only LEGACY_SCENE_NAME_RE still recognises', () => {
+    // The msg{index} form is what collided across messages after a delete (§2.1). It must no longer
+    // read as a current name, but the sweep still has to recognise it as OURS to clean it up.
+    for (const legacy of ['msg2_scene_1', 'msg2_scene_2_159y58o', 'msg8_scene_2_jhd8qg']) {
+      expect(legacy).not.toMatch(SCENE_NAME_RE);
+      expect(legacy).toMatch(LEGACY_SCENE_NAME_RE);
+    }
+    expect('gck9f3x2-a1b2c3_scene_1_abc').not.toMatch(LEGACY_SCENE_NAME_RE);
+    expect('櫻花').not.toMatch(LEGACY_SCENE_NAME_RE);
+  });
+  it('two uids from the same chat never substring-match each other (galgame findBestMatchScene safety)', () => {
+    // galgame falls back to substring containment when a name misses; two full sibling names must not
+    // cross-match, or a dead beat would silently borrow another message's backdrop.
+    const a = sceneName(sceneUid(CHAT_KEY, 'aaaaaa'), 1, 'h1');
+    const b = sceneName(sceneUid(CHAT_KEY, 'bbbbbb'), 1, 'h1');
+    expect(a.includes(b)).toBe(false);
+    expect(b.includes(a)).toBe(false);
   });
   it('shortHash is deterministic and content-sensitive', () => {
     expect(shortHash('a')).toBe(shortHash('a'));
@@ -33,32 +72,91 @@ describe('scene naming contract (§2.1)', () => {
   });
 });
 
+describe('uid minting + recovery (§2.1)', () => {
+  const withOneImage = `<maintext>\n<p>b</p>\n${img(1)}\n</maintext>`;
+
+  it('mints exactly once for a first shape and stamps it into every scene name', () => {
+    const m = stubMinter();
+    const r = shapeMessage(`<maintext>\n<p>b1</p>\n${img(1)}\n<p>b2</p>\n${img(2)}\n</maintext>`, m);
+    expect(m.calls).toBe(1); // one uid per MESSAGE, not per image
+    expect(r.stats.uid).toBe(m.uid);
+    expect(r.stats.uidMinted).toBe(true);
+    const names = [...r.text.matchAll(/<background scene="([^"]+)"/g)].map((x) => x[1]);
+    expect(names).toEqual([nameFor(m.uid, 1), nameFor(m.uid, 2)]);
+  });
+
+  it('never mints for a message with no images', () => {
+    const m = stubMinter();
+    const r = shapeMessage('<maintext>\n裸旁白。\n</maintext>', m);
+    expect(m.calls).toBe(0); // a uid nobody writes into the text could never be recovered
+    expect(r.stats.uid).toBeNull();
+    expect(r.stats.uidMinted).toBe(false);
+  });
+
+  it('RECOVERS the existing uid on a re-shape instead of minting a new one', () => {
+    const first = stubMinter();
+    const r1 = shapeMessage(withOneImage, first);
+    const second = stubMinter(sceneUid(CHAT_KEY, 'zzzzzz')); // would be a DIFFERENT uid if called
+    const r2 = shapeMessage(r1.text, second);
+    expect(second.calls).toBe(0);
+    expect(r2.stats.uid).toBe(first.uid);
+    expect(r2.stats.uidMinted).toBe(false);
+    expect(r2.changed).toBe(false);
+  });
+
+  it('keeps its uid when a message is RENUMBERED (the delete bug this replaces)', () => {
+    // Regression lock for the live 2026-07-28 failure: message 6 still carried msg2_* names because the
+    // old prefix was the chat index, so shaping the NEW message 2 pruned message 6's backdrop record.
+    // shapeMessage no longer accepts an index at all — a renumber cannot reach the name.
+    const m = stubMinter();
+    const r1 = shapeMessage(withOneImage, m);
+    const nameBefore = r1.text.match(/<background scene="([^"]+)"/)[1];
+    const afterDelete = shapeMessage(r1.text, stubMinter(sceneUid(CHAT_KEY, 'other1')));
+    expect(afterDelete.text.match(/<background scene="([^"]+)"/)[1]).toBe(nameBefore);
+  });
+
+  it('a REGENERATED image changes the hash but KEEPS the uid', () => {
+    const withImg = (src) =>
+      `<maintext>\n<p>b</p>\n<span class="auto-img-wrap" data-rawtag="&lt;pic&gt;"><img src="${src}"><span class="auto-img-regen"></span></span>\n</maintext>`;
+    const m = stubMinter();
+    const a = shapeMessage(withImg('http://h/old.png'), m);
+    // A regen rewrites the <img> src inside the ALREADY-SHAPED text, so the old scene tag is still there.
+    const regenned = a.text.replace('http://h/old.png', 'http://h/new.png');
+    const b = shapeMessage(regenned, stubMinter(sceneUid(CHAT_KEY, 'nope11')));
+    const nameA = a.text.match(/<background scene="([^"]+)"/)[1];
+    const nameB = b.text.match(/<background scene="([^"]+)"/)[1];
+    expect(nameA).not.toBe(nameB);                       // → galgame Map miss → fresh backdrop, no stale
+    expect(uidOfSceneName(nameB)).toBe(m.uid);           // …but still THIS message's record set, so the
+    expect(b.stats.uidMinted).toBe(false);               //    seam's prune drops the superseded sibling
+  });
+});
+
 describe('gating', () => {
   it('leaves non-galgame messages alone', () => {
-    const r = shapeMessage('plain prose, no maintext tag at all', 1);
+    const r = shapeMessage('plain prose, no maintext tag at all', mint());
     expect(r.changed).toBe(false);
     expect(r.deferred).toBeNull();
   });
   it('defers while <maintext> is unclosed (streaming)', () => {
-    const r = shapeMessage('<maintext>\nstill streaming…', 1);
+    const r = shapeMessage('<maintext>\nstill streaming…', mint());
     expect(r.changed).toBe(false);
     expect(r.deferred).toBe('maintext-unclosed');
   });
   it('defers while a raw <pic> tag is pending (image gen in flight)', () => {
-    const r = shapeMessage('<maintext>\n<p>a</p>\n<pic char="X" prompt="y">\n</maintext>', 1);
+    const r = shapeMessage('<maintext>\n<p>a</p>\n<pic char="X" prompt="y">\n</maintext>', mint());
     expect(r.changed).toBe(false);
     expect(r.deferred).toBe('pics-pending');
   });
   it('handles empty/non-string input', () => {
-    expect(shapeMessage('', 1).changed).toBe(false);
-    expect(shapeMessage(null, 1).changed).toBe(false);
+    expect(shapeMessage('', mint()).changed).toBe(false);
+    expect(shapeMessage(null, mint()).changed).toBe(false);
   });
 });
 
 describe('<p>-wrapping', () => {
   it('wraps bare prose paragraphs, one per blank-line block', () => {
     const raw = '<maintext>\n第一段旁白。\n\n第二段旁白，跨\n兩行。\n</maintext>';
-    const r = shapeMessage(raw, 5);
+    const r = shapeMessage(raw, mint());
     expect(r.changed).toBe(true);
     expect(r.stats.wrapped).toBe(2);
     expect(r.text).toContain('<p>第一段旁白。</p>');
@@ -66,7 +164,7 @@ describe('<p>-wrapping', () => {
   });
   it('never double-wraps existing <p> beats', () => {
     const raw = '<maintext>\n<p>橘美月: "你好"<微笑></p>\n\n裸旁白。\n</maintext>';
-    const r = shapeMessage(raw, 5);
+    const r = shapeMessage(raw, mint());
     expect(r.text).toContain('<p>橘美月: "你好"<微笑></p>');
     expect(r.text).not.toContain('<p><p>');
     expect(r.stats.wrapped).toBe(1);
@@ -74,7 +172,7 @@ describe('<p>-wrapping', () => {
   it('leaves protected blocks and tag-only command lines bare', () => {
     const raw =
       '<maintext>\n<bgm>Spring Breath</bgm>\n\n<sprite action="exit" character="A" />\n\n<styled type="手机短信" from="小明">小明: 到了</styled>\n\n prose here \n</maintext>';
-    const r = shapeMessage(raw, 5);
+    const r = shapeMessage(raw, mint());
     expect(r.text).toContain('<bgm>Spring Breath</bgm>');
     expect(r.text).not.toContain('<p><bgm>');
     expect(r.text).not.toContain('<p><sprite');
@@ -83,7 +181,7 @@ describe('<p>-wrapping', () => {
   });
   it('touches nothing outside <maintext>', () => {
     const raw = 'planning notes stay bare\n<maintext>\nprose\n</maintext>\ntrailer stays bare';
-    const r = shapeMessage(raw, 5);
+    const r = shapeMessage(raw, mint());
     expect(r.text).toMatch(/^planning notes stay bare\n/);
     expect(r.text).toMatch(/\ntrailer stays bare$/);
     expect(r.text).not.toContain('<p>planning');
@@ -94,25 +192,27 @@ describe('<p>-wrapping', () => {
 describe('scene strip + inject', () => {
   it('strips narrator/galgame-COT scene tags', () => {
     const raw = '<maintext>\n<background scene="櫻花飛舞的人光學園校門口" />\n<p>a</p>\n</maintext>';
-    const r = shapeMessage(raw, 7);
+    const r = shapeMessage(raw, mint());
     expect(r.text).not.toContain('櫻花飛舞');
     expect(r.stats.strippedScenes).toBe(1);
   });
   it('one image → scene_1 hoisted to the top of <maintext>', () => {
+    const m = stubMinter();
     const raw = `<maintext>\n<p>beat one</p>\n\n旁白。\n\n${img(1)}\n\n<p>beat after</p>\n</maintext>`;
-    const r = shapeMessage(raw, 7);
+    const r = shapeMessage(raw, m);
     const inner = r.text.slice(r.text.indexOf('<maintext>') + '<maintext>'.length);
-    expect(inner.trimStart().startsWith(`<background scene="${nameFor(7, 1)}" />`)).toBe(true);
+    expect(inner.trimStart().startsWith(`<background scene="${nameFor(m.uid, 1)}" />`)).toBe(true);
     expect(r.stats.scenes).toBe(1);
     expect((r.text.match(/<background\b/g) || []).length).toBe(1);
   });
   it('N images → scene_1 top; scene_n OPENS beat n (leads its prose, right after image n-1)', () => {
+    const m = stubMinter();
     const raw = `<maintext>\n<p>b1</p>\n${img(1)}\n<p>b2</p>\n${img(2)}\n<p>b3</p>\n</maintext>`;
-    const r = shapeMessage(raw, 9);
-    const s1 = r.text.indexOf(nameFor(9, 1));
+    const r = shapeMessage(raw, m);
+    const s1 = r.text.indexOf(nameFor(m.uid, 1));
     const p1 = r.text.indexOf('<p>b1</p>');
     const i1 = r.text.indexOf('img1.png');
-    const s2 = r.text.indexOf(nameFor(9, 2));
+    const s2 = r.text.indexOf(nameFor(m.uid, 2));
     const p2 = r.text.indexOf('<p>b2</p>');
     const i2 = r.text.indexOf('img2.png');
     expect(s1).toBeGreaterThan(-1);
@@ -133,10 +233,11 @@ describe('scene strip + inject', () => {
     // Reasoning-model failure mode: all prose first, then img1 img2 adjacent at the tail. The old code
     // anchored scene #2 right after image #1 (past every beat) so it governed NO beat and image #2 never
     // displayed. v0.5 binds scenes to beats + steals a trailing beat for the starved image.
+    const m = stubMinter();
     const raw = `<maintext>\n<p>b1</p>\n\n<p>b2</p>\n\n<p>b3</p>\n${img(1)}\n${img(2)}\n</maintext>`;
-    const r = shapeMessage(raw, 11);
-    const s1 = r.text.indexOf(nameFor(11, 1));
-    const s2 = r.text.indexOf(nameFor(11, 2));
+    const r = shapeMessage(raw, m);
+    const s1 = r.text.indexOf(nameFor(m.uid, 1));
+    const s2 = r.text.indexOf(nameFor(m.uid, 2));
     const p3 = r.text.indexOf('<p>b3</p>');
     expect(s1).toBeGreaterThan(-1);
     expect(s2).toBeGreaterThan(-1);
@@ -152,7 +253,7 @@ describe('leaked-reasoning strip (Fix §0b)', () => {
     // A reasoning model emitted planning + a bare </think> (no surviving <think> open) into .mes; the real
     // /Intent/ emission lives in the post-maintext <UpdateVariable> block and MUST survive.
     const raw = 'The user goes to the ruins. Plan: 1 do this 2 that.\nLet us go.\n</think>\n\n<maintext>\n<p>narration</p>\n</maintext>\n\n<UpdateVariable>/Intent/eventFire: leila_1</UpdateVariable>';
-    const r = shapeMessage(raw, 3);
+    const r = shapeMessage(raw, mint());
     expect(r.stats.strippedThink).toBe(1);
     expect(r.text.startsWith('<maintext>')).toBe(true); // reasoning + </think> gone; maintext leads
     expect(r.text).not.toContain('</think>');
@@ -161,7 +262,7 @@ describe('leaked-reasoning strip (Fix §0b)', () => {
     expect(r.text).toContain('/Intent/eventFire: leila_1'); // TAIL preserved — real intent survives
   });
   it('does not flag strippedThink on a clean message (no </think>)', () => {
-    const r = shapeMessage('<maintext>\n<p>clean beat</p>\n</maintext>', 3);
+    const r = shapeMessage('<maintext>\n<p>clean beat</p>\n</maintext>', mint());
     expect(r.stats.strippedThink).toBe(0);
   });
 });
@@ -169,7 +270,7 @@ describe('leaked-reasoning strip (Fix §0b)', () => {
 describe('gametxt→maintext bridge + engine display-noise', () => {
   it('renames a closed <gametxt> pair when no <maintext> exists', () => {
     const raw = '<think>x</think>\n<gametxt>\n<p>beat</p>\n</gametxt>\n<DateAndTime>t</DateAndTime>';
-    const r = shapeMessage(raw, 11);
+    const r = shapeMessage(raw, mint());
     expect(r.changed).toBe(true);
     expect(r.stats.renamed).toBe(true);
     expect(r.text).toContain('<maintext>');
@@ -180,19 +281,19 @@ describe('gametxt→maintext bridge + engine display-noise', () => {
   });
   it('leaves <gametxt> alone when <maintext> already exists', () => {
     const raw = '<gametxt>meta</gametxt>\n<maintext>\n<p>beat</p>\n</maintext>';
-    const r = shapeMessage(raw, 11);
+    const r = shapeMessage(raw, mint());
     expect(r.stats.renamed).toBe(false);
     expect(r.text).toContain('<gametxt>meta</gametxt>');
   });
   it('defers while <gametxt> is unclosed (streaming)', () => {
-    const r = shapeMessage('<gametxt>\nstill streaming…', 11);
+    const r = shapeMessage('<gametxt>\nstill streaming…', mint());
     expect(r.changed).toBe(false);
     expect(r.deferred).toBe('gametxt-unclosed');
   });
   it('strips <bgimg> prompt blocks (would display via ST renderer p-wrap)', () => {
     const raw =
       '<gametxt>\n<background scene="教室" /><bgimg>high school classroom, morning light</bgimg>\n<p>beat</p>\n</gametxt>';
-    const r = shapeMessage(raw, 12);
+    const r = shapeMessage(raw, mint());
     expect(r.stats.strippedBgimg).toBe(1);
     expect(r.text).not.toContain('<bgimg>');
     expect(r.text).not.toContain('classroom');
@@ -200,7 +301,7 @@ describe('gametxt→maintext bridge + engine display-noise', () => {
   it('comment-hides <classmate_trait_check> so POST keeps the data but nothing displays', () => {
     const block = '<classmate_trait_check>\nPending: Mana. TRAITS: STA50 INT25.\n</classmate_trait_check>';
     const raw = `<gametxt>\n<p>beat</p>\n${block}\n</gametxt>`;
-    const r = shapeMessage(raw, 13);
+    const r = shapeMessage(raw, mint());
     expect(r.stats.hidden).toBe(1);
     expect(r.text).toContain(`<!--gc:hidden\n${block}\n-->`); // data survives for POST's inputRegex
     expect(r.text).not.toContain('<p><!--'); // the hider itself never becomes a beat
@@ -208,9 +309,9 @@ describe('gametxt→maintext bridge + engine display-noise', () => {
   it('bridge output is idempotent (second run is a no-op)', () => {
     const raw =
       '<gametxt>\n<background scene="舊" /><bgimg>tags</bgimg>\n<p>b1</p>\n\n裸旁白。\n\n<classmate_trait_check>\nc\n</classmate_trait_check>\n</gametxt>';
-    const r1 = shapeMessage(raw, 14);
+    const r1 = shapeMessage(raw, mint());
     expect(r1.changed).toBe(true);
-    const r2 = shapeMessage(r1.text, 14);
+    const r2 = shapeMessage(r1.text, mint());
     expect(r2.changed).toBe(false);
     expect(r2.text).toBe(r1.text);
   });
@@ -219,26 +320,20 @@ describe('gametxt→maintext bridge + engine display-noise', () => {
 describe('idempotency', () => {
   const sample = `pre-planning\n<maintext>\n<background scene="舊場景" />\n<bgm>Song</bgm>\n\n裸旁白第一段。\n\n<p>橘美月[微笑,女聲]: "對話"</p>\n\n${img(1)}\n\n又一段旁白。\n\n${img(2)}\n\n<p>結尾</p>\n</maintext>\npost`;
   it('second run is a no-op (changed=false, identical text)', () => {
-    const r1 = shapeMessage(sample, 42);
+    const r1 = shapeMessage(sample, stubMinter());
     expect(r1.changed).toBe(true);
-    const r2 = shapeMessage(r1.text, 42);
+    // A DIFFERENT minter on the second run: convergence must come from uid RECOVERY, not from the test
+    // handing back the same value.
+    const r2 = shapeMessage(r1.text, stubMinter(sceneUid(CHAT_KEY, 'zzzzzz')));
     expect(r2.changed).toBe(false);
     expect(r2.text).toBe(r1.text);
   });
   it('re-run re-derives the same scene set (strip-then-inject)', () => {
-    const r1 = shapeMessage(sample, 42);
-    const names = [...r1.text.matchAll(/<background scene="([^"]+)"/g)].map((m) => m[1]);
-    expect(names).toEqual([nameFor(42, 1), nameFor(42, 2)]);
+    const m = stubMinter();
+    const r1 = shapeMessage(sample, m);
+    const names = [...r1.text.matchAll(/<background scene="([^"]+)"/g)].map((x) => x[1]);
+    expect(names).toEqual([nameFor(m.uid, 1), nameFor(m.uid, 2)]);
     // every injected name carries a hash group (load-bearing for galgame's per-name cache, §2.1)
-    for (const n of names) expect(n.match(SCENE_NAME_RE)[3]).toBeTruthy();
-  });
-  it('a regenerated image (new src) yields a new scene name', () => {
-    const withImg = (src) =>
-      `<maintext>\n<p>b</p>\n<span class="auto-img-wrap" data-rawtag="&lt;pic&gt;"><img src="${src}"><span class="auto-img-regen"></span></span>\n</maintext>`;
-    const a = shapeMessage(withImg('http://h/old.png'), 3);
-    const b = shapeMessage(withImg('http://h/new.png'), 3);
-    const nameA = a.text.match(/<background scene="([^"]+)"/)[1];
-    const nameB = b.text.match(/<background scene="([^"]+)"/)[1];
-    expect(nameA).not.toBe(nameB); // → galgame Map miss on the new name → fresh backdrop, no stale
+    for (const n of names) expect(n.match(SCENE_NAME_RE)[4]).toBeTruthy();
   });
 });

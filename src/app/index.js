@@ -33,10 +33,10 @@ startI18n();
 startToolbar();
 startFullscreenGuard(); // release native fullscreen galgame leaks when its "quit mode" is clicked
 // Order matters: the shaper MUST register before the seam so that on the same MESSAGE_UPDATED
-// (ST awaits listeners sequentially) the text is already shaped — msg-scoped scene names in place —
+// (ST awaits listeners sequentially) the text is already shaped — uid-scoped scene names in place —
 // when the seam scans it. Seam-side SCENE_NAME_RE filter is the belt-and-braces for other orders.
-startBeatShaper();      // dumb-terminal C1: <p>-wrap prose + inject msg-scoped <background scene> per image (scene #1 hoisted)
-startImageSeam();       // G4b: mvu-helper images → galgame backdrop DB (msg-scoped names only) + ForceImageType flip
+startBeatShaper();      // dumb-terminal C1: <p>-wrap prose + inject uid-scoped <background scene> per image (scene #1 hoisted)
+startImageSeam();       // G4b: mvu-helper images → galgame backdrop DB (uid-scoped names only) + ForceImageType flip
 startGeneratingGuard(); // clear galgame's "Generating" indicator when it latches on with no real generation (load-race / 120s-hang)
 startLocationTimeBridge(); // feed galgame's location/time pills from stat_data.World (AutoCardUpdaterAPI shim; MVU cards have none)
 startChoices();            // A2 all-genre: inject a <choices> format instruction + feed galgame's Story-choices UI via the same shim's 选项表 sheet

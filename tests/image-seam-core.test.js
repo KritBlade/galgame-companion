@@ -1,0 +1,83 @@
+// image-seam-core unit tests — the two DELETE predicates for galgame's shared background store. v0.1
+//
+// These are the only functions in the companion that remove someone else's data, so the tests lean hard
+// on what must NEVER be deleted: another chat's records, a foreign scene name, or anything at all when
+// the caller's view of "what is alive" is empty/unreadable.
+import { describe, it, expect } from 'vitest';
+import { staleSiblingKeys, deadBackgroundKeys } from '../src/features/image/image-seam-core.js';
+import { sceneName, sceneUid } from '../src/features/beat-shaper/beat-shaper-core.js';
+
+const CHAT = 'k9f3x2';       // this chat
+const OTHER_CHAT = 'p2m8q1';  // a different chat sharing the same global DB
+const uidA = sceneUid(CHAT, 'aaaaaa');
+const uidB = sceneUid(CHAT, 'bbbbbb');
+const uidElsewhere = sceneUid(OTHER_CHAT, 'cccccc');
+
+describe('staleSiblingKeys (per-message prune)', () => {
+  it('drops superseded hashes of the SAME beat and keeps the current ones', () => {
+    const keys = [
+      sceneName(uidA, 1, 'oldhash'),
+      sceneName(uidA, 1, 'newhash'),
+      sceneName(uidA, 2, 'keepme'),
+    ];
+    const keep = new Set([sceneName(uidA, 1, 'newhash'), sceneName(uidA, 2, 'keepme')]);
+    expect(staleSiblingKeys(keys, uidA, keep)).toEqual([sceneName(uidA, 1, 'oldhash')]);
+  });
+
+  it('NEVER reaches another message — not even one in the same chat', () => {
+    // The live 2026-07-28 failure in one assertion: under the old msg{index} prefix, pruning one message
+    // deleted a DIFFERENT message's record. A uid prefix makes that structurally impossible.
+    const keys = [sceneName(uidA, 1, 'h1'), sceneName(uidB, 1, 'h2'), sceneName(uidElsewhere, 1, 'h3')];
+    expect(staleSiblingKeys(keys, uidA, new Set([sceneName(uidA, 1, 'h1')]))).toEqual([]);
+  });
+
+  it('never touches foreign or legacy names', () => {
+    const keys = ['櫻花飛舞的人光學園校門口', 'msg2_scene_1_159y58o', 'pack_default_bg', `${uidA}_scene_x_h`];
+    expect(staleSiblingKeys(keys, uidA, new Set([sceneName(uidA, 1, 'h1')]))).toEqual([]);
+  });
+
+  it('deletes nothing on an empty keep-set (transient mid-stream scan)', () => {
+    const keys = [sceneName(uidA, 1, 'h1'), sceneName(uidA, 2, 'h2')];
+    expect(staleSiblingKeys(keys, uidA, new Set())).toEqual([]);
+    expect(staleSiblingKeys(keys, uidA, null)).toEqual([]);
+    expect(staleSiblingKeys(keys, '', new Set([sceneName(uidA, 1, 'h1')]))).toEqual([]);
+  });
+});
+
+describe('deadBackgroundKeys (orphan sweep)', () => {
+  const live = new Set([sceneName(uidA, 1, 'h1'), sceneName(uidA, 2, 'h2')]);
+
+  it('deletes this chat\'s records that no live message references', () => {
+    const gone = sceneName(uidB, 1, 'h9'); // uidB's message was deleted
+    expect(deadBackgroundKeys([...live, gone], live, CHAT)).toEqual([gone]);
+  });
+
+  it('NEVER deletes another chat\'s records, referenced or not', () => {
+    // The store is global; "not in THIS chat" is not evidence of death.
+    const foreignChat = sceneName(uidElsewhere, 1, 'h9');
+    expect(deadBackgroundKeys([...live, foreignChat], live, CHAT)).toEqual([]);
+  });
+
+  it('deletes unreferenced PRE-UID leftovers (dead by construction — nothing mints them)', () => {
+    const legacy = ['msg8_scene_2_jhd8qg', 'msg2_scene_1', 'msg2_scene_2_159y58o'];
+    expect(deadBackgroundKeys([...live, ...legacy], live, CHAT)).toEqual(legacy);
+  });
+
+  it('keeps a legacy name a message still references (re-shape has not run yet)', () => {
+    const stillUsed = 'msg4_scene_1_glhvnc';
+    const liveWithLegacy = new Set([...live, stillUsed]);
+    expect(deadBackgroundKeys([...liveWithLegacy], liveWithLegacy, CHAT)).toEqual([]);
+  });
+
+  it('never deletes a foreign scene name', () => {
+    const foreign = ['櫻花飛舞的人光學園校門口', 'pack_default_bg', 'classroom_morning', ''];
+    expect(deadBackgroundKeys([...live, ...foreign], live, CHAT)).toEqual([]);
+  });
+
+  it('deletes NOTHING without a chat key or a live set (refuse rather than guess)', () => {
+    const keys = [sceneName(uidA, 1, 'h1'), sceneName(uidB, 1, 'h9'), 'msg8_scene_2_jhd8qg'];
+    expect(deadBackgroundKeys(keys, live, null)).toEqual([]);   // chat id unresolvable
+    expect(deadBackgroundKeys(keys, new Set(), CHAT)).toEqual([]); // transient/empty chat read
+    expect(deadBackgroundKeys(keys, null, CHAT)).toEqual([]);
+  });
+});

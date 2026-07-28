@@ -1,5 +1,5 @@
 // galgame-companion · beat-shaper — deterministic reshaping of AI replies into galgame's beat
-// contract (plan: mvu-helper plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). v0.1
+// contract (plan: mvu-helper plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). v0.2
 //
 // Event-driven wrapper around the pure transform in beat-shaper-core.js: on MESSAGE_RECEIVED /
 // MESSAGE_UPDATED, read the floor's raw text (TH getChatMessages), shape it, and write it back
@@ -19,10 +19,60 @@
 //   transform is idempotent, and a per-floor in-flight set blocks re-entry.
 
 import { topWindow, log } from '../../env.js';
-import { shapeMessage } from './beat-shaper-core.js';
+import { shapeMessage, sceneUid, shortHash } from './beat-shaper-core.js';
 
 const inFlight = new Set(); // message ids currently being shaped (re-entrancy guard)
 const deferralLogged = new Set(); // one deferral log per floor per reason — not one per event
+
+// ── chat identity (feeds the scene uid's chatKey half, core §2.1) ─────────────
+// SillyTavern's chat id, resolved in galgame's OWN order (its special-cg-trigger.js
+// collectCurrentChatCandidates tries the global getter first, then the context field) so both sides
+// agree on what "this chat" means. null when neither is reachable.
+export function currentChatId() {
+  try {
+    const getter = topWindow.getCurrentChatId;
+    if (typeof getter === 'function') {
+      const id = getter.call(topWindow);
+      if (id) return String(id);
+    }
+  } catch (e) {
+    log.warn('beat-shaper: getCurrentChatId() threw — falling back to the context field:', e);
+  }
+  try {
+    const ctx = topWindow.SillyTavern && typeof topWindow.SillyTavern.getContext === 'function'
+      ? topWindow.SillyTavern.getContext() : null;
+    if (ctx && ctx.chatId) return String(ctx.chatId);
+  } catch (e) {
+    log.warn('beat-shaper: SillyTavern.getContext() threw — chat id unresolved:', e);
+  }
+  return null;
+}
+
+// Compact, stable key for the current chat. null propagates: the image-seam REFUSES to sweep without
+// one rather than risk deleting another chat's backdrops (core §2.1).
+export function currentChatKey() {
+  const id = currentChatId();
+  return id ? shortHash(id) : null;
+}
+
+// Chat id unreachable — the names still work (uid uniqueness does not depend on the key); only the
+// orphan sweep is scoped out, and it declines to run rather than guess. Marked in the name so a
+// record written under this condition is recognisable in galgame's Background Manager.
+const UNKNOWN_CHAT_KEY = 'nochat';
+const UID_RANDOM_LEN = 6;
+
+// 6 base36 chars ≈ 2.1e9 values. Uniqueness only has to hold WITHIN one chat (a few hundred messages),
+// where the collision odds are ~1e-4 — and a collision merely reproduces the old shared-name bug for
+// one pair, it cannot corrupt anything else.
+function randomToken() {
+  let out = '';
+  while (out.length < UID_RANDOM_LEN) out += Math.random().toString(36).slice(2);
+  return out.slice(0, UID_RANDOM_LEN);
+}
+
+function mintUidForCurrentChat() {
+  return sceneUid(currentChatKey() || UNKNOWN_CHAT_KEY, randomToken());
+}
 
 function rawMessage(id) {
   try {
@@ -47,13 +97,13 @@ async function onMessageEvent(messageId) {
   const raw = rawMessage(id);
   if (raw === null) return;
 
-  const { text, changed, deferred, stats } = shapeMessage(raw, id);
+  const { text, changed, deferred, stats } = shapeMessage(raw, mintUidForCurrentChat);
 
   if (deferred) {
     const key = `${id}:${deferred}`;
     if (!deferralLogged.has(key)) {
       deferralLogged.add(key);
-      log.info(`beat-shaper msg=${id}: deferred (${deferred}) — will retry on next message event`);
+      log.image(`beat-shaper msg=${id}: deferred (${deferred}) — will retry on next message event`);
     }
     return;
   }
@@ -64,9 +114,10 @@ async function onMessageEvent(messageId) {
   inFlight.add(id);
   try {
     await window.setChatMessages([{ message_id: id, message: text }], { refresh: 'affected' });
-    log.info(
+    log.image(
       `beat-shaper msg=${id}:${stats.renamed ? ' gametxt→maintext' : ''} wrapped=${stats.wrapped}p ` +
       `scenes=${stats.scenes}${stats.scenes ? ' (hoisted #1)' : ''} strippedScenes=${stats.strippedScenes}` +
+      `${stats.uid ? ` uid=${stats.uid}(${stats.uidMinted ? 'minted' : 'kept'})` : ''}` +
       `${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ''}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ''}`,
     );
   } catch (e) {
@@ -100,5 +151,5 @@ export function startBeatShaper() {
     log.warn('beat-shaper: no tavern message events available — shaper disabled');
     return;
   }
-  log.info(`beat-shaper active (${bound} event(s) bound)`);
+  log.image(`beat-shaper active (${bound} event(s) bound)`);
 }
