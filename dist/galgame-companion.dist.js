@@ -1,4 +1,4 @@
-// galgame-companion v0.6.11 — built 2026-07-27T00:04:21.373Z
+// galgame-companion v0.6.11 — built 2026-07-28T09:19:21.861Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
@@ -2383,11 +2383,36 @@ ${m2}
       log.warn("choices: dismissStaleChoices failed:", e);
     }
   }
+  var USER_OPEN_WINDOW_MS = 1500;
+  var _userOpenedChoicesAt = 0;
+  function enforceButtonOnlyChoices() {
+    try {
+      DOC.addEventListener("click", (e) => {
+        const t = e.target;
+        if (t && t.closest && t.closest('[data-action="show-choices"]')) _userOpenedChoicesAt = Date.now();
+      }, true);
+      const observer2 = new MutationObserver((muts) => {
+        for (const m of muts) {
+          const el = m.target;
+          if (el && el.id === "gal-layer-choices" && el.classList && el.classList.contains("active")) {
+            if (Date.now() - _userOpenedChoicesAt > USER_OPEN_WINDOW_MS) {
+              el.click();
+              log.info("choices: suppressed auto-pop (button-only) — panel dismissed, 剧情选项 button stays");
+            }
+          }
+        }
+      });
+      observer2.observe(DOC, { subtree: true, attributes: true, attributeFilter: ["class"] });
+    } catch (e) {
+      log.warn("choices: enforceButtonOnlyChoices setup failed (auto-pop not suppressed):", e);
+    }
+  }
   function startChoices() {
     if (typeof window.getChatMessages !== "function" || typeof window.eventOn !== "function") {
       log.warn("choices: TH globals (getChatMessages/eventOn) absent — choices provider disabled");
       return;
     }
+    enforceButtonOnlyChoices();
     const te = window.tavern_events || {};
     if (!te.GENERATION_STARTED) {
       log.warn("choices: tavern_events.GENERATION_STARTED absent — inject disabled (shim reader still active)");
@@ -2533,23 +2558,25 @@ ${m2}
   var CB_CLASS = "school-nextblock-cb";
   var BIND_PATH = "World_Calc.BlockDone";
   var OVERLAY_SEL4 = "#gal-global-overlay";
-  var snapshot = null;
-  var snapshotMid = -1;
-  var HTML = `<label class="${WRAP_CLASS}" title="Advance one time block — uncheck to undo (until you send a message)"><span class="school-nextblock-label">Next</span><input type="checkbox" class="${CB_CLASS}" aria-label="Advance one time block; uncheck to undo" /></label>`;
-  function findRealCtx() {
+  var HTML = `<label class="${WRAP_CLASS}" title="Advance one time block — uncheck to cancel (until you send a message)"><span class="school-nextblock-label">Next</span><input type="checkbox" class="${CB_CLASS}" aria-label="Advance one time block; uncheck to cancel" /></label>`;
+  function findRealCb() {
     const doc = topWindow && topWindow.document || DOC;
     const frames = [...doc.querySelectorAll('iframe[id^="TH-message--"]')].map((f) => {
       const m = /^TH-message--(\d+)--/.exec(f.id);
       return { f, n: m ? Number(m[1]) : -1 };
     }).filter((x) => x.n >= 0).sort((a, b) => b.n - a.n);
-    for (const { f, n } of frames) {
+    for (const { f } of frames) {
       try {
         const cb = f.contentDocument && f.contentDocument.querySelector(`input[type="checkbox"][data-bind-checked="${BIND_PATH}"]`);
-        if (cb) return { cb, win: f.contentWindow, mid: n };
+        if (cb) return cb;
       } catch (e) {
       }
     }
     return null;
+  }
+  function readFlag() {
+    const cb = findRealCb();
+    return !!(cb && cb.checked);
   }
   function nudgePills() {
     [250, 700, 1400].forEach((ms) => setTimeout(() => {
@@ -2560,60 +2587,19 @@ ${m2}
       }
     }, ms));
   }
-  function doAdvance() {
-    const ctx = findRealCtx();
-    if (!ctx) {
-      log.warn("next-block: real World_Calc.BlockDone checkbox not found — cannot advance the clock");
+  function setFlag(want) {
+    const cb = findRealCb();
+    if (!cb) {
+      log.warn("next-block: real World_Calc.BlockDone checkbox not found — cannot set the flag");
       return false;
     }
-    const { cb, mid } = ctx;
-    try {
-      const Mvu = topWindow.Mvu;
-      const d = Mvu && Mvu.getMvuData ? Mvu.getMvuData({ type: "message", message_id: mid }) : null;
-      snapshot = d && d.stat_data ? JSON.parse(JSON.stringify(d.stat_data)) : null;
-      snapshotMid = snapshot ? mid : -1;
-    } catch (e) {
-      log.warn("next-block: snapshot failed — undo will be unavailable this advance:", e);
-      snapshot = null;
-      snapshotMid = -1;
+    if (cb.checked !== want) {
+      cb.checked = !want;
+      cb.click();
     }
-    cb.checked = false;
-    cb.click();
-    log.info("next-block: advancing a time block now (undo " + (snapshot ? "armed" : "UNAVAILABLE") + ")");
+    log.info("next-block: BlockDone flag " + (want ? "SET (will advance at reply-end; Window A previews it)" : "cleared"));
     nudgePills();
-    return true;
-  }
-  function doUndo() {
-    if (!snapshot || snapshotMid < 0) {
-      log.info("next-block: nothing to undo");
-      return false;
-    }
-    const doc = topWindow && topWindow.document || DOC;
-    const f = doc.getElementById(`TH-message--${snapshotMid}--0`);
-    const win = f && f.contentWindow;
-    if (!win || typeof win.saveStatData !== "function") {
-      log.warn("next-block: cannot undo — saveStatData not reachable for msg " + snapshotMid + " (advance stands)");
-      return false;
-    }
-    try {
-      win.saveStatData(snapshot, snapshotMid);
-      log.info("next-block: undid the advance → restored msg " + snapshotMid + " to its pre-advance state");
-    } catch (e) {
-      log.error("next-block: undo save failed:", e);
-      return false;
-    }
-    snapshot = null;
-    snapshotMid = -1;
-    nudgePills();
-    return true;
-  }
-  function commitTurn() {
-    if (!snapshot && snapshotMid < 0) return;
-    snapshot = null;
-    snapshotMid = -1;
-    const cb = DOC.querySelector(`.${CB_CLASS}`);
-    if (cb) cb.checked = false;
-    log.info("next-block: new generation — committed the turn (undo cleared, box reset)");
+    return want;
   }
   function injectInto2() {
     const overlay = DOC.querySelector(OVERLAY_SEL4);
@@ -2622,7 +2608,7 @@ ${m2}
     const chip = overlay.querySelector(`.${WRAP_CLASS}`);
     if (chip) chip.addEventListener("click", (e) => e.stopPropagation());
     const cb = chip && chip.querySelector(`.${CB_CLASS}`);
-    if (cb) cb.checked = snapshot != null;
+    if (cb) cb.checked = readFlag();
     return true;
   }
   function startNextBlock() {
@@ -2630,38 +2616,14 @@ ${m2}
     DOC.addEventListener("change", (e) => {
       const cb = e.target && e.target.classList && e.target.classList.contains(CB_CLASS) ? e.target : null;
       if (!cb) return;
-      if (cb.checked) {
-        let ok = false;
-        try {
-          ok = doAdvance();
-        } catch (err) {
-          log.error("next-block: advance failed:", err);
-        }
-        cb.checked = ok;
-      } else {
-        try {
-          doUndo();
-        } catch (err) {
-          log.error("next-block: undo failed:", err);
-        }
-        cb.checked = false;
-      }
-    });
-    const te = window.tavern_events || {};
-    const on = typeof window.eventOn === "function" ? window.eventOn : null;
-    if (on && te.GENERATION_STARTED) {
+      let got = false;
       try {
-        on(te.GENERATION_STARTED, (type, option, dry_run) => {
-          if (dry_run) return;
-          if (type === "quiet" && !(option && option.quietToLoud)) return;
-          commitTurn();
-        });
-      } catch (e) {
-        log.warn("next-block: bind GENERATION_STARTED failed:", e);
+        got = setFlag(cb.checked);
+      } catch (err) {
+        log.error("next-block: flag toggle failed:", err);
       }
-    } else {
-      log.warn("next-block: TH eventOn/GENERATION_STARTED absent — Next box won't auto-commit on a new turn");
-    }
+      cb.checked = got;
+    });
     let scheduled2 = false;
     const observer2 = new MutationObserver(() => {
       if (scheduled2) return;
@@ -2673,7 +2635,7 @@ ${m2}
     });
     observer2.observe(DOC.body, { childList: true, subtree: true });
     injectInto2();
-    log.info("next-block active");
+    log.info("next-block active (flag model)");
   }
 
   // src/app/index.js

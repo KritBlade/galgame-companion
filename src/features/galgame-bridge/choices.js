@@ -1,4 +1,10 @@
-// galgame-companion · choices — card-agnostic story-choice provider. v0.2
+// galgame-companion · choices — card-agnostic story-choice provider. v0.3
+// v0.3 — BUTTON-ONLY: the choice panel NEVER auto-pops. galgame's checkAndRenderOptions auto-shows the panel when
+//   options are new AND the reader is on the last segment (or a panel was already open) — which fires over UNREAD
+//   narration on short / few-segment replies (v3-fixed, regressed in v4). We can't patch galgame's internal
+//   renderGalgameChoices call, so instead we DISMISS any panel that opens WITHOUT a recent click on the "剧情选项 /
+//   Story choices" button (enforceButtonOnlyChoices). The pending-choices BUTTON is untouched — options are never
+//   lost; the reader opens them when ready. Supersedes v0.2's read-gate reset (kept for the new-generation carry-over).
 // v0.2 — READ-FIRST: on each real new generation, dismiss any open choice panel so galgame's OWN read-gate
 //   (pop only when the reader reaches the last beat) re-applies per message. Fixes the carry-over where an
 //   already-visible panel makes the NEXT reply's options pop instantly over unread narration (galgame
@@ -161,11 +167,45 @@ function dismissStaleChoices() {
   }
 }
 
+// BUTTON-ONLY enforcement (v0.3): suppress galgame's auto-pop so the choice panel opens ONLY on an explicit click
+// of the "剧情选项 / Story choices" button. We can't block galgame's internal renderGalgameChoices() call, so we
+// watch #gal-layer-choices for the `active` class and, unless a button click set the panel active moments ago,
+// DISMISS it via galgame's own backdrop-click path (layer.click() → e.target===layer → hideGalgameChoices(true),
+// which keeps the pending button). A capture-phase listener on the button stamps the allow-window BEFORE galgame's
+// bubble-phase handler runs renderGalgameChoices, so a user open is never dismissed.
+const USER_OPEN_WINDOW_MS = 1500;
+let _userOpenedChoicesAt = 0;
+
+function enforceButtonOnlyChoices() {
+  try {
+    DOC.addEventListener('click', (e) => {
+      const t = e.target;
+      if (t && t.closest && t.closest('[data-action="show-choices"]')) _userOpenedChoicesAt = Date.now();
+    }, true); // capture — fires before galgame's delegated bubble handler that opens the panel
+
+    const observer = new MutationObserver((muts) => {
+      for (const m of muts) {
+        const el = m.target;
+        if (el && el.id === 'gal-layer-choices' && el.classList && el.classList.contains('active')) {
+          if (Date.now() - _userOpenedChoicesAt > USER_OPEN_WINDOW_MS) {
+            el.click(); // auto-pop → galgame's own dismiss (pending button stays; options never lost)
+            log.info('choices: suppressed auto-pop (button-only) — panel dismissed, 剧情选项 button stays');
+          }
+        }
+      }
+    });
+    observer.observe(DOC, { subtree: true, attributes: true, attributeFilter: ['class'] });
+  } catch (e) {
+    log.warn('choices: enforceButtonOnlyChoices setup failed (auto-pop not suppressed):', e);
+  }
+}
+
 export function startChoices() {
   if (typeof window.getChatMessages !== 'function' || typeof window.eventOn !== 'function') {
     log.warn('choices: TH globals (getChatMessages/eventOn) absent — choices provider disabled');
     return;
   }
+  enforceButtonOnlyChoices();
   const te = window.tavern_events || {};
   if (!te.GENERATION_STARTED) {
     log.warn('choices: tavern_events.GENERATION_STARTED absent — inject disabled (shim reader still active)');
