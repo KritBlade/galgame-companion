@@ -1,4 +1,4 @@
-// galgame-companion v0.6.12 — built 2026-07-28T22:50:34.432Z
+// galgame-companion v0.6.12 — built 2026-07-29T11:27:51.274Z
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
@@ -2101,10 +2101,24 @@ ${m2}
     }
     return names.size ? names : null;
   }
+  function chatIsOpen() {
+    try {
+      const ctx = topWindow.SillyTavern && typeof topWindow.SillyTavern.getContext === "function" ? topWindow.SillyTavern.getContext() : null;
+      if (!ctx) return false;
+      return Array.isArray(ctx.chat) && ctx.chat.length > 0 && (ctx.characterId != null || ctx.groupId != null);
+    } catch (e) {
+      log.warn("image-seam: context unreadable while grading a missing chat key:", e);
+      return true;
+    }
+  }
   async function sweepOrphanBackgrounds() {
     const chatKey = currentChatKey();
     if (!chatKey) {
-      log.warn("image-seam: orphan sweep skipped — SillyTavern chat id unresolvable, so the delete cannot be scoped to this chat and might hit another chat's backdrops.");
+      if (!chatIsOpen()) {
+        log.image("image-seam: orphan sweep skipped — no chat open yet (startup); the CHAT_CHANGED sweep will run it.");
+        return 0;
+      }
+      log.warn("image-seam: orphan sweep skipped — a chat IS open but SillyTavern's chat id will not resolve, so the delete cannot be scoped to this chat and might hit another chat's backdrops. Orphaned backdrops will accumulate until this resolves.");
       return 0;
     }
     const live = liveSceneNames();

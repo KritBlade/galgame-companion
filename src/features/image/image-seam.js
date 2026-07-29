@@ -243,11 +243,35 @@ function liveSceneNames() {
   return names.size ? names : null;
 }
 
+// Is a chat actually open? Only used to GRADE a missing chat key, never to decide whether to sweep.
+// "No chat yet" and "chat open but its id will not resolve" are the same value (null) at the call site
+// and mean opposite things: the first is ST still starting up, the second is a real defect.
+function chatIsOpen() {
+  try {
+    const ctx = topWindow.SillyTavern && typeof topWindow.SillyTavern.getContext === 'function'
+      ? topWindow.SillyTavern.getContext() : null;
+    if (!ctx) return false;
+    return Array.isArray(ctx.chat) && ctx.chat.length > 0 && (ctx.characterId != null || ctx.groupId != null);
+  } catch (e) {
+    // Unknown beats wrong: an unreadable context must not become a way to silence a real fault.
+    log.warn('image-seam: context unreadable while grading a missing chat key:', e);
+    return true;
+  }
+}
+
 async function sweepOrphanBackgrounds() {
   const chatKey = currentChatKey();
   if (!chatKey) {
-    log.warn('image-seam: orphan sweep skipped — SillyTavern chat id unresolvable, so the delete cannot ' +
-      'be scoped to this chat and might hit another chat\'s backdrops.');
+    // The 'seam start' sweep deliberately fires before any chat may exist ("the chat already loaded
+    // before we wired up"), and CHAT_CHANGED is bound to sweep as well — so losing this one costs
+    // nothing, and warning about it every single load buried the case that matters.
+    if (!chatIsOpen()) {
+      log.image('image-seam: orphan sweep skipped — no chat open yet (startup); the CHAT_CHANGED sweep will run it.');
+      return 0;
+    }
+    log.warn('image-seam: orphan sweep skipped — a chat IS open but SillyTavern\'s chat id will not resolve, ' +
+      'so the delete cannot be scoped to this chat and might hit another chat\'s backdrops. Orphaned ' +
+      'backdrops will accumulate until this resolves.');
     return 0;
   }
   const live = liveSceneNames();
