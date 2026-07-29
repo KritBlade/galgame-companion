@@ -1,0 +1,18 @@
+# Line-ending policy.
+#
+# WHY THIS FILE EXISTS: this repo is developed on Windows with core.autocrlf=true, which converts
+# CRLF->LF on commit and LF->CRLF on checkout. That round-trip is invisible for source, but it makes
+# BUILD OUTPUT lie about itself: esbuild writes dist/*.js with LF, git checks the same file back out
+# with CRLF, and the working file then differs from a fresh build by exactly one byte per line.
+#
+# It cost a debugging session on 2026-07-29. After a `git pull`, dist/galgame-companion.dist.js was
+# 136,476 bytes on disk while the same commit's blob was 133,622 — a 2,854-byte gap that read as
+# "2.8 KB of code went missing". The file has 2,854 lines. The whole difference was carriage returns,
+# and nothing had been lost.
+#
+# `-text` tells git to store and check out these bytes verbatim: no conversion in either direction.
+# A fresh build then matches the checked-out file byte for byte, so `wc -c` and a size printed by the
+# build mean the same thing again.
+dist/*.js -text
+
+# Source stays under normal text handling (autocrlf), which is what keeps diffs clean across machines.
