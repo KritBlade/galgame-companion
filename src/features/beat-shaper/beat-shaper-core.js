@@ -20,6 +20,10 @@
 // v0.4 was the interspersed-only fix (scene #n right after image #(n-1)); v0.5 generalizes it.
 // v0.6: scene names are keyed by a per-message UID instead of the chat index — see §2.1 for why the
 // index was actively wrong (deleting a message renumbered the chat and made two messages collide).
+// v0.7: the engine's player-visible <combat_log> lines are re-homed INTO the prose at the narrator's
+// <roll/> markers (§4) — the block was always printed but always landed in the untouched TAIL, outside
+// <maintext>, so no roll ever reached the GUI. The injected beat is PLAIN TEXT: galgame silently drops
+// any beat carrying HTML, so severity rides in an emoji instead of a colour (§4).
 //
 // The transform must be IDEMPOTENT: shape(shape(x)) === shape(x). It re-derives all scene tags
 // from scratch each run (strip-then-inject) and unwraps-then-rehides its own gc:hidden comments,
@@ -78,6 +82,14 @@ export function uidOfSceneName(name) {
 export function chatKeyOfSceneName(name) {
   const m = SCENE_NAME_RE.exec(String(name || ''));
   return m ? m[2] : null;
+}
+
+// The bound image's src-hash. THIS is what the image-seam binds a rendered <img> to its scene by —
+// the name carries the identity, so neither module has to infer it from document order (see the
+// image-seam's pairImagesToScenes for why order-based binding was wrong).
+export function hashOfSceneName(name) {
+  const m = SCENE_NAME_RE.exec(String(name || ''));
+  return m ? m[4] : null;
 }
 
 // FNV-1a 32-bit → base36. Pure, deterministic, ~7 chars in [0-9a-z] (matches SCENE_NAME_RE's group).
@@ -161,6 +173,174 @@ const PROTECTED_BLOCK_RE = new RegExp(
 // command line) — leave it bare; wrapping it in <p> would turn a command into a fake text beat.
 const RE_TAG_ONLY_PARAGRAPH = /^(?:\s|<[^>]+>)*$/;
 
+// ── §4 the roll line: re-home <combat_log> into a beat ────────────────────────
+// The engine ALREADY emits a player-visible check log — Schoolv4 engine/output.txt's OUTPUT SEQUENCE
+// lists <combat_log> among the VISIBLE blocks, "print EVERY reply, one line per check". But it sits
+// AFTER </gametxt>, and galgame builds beats only from INSIDE <maintext>, so it lands in our untouched
+// TAIL and the player never sees a single roll.
+//
+// Live 2026-08-02: a reply read as "she got mad at me for no reason" while its tail held
+//   [Support] on Mitsuki — DC 12, RawDie ①1 +2 CHA = 3 → CritFail
+// a natural 1. The information was written, correct, and invisible.
+//
+// WE RE-HOME IT, WE NEVER RE-AUTHOR IT. output.txt's "★ ONE ROLL, NO DESYNC" binds prose ≡
+// <combat_calculation> ≡ /Intent/check to one die; a companion-owned <diceroll> the narrator had to
+// fill would be a FOURTH copy of the same number, and the first one to drift silently. Copying the
+// tail's own line cannot desync from itself.
+// WHERE each roll goes is a SEPARATE question from what it says, and <combat_log> answers only the
+// second — it is a block of lines with no anchor into the prose. Three rolls in one reply cannot all
+// belong at the top: a check is read correctly only IMMEDIATELY BEFORE the beat it explains.
+//
+// So the narrator emits a POSITION MARKER and nothing else: `<roll/>` inline at the moment each check
+// resolves, in the SAME ORDER as the <combat_log> lines. We substitute marker #k with line #k. The
+// narrator never re-types a number, so this adds no fourth copy to desync — it says WHERE, never WHAT.
+const RE_COMBAT_LOG = /<combat_log>([\s\S]*?)<\/combat_log>/i;
+const RE_ROLL_MARKER = /<roll\s*\/?\s*>/gi;
+// The exact sentence output.txt tells the narrator to print when nothing was rolled. Surfacing it on
+// every mundane reply would be noise, so a no-roll log yields no beat at all.
+const RE_NO_ROLL = /no calculation needed|no d20 roll/i;
+// Outcome vocabulary, LONGEST FIRST — "CritSuccess" contains "Success", so a shortest-first
+// alternation would tier a crit as an ordinary pass and drop exactly the signal this feature exists for.
+const RE_OUTCOME = /(CritSuccess|CritFail|Success|Failure)/g;
+
+// ⚠ NO HTML IN A BEAT. The first cut rendered the roll as <p><span style="color:…">…</span></p>: it
+// displayed correctly in the SillyTavern chat and galgame DROPPED THE BEAT ENTIRELY (live 2026-08-03 —
+// clicking NEXT jumped straight from the prose to the following line of dialogue).
+//
+// Verified while diagnosing it: galgame parses the RAW message text, NOT the rendered DOM — mutating
+// .mes_text alone changed nothing it displayed. Every beat it renders is plain text, and the only tag
+// its format spec admits inside a <p> is a trailing emotion marker (<微笑>, <难过>, …). A paragraph
+// whose whole content is a <span> matches neither its dialogue nor its narration shape, so it is
+// discarded silently — nothing in a console anywhere says a beat was dropped.
+//
+// So severity rides in the TEXT, where nothing can filter it. This also survives any future GUI: a
+// plain sentence renders in the ST chat, in galgame, and in anything else that ever reads these beats.
+const ROLL_PREFIX = '🎲 ';
+// The degraded path (no marker for this roll) says so out loud. It is ALSO what lets the strip pass
+// tell an unmarked line — which must be DELETED — from a placed one, which must be turned back into a
+// <roll/> marker. Two prefixes, two exact rules, no positional guessing.
+const UNPLACED_PREFIX = '🎲 (unmarked) ';
+const OUTCOME_MARK = {
+  CritSuccess: '✨',
+  Success: '✅',
+  Failure: '⚠️',
+  CritFail: '💀',
+};
+
+// The log line is MODEL-WRITTEN (it carries a heroine's name) and we drop it into HTML — escape it
+// rather than trust it. Kept local to beat-shaper: it is the only feature that needs one, and
+// shared/ is earned by a SECOND consumer, not by anticipation (P3).
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Every real check line in a <combat_log> block, each tagged with the outcome word it ends on.
+ * @param {string} text  the message TAIL (where <combat_log> lives); a full message works too
+ * @returns {Array<{line: string, outcome: string|null}>}  [] for no block, an empty/comment-only
+ *   block, or the engine's no-roll sentence. `outcome` is null when the line carries no known
+ *   verdict word — the line is still shown (neutral), since hiding a roll we half-understand is worse.
+ */
+export function parseCombatLog(text) {
+  const block = RE_COMBAT_LOG.exec(String(text || ''));
+  if (!block) return [];
+  return block[1]
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('#') && !RE_NO_ROLL.test(l))
+    .map((line) => {
+      RE_OUTCOME.lastIndex = 0;
+      let m;
+      let outcome = null;
+      // LAST match wins: the line reads "… RawDie 14 +3 CHA = 17 → Success", so the verdict is the
+      // trailing word. A Type token that happened to contain one would otherwise win by position.
+      while ((m = RE_OUTCOME.exec(line)) !== null) outcome = m[1];
+      return { line, outcome };
+    });
+}
+
+/**
+ * One roll as the exact plain-text line we inject. Deterministic in BOTH directions: the strip pass
+ * re-renders the same string to find and undo it, which is what keeps re-shapes convergent without a
+ * class or wrapper to search for.
+ * @param {{line: string, outcome: string|null}} roll
+ * @param {string} prefix  ROLL_PREFIX (placed) or UNPLACED_PREFIX (no marker was available)
+ */
+export function renderRollText(roll, prefix = ROLL_PREFIX) {
+  const mark = OUTCOME_MARK[roll.outcome] || '•'; // unknown verdict → neutral dot, but STILL shown
+  // Escaped even though it renders as text: the line is MODEL-WRITTEN and lands in a message that the
+  // chat renders as HTML. A heroine named with a '<' is vanishingly rare; script injection is not a
+  // risk worth carrying for it.
+  return `${prefix}${mark} ${escapeHtml(roll.line)}`;
+}
+
+/**
+ * Undo a previous shape's roll rendering: unmarked lines are DELETED, placed lines become <roll/>
+ * again. Restoring the marker (rather than deleting the text) is what preserves the narrator's chosen
+ * position across re-shapes — the round trip that makes shape(shape(x)) === shape(x).
+ *
+ * Both passes match the FULL rendered string, re-derived from the same <combat_log> that produced it,
+ * so nothing here can match prose the narrator happened to write with a die emoji in it.
+ *
+ * Unmarked first: its prefix CONTAINS the placed prefix, so restoring placed lines first would leave
+ * a mangled "(unmarked) …" fragment behind.
+ */
+export function stripRollText(inner, rolls) {
+  let out = String(inner);
+  for (const roll of rolls) {
+    const text = renderRollText(roll, UNPLACED_PREFIX);
+    // Take the <p> WITH it: a previous shape wrapped this line into a beat of its own, and removing
+    // only the text would leave an empty <p></p> that survives to the next shape — the transform would
+    // then never report changed:false. The bare-text form covers a not-yet-wrapped pass.
+    out = out.split(`<p>${text}</p>`).join('').split(text).join('');
+  }
+  // A PLACED line may sit mid-paragraph, so only its own text is swapped — `<p><roll/></p>` re-renders
+  // to exactly what it was, which is why this one restores instead of deleting.
+  for (const roll of rolls) out = out.split(renderRollText(roll, ROLL_PREFIX)).join('<roll/>');
+  return rolls.length ? out.replace(/\n{3,}/g, '\n\n') : out;
+}
+
+/**
+ * Substitute each <roll/> marker with its matching <combat_log> line, in order.
+ *
+ * Pairing is POSITIONAL, not by content: marker #k takes roll #k. The narrator writes both lists in
+ * the order the checks resolved, so index IS the correspondence — and matching on the target's name
+ * instead would break the moment two checks in one reply hit the same heroine.
+ *
+ * @param {string} inner  the <maintext> body, markers intact
+ * @param {Array<{line: string, outcome: string|null}>} rolls  from parseCombatLog
+ * @returns {{ text: string, placed: number, unplaced: Array }}  `unplaced` = rolls with no marker
+ *   left to take (the narrator emitted fewer markers than checks); the caller parks them at the top.
+ *   A SURPLUS marker — more markers than rolls — is deleted, since it names a roll that never happened.
+ */
+export function placeRolls(inner, rolls) {
+  const list = Array.isArray(rolls) ? rolls : [];
+  let k = 0;
+  const text = String(inner).replace(RE_ROLL_MARKER, () => {
+    const roll = list[k++];
+    if (!roll) return ''; // surplus marker → drop it rather than render an empty die
+    return renderRollText(roll, ROLL_PREFIX);
+  });
+  return { text, placed: Math.min(k, list.length), unplaced: list.slice(k) };
+}
+
+/**
+ * The leftover rolls for which no marker was available, as their own beats. '' when there are none.
+ * Top-of-reply placement is deliberate (chosen 2026-08-02): a mis-positioned crit fail is still a
+ * crit fail the player sees, whereas one parked at the END is read after its own consequence — the
+ * exact confusion this feature exists to kill. Blank-line separated so each becomes its OWN beat when
+ * wrapBareProse runs, exactly like the narrator's prose.
+ */
+export function renderUnplacedRolls(rolls) {
+  if (!rolls || !rolls.length) return '';
+  return rolls.map((r) => renderRollText(r, UNPLACED_PREFIX)).join('\n\n');
+}
+
 // ── the transform ─────────────────────────────────────────────────────────────
 /**
  * Shape one AI message into galgame's beat contract.
@@ -172,7 +352,8 @@ const RE_TAG_ONLY_PARAGRAPH = /^(?:\s|<[^>]+>)*$/;
  * @returns {{ text: string, changed: boolean, deferred: string|null,
  *            stats: { wrapped: number, scenes: number, strippedScenes: number,
  *                     renamed: boolean, strippedBgimg: number, hidden: number,
- *                     strippedThink: number, uid: string|null } }}
+ *                     strippedThink: number, uid: string|null,
+ *                     rolls: number, rollsPlaced: number, rollsUnplaced: number } }}
  *   deferred ≠ null → text is returned UNCHANGED and the caller should retry on a later event
  *   ('maintext-unclosed'/'gametxt-unclosed' while streaming, 'pics-pending' while image
  *   generation is in flight).
@@ -181,6 +362,7 @@ export function shapeMessage(raw, mintUid) {
   const blankStats = () => ({
     wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false,
     strippedBgimg: 0, hidden: 0, strippedThink: 0, uid: null, uidMinted: false,
+    rolls: 0, rollsPlaced: 0, rollsUnplaced: 0,
   });
   const stats = blankStats();
   const unchanged = (deferred = null) => ({
@@ -240,6 +422,12 @@ export function shapeMessage(raw, mintUid) {
   //    the whole transform idempotent instead of accumulating tags run over run. Same pass drops
   //    <bgimg> (raw prompt would display — ST's renderer p-wraps bare lines) and comment-hides
   //    <classmate_trait_check> (unwrap-then-rehide keeps it idempotent; POST still reads raw text).
+  // Undo our own roll rendering FIRST (§4), which needs the tail's <combat_log> to re-derive exactly
+  // what a previous shape injected. Restores the narrator's <roll/> markers so the substitution below
+  // re-runs identically — the round trip that keeps the transform idempotent. Must precede the
+  // <p>-wrap and the beat census so a roll line is never mistaken for prose or double-injected.
+  const rolls = parseCombatLog(tail);
+  inner = stripRollText(inner, rolls);
   inner = inner.replace(RE_BACKGROUND_TAG, () => {
     stats.strippedScenes++;
     return '';
@@ -254,6 +442,21 @@ export function shapeMessage(raw, mintUid) {
     stats.hidden++;
     return `<!--gc:hidden\n${m}\n-->`;
   });
+
+  // 1b) Substitute the roll markers BEFORE the wrap (§4). Order is load-bearing: a line holding only
+  //     `<roll/>` is tag-only, and wrapBareProse deliberately leaves tag-only lines bare (they are
+  //     commands, not beats) — so substituting first is what lets the narrator give a roll its OWN
+  //     beat by putting the marker on its own line. An inline marker just becomes inline text.
+  //     Rolls the narrator gave no marker are prepended here, ALSO before the wrap, so they become
+  //     real beats too — bare text injected after the wrap would never be a beat at all, which is the
+  //     same silent-drop this whole section exists to fix.
+  const placement = placeRolls(inner, rolls);
+  inner = placement.text;
+  const unplacedText = renderUnplacedRolls(placement.unplaced);
+  if (unplacedText) inner = `${unplacedText}\n\n${inner.replace(/^\n+/, '')}`;
+  stats.rolls = rolls.length;
+  stats.rollsPlaced = placement.placed;
+  stats.rollsUnplaced = placement.unplaced.length;
 
   // 2) <p>-wrap bare prose between protected blocks, per natural paragraph (blank-line split).
   inner = wrapBareProse(inner, stats);

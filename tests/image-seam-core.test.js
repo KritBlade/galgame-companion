@@ -4,8 +4,8 @@
 // on what must NEVER be deleted: another chat's records, a foreign scene name, or anything at all when
 // the caller's view of "what is alive" is empty/unreadable.
 import { describe, it, expect } from 'vitest';
-import { staleSiblingKeys, deadBackgroundKeys } from '../src/features/image/image-seam-core.js';
-import { sceneName, sceneUid } from '../src/features/beat-shaper/beat-shaper-core.js';
+import { staleSiblingKeys, deadBackgroundKeys, pairImagesToScenes } from '../src/features/image/image-seam-core.js';
+import { sceneName, sceneUid, shortHash } from '../src/features/beat-shaper/beat-shaper-core.js';
 
 const CHAT = 'k9f3x2';       // this chat
 const OTHER_CHAT = 'p2m8q1';  // a different chat sharing the same global DB
@@ -79,5 +79,75 @@ describe('deadBackgroundKeys (orphan sweep)', () => {
     expect(deadBackgroundKeys(keys, live, null)).toEqual([]);   // chat id unresolvable
     expect(deadBackgroundKeys(keys, new Set(), CHAT)).toEqual([]); // transient/empty chat read
     expect(deadBackgroundKeys(keys, null, CHAT)).toEqual([]);
+  });
+});
+
+// ── pairImagesToScenes — bind by image hash, never by document position ───────
+// The live 2026-08-02 bug: binding an <img> to the nearest PRECEDING <background> is the INVERSE of
+// how the beat-shaper assigns scenes (a beat is owned by the nearest image AFTER it). Interspersed
+// replies hid it for weeks; a tail-clustered reply lost scene_1 entirely and orphaned image #1.
+describe('pairImagesToScenes (scene↔image binding)', () => {
+  const uid = sceneUid(CHAT, 'pra3wa');
+  const src1 = '/user/images/ArtificKoi/A_21h47m58s675ms.png';
+  const src2 = '/user/images/ArtificKoi/A_21h48m22s582ms.png';
+  const scene1 = sceneName(uid, 1, shortHash(src1));
+  const scene2 = sceneName(uid, 2, shortHash(src2));
+  const bg = (n) => `<background scene="${n}" />`;
+  const img = (s) => `<span class="auto-img-wrap" data-rawtag="x"><img src="${s}" title="t" alt="a"><span class="auto-img-regen"></span></span>`;
+
+  it('TAIL-CLUSTERED images still bind to their OWN scene (the live regression)', () => {
+    // Every image sits AFTER every scene tag — the exact shape that made position-binding collapse
+    // both images onto scene_2 and leave scene_1 unwritten.
+    const mes = `${bg(scene1)}<p>a</p><p>b</p>${bg(scene2)}<p>c</p>${img(src1)}${img(src2)}`;
+    const { pairs, unmatchedImages, foreignScenes } = pairImagesToScenes(mes);
+    expect(pairs).toEqual([{ scene: scene1, url: src1 }, { scene: scene2, url: src2 }]);
+    expect(unmatchedImages).toBe(0);
+    expect(foreignScenes).toBe(0);
+  });
+
+  it('interspersed images bind identically — order genuinely does not matter', () => {
+    const mes = `${bg(scene1)}<p>a</p>${img(src1)}${bg(scene2)}<p>b</p>${img(src2)}`;
+    expect(pairImagesToScenes(mes).pairs).toEqual([{ scene: scene1, url: src1 }, { scene: scene2, url: src2 }]);
+  });
+
+  it('REVERSED document order still binds correctly (position carries no meaning)', () => {
+    const mes = `${bg(scene1)}${bg(scene2)}${img(src2)}${img(src1)}`;
+    expect(pairImagesToScenes(mes).pairs).toEqual([{ scene: scene2, url: src2 }, { scene: scene1, url: src1 }]);
+  });
+
+  it('one image bound to SEVERAL beat runs yields a pair per scene (same url)', () => {
+    const scene2SameImg = sceneName(uid, 2, shortHash(src1));
+    const mes = `${bg(scene1)}${bg(scene2SameImg)}${img(src1)}`;
+    expect(pairImagesToScenes(mes).pairs).toEqual([
+      { scene: scene1, url: src1 }, { scene: scene2SameImg, url: src1 },
+    ]);
+  });
+
+  it('an image matching no scene hash is SKIPPED and counted, never bound to a guess', () => {
+    const stray = '/user/images/hand-pasted.png';
+    const { pairs, unmatchedImages } = pairImagesToScenes(`${bg(scene1)}${img(src1)}${img(stray)}`);
+    expect(pairs).toEqual([{ scene: scene1, url: src1 }]);
+    expect(unmatchedImages).toBe(1);
+  });
+
+  it('foreign / not-yet-shaped scene names are counted, never written', () => {
+    const mes = `<background scene="櫻花飛舞的人光學園校門口" /><background scene="msg4_scene_1_glhvnc" />${img(src1)}`;
+    const { pairs, foreignScenes, unmatchedImages } = pairImagesToScenes(mes);
+    expect(pairs).toEqual([]);
+    expect(foreignScenes).toBe(2);
+    expect(unmatchedImages).toBe(1);
+  });
+
+  it('hashes the RAW src but stores the DECODED url (the shaper named it from the raw text)', () => {
+    const rawSrc = '/user/images/a.png?v=1&amp;w=2';
+    const scene = sceneName(uid, 1, shortHash(rawSrc));
+    const { pairs } = pairImagesToScenes(`${bg(scene)}${img(rawSrc)}`);
+    expect(pairs).toEqual([{ scene, url: '/user/images/a.png?v=1&w=2' }]);
+  });
+
+  it('empty / imageless / junk input returns nothing and throws nothing', () => {
+    expect(pairImagesToScenes('').pairs).toEqual([]);
+    expect(pairImagesToScenes(null).pairs).toEqual([]);
+    expect(pairImagesToScenes(`${bg(scene1)}<p>prose only</p>`).pairs).toEqual([]);
   });
 });

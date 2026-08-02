@@ -4,7 +4,17 @@
 // so we reach it via window.parent.document (GCP §1).
 
 export const SCRIPT_NAME = 'School-Companion';
-export const VERSION = '0.6.12';
+export const VERSION = '0.6.14';
+
+// WHICH BUILD IS ACTUALLY RUNNING — not which release. build.mjs rewrites this placeholder in the
+// bundled output on EVERY build (see its stamp plugin); in source it stays the literal below, so a
+// unit test or a direct source import reads 'dev-unbuilt' rather than a lie.
+//
+// WHY IT EXISTS (2026-08-02): the dev loop serves dist/ off a local static server, and two different
+// builds of the SAME version are indistinguishable — a fix was in dist/ but there was no way to tell
+// whether the tab had loaded it or a copy from before the rebuild. VERSION alone could not answer
+// that; only a per-BUILD identity can. Shape: `<git-sha>[-dirty] @<ISO time>`.
+export const BUILD = '__BUILD_STAMP__';
 
 // Parent ST document (galgame's overlay lives here). Fallback to own document only if the
 // iframe boundary is somehow absent (e.g. pasted into the console for a quick test).

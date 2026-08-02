@@ -6,5 +6,8 @@
 // One definition, consumed through the barrel — shared contract, not a leak.
 export { startBeatShaper, currentChatKey } from './beat-shaper.js';
 export {
-  SCENE_NAME_RE, LEGACY_SCENE_NAME_RE, uidOfSceneName, chatKeyOfSceneName,
+  SCENE_NAME_RE, LEGACY_SCENE_NAME_RE, uidOfSceneName, chatKeyOfSceneName, hashOfSceneName,
+  // shortHash is the binding key itself: the seam must hash an <img> src with the SAME function the
+  // shaper used to name its scene, or the two would never agree. Shared definition, never re-derived.
+  shortHash,
 } from './beat-shaper-core.js';

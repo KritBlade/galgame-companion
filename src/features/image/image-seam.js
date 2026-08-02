@@ -13,8 +13,8 @@
 // localStorage `galgame-ui-plugin_current_pack` (default `pack_default`), db/image-packs.js.
 
 import { DOC, topWindow, log } from '../../env.js';
-import { SCENE_NAME_RE, uidOfSceneName, currentChatKey } from '../beat-shaper/index.js';
-import { staleSiblingKeys, deadBackgroundKeys } from './image-seam-core.js';
+import { uidOfSceneName, currentChatKey } from '../beat-shaper/index.js';
+import { staleSiblingKeys, deadBackgroundKeys, pairImagesToScenes } from './image-seam-core.js';
 
 // ── galgame constants (do NOT drift — re-verify on an upstream bump, GCP §10.4 §5) ──
 const DB_NAME = 'GalgameUIPluginDB';
@@ -42,14 +42,6 @@ function openDb() {
     req.onerror = () => reject(req.error);
     req.onblocked = () => log.warn('image-seam: IndexedDB open blocked (another tab upgrading?)');
   });
-}
-
-// HTML-attribute-unescape the src (mvu-helper writes it via escapeHtmlAttribute; a URL with query
-// params would carry &amp; etc. — galgame needs the real URL).
-function decodeEntities(s) {
-  return String(s)
-    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&#x27;/gi, "'");
 }
 
 // Upsert one scene→url background, mirroring galgame's saveBackground() record shape exactly.
@@ -85,38 +77,9 @@ async function writeBackground(sceneName, imageUrl) {
   }
 }
 
-// ── scan: bind each <img> to the nearest preceding <background scene> ──────────
-// Scan in document order; carry the latest scene forward. Since the beat-shaper (dumb-terminal C1)
-// owns ALL scene tags, only OUR uid-scoped names (SCENE_NAME_RE) are ever written to the store —
-// a narrator/galgame-COT-named scene in a not-yet-shaped message is a transient we must NOT bind
-// (the prune's safety rule can never delete a foreign name, so writing one would pollute the store
-// forever). No preceding scene / foreign-only scene → skip quietly; the shaper's re-render fires
-// CHARACTER_MESSAGE_RENDERED and this scan re-runs on the shaped text. Returns [{scene, url}].
-function pairImagesToScenes(rawMes) {
-  const re = /<background\s+scene="([^"]+)"|<img\b[^>]*\bsrc="([^"]+)"/gi;
-  const pairs = [];
-  let currentScene = null;
-  let m;
-  while ((m = re.exec(rawMes)) !== null) {
-    if (m[1] != null) {
-      currentScene = m[1].trim();
-    } else if (m[2] != null) {
-      const url = decodeEntities(m[2].trim());
-      if (!currentScene) {
-        log.warn(`image-seam: <img> with no preceding <background scene> — skipped (${url.slice(0, 60)})`);
-        continue;
-      }
-      if (!SCENE_NAME_RE.test(currentScene)) {
-        // Foreign (narrator/COT) name on a not-yet-shaped message, OR a pre-uid msg{index} name on a
-        // message shaped by an older build — either way we wait for the shaper to mint the current form.
-        log.image(`image-seam: scene "${currentScene}" is not a current uid-scoped name — skipped (waiting for beat-shaper)`);
-        continue;
-      }
-      pairs.push({ scene: currentScene, url });
-    }
-  }
-  return pairs;
-}
+// (The scan itself — bind each <img> to its scene BY IMAGE HASH — is image-seam-core's
+// pairImagesToScenes: pure and unit-tested, since getting it wrong is what silently loses a
+// backdrop. This file only reports what it found.)
 
 // Read a message's raw text (getChatMessages returns TH shape: raw text is in `.message`).
 function rawMessage(id) {
@@ -173,7 +136,17 @@ async function pruneSceneSiblings(uid, keep) {
 async function processMessage(id) {
   const raw = rawMessage(id);
   if (!raw) return;
-  const pairs = pairImagesToScenes(raw);
+  const { pairs, unmatchedImages, foreignScenes } = pairImagesToScenes(raw);
+  // Both counts are EXPECTED mid-flight (a message the beat-shaper has not shaped yet has foreign
+  // or no scene names, and its images match nothing) — the shaper's re-render fires
+  // CHARACTER_MESSAGE_RENDERED and this scan repeats. They are only worth surfacing once the
+  // message HAS bound scenes, where a leftover means a real mismatch between the two modules.
+  if (pairs.length && (unmatchedImages || foreignScenes)) {
+    log.image(
+      `image-seam: message ${id} — ${unmatchedImages} image(s) matched no scene hash` +
+        `, ${foreignScenes} non-uid scene tag(s) skipped`,
+    );
+  }
   if (!pairs.length) return; // transient (pre-shape / no images) — write nothing AND prune nothing
   let ok = 0;
   for (const { scene, url } of pairs) {
@@ -346,17 +319,28 @@ function latestDataFloor() {
 // Single flip attempt. Returns 'ok' (written) | 'retry' (transient — Mvu/floor not ready yet, worth
 // trying again) | 'skip' (PERMANENT — setMvuVariable returned false, meaning this card has no
 // World_Calc.ForceImageType path at all; retrying can never create it).
+//
+// LOG LEVELS HERE ARE DELIBERATE (fixed 2026-08-02). Every 'retry' reason below is EXPECTED on a
+// cold page load: JS-Slash-Runner attaches top-window Mvu asynchronously, and galgame-mode entry
+// routinely wins that race — so a first-attempt miss is the retry loop working, not a fault. These
+// used to be log.warn (always printed) while the SUCCESS was gated behind the imagegen debug
+// domain: the console shouted about a self-healing race and stayed silent about the recovery, so a
+// reader with the domain off saw only the alarm. That is backwards, and it cost a real
+// "what is this?" investigation. Now:
+//   transient miss  → log.image  (diagnostic detail, gated)
+//   recovery/result → log.image  (same channel as the misses, so the pair reads together)
+//   gave up / skip  → log.warn   (ungated — the only outcomes a user can act on)
 async function attemptForceImageType(on) {
   const Mvu = topMvu();
   if (!Mvu || typeof Mvu.setMvuVariable !== 'function') {
-    log.warn('image-seam: Mvu unavailable on top window — cannot flip ForceImageType (will retry)');
+    log.image('image-seam: top-window Mvu not attached yet — ForceImageType flip deferred to the retry loop');
     return 'retry';
   }
   const id = latestDataFloor();
-  if (id < 0) { log.warn('image-seam: no data floor — cannot flip ForceImageType (will retry)'); return 'retry'; }
+  if (id < 0) { log.image('image-seam: no data floor yet — ForceImageType flip deferred to the retry loop'); return 'retry'; }
   try {
     const data = Mvu.getMvuData({ type: 'message', message_id: id });
-    if (!data || !data.stat_data) { log.warn('image-seam: floor has no stat_data — will retry ForceImageType flip'); return 'retry'; }
+    if (!data || !data.stat_data) { log.image(`image-seam: floor ${id} has no stat_data yet — ForceImageType flip deferred to the retry loop`); return 'retry'; }
     // setMvuVariable returns false on an unknown path — i.e. a card WITHOUT the G4a init. Tri-state
     // on the mvu-helper side means that's fine (absent latch = honor the tag); we just skip for good.
     const okSet = Mvu.setMvuVariable(data, FORCE_PATH, on, { reason: `galgame ${on ? 'enter' : 'exit'}` });
@@ -368,7 +352,9 @@ async function attemptForceImageType(on) {
     log.image(`image-seam: ForceImageType → ${on} (floor ${id})`);
     return 'ok';
   } catch (e) {
-    log.warn('image-seam: setForceImageType failed (will retry):', e);
+    // NOT the async-attach race — a real throw from the MVU API. Kept ungated with its error object:
+    // it can repeat 10 times, but a silent exception is worse than a repeated one.
+    log.warn('image-seam: ForceImageType flip threw (will retry):', e);
     return 'retry';
   }
 }
@@ -399,8 +385,11 @@ function setForceImageType(on) {
       // eslint-disable-next-line no-await-in-loop -- bounded retry delay, not a busy loop
       await new Promise((res) => setTimeout(res, FORCE_RETRY_MS));
     }
-    log.warn(`image-seam: ForceImageType flip gave up after ${FORCE_RETRY_MAX} attempts (target=${desiredForceState}) — ` +
-      'the galgame stage may receive non-uniform image types this session.');
+    // THE line that matters: every transient miss above is silent by design, so this is the only
+    // signal that the race did NOT self-heal. Says how long it tried, so "10 attempts" cannot be
+    // misread as instant.
+    log.warn(`image-seam: ForceImageType flip GAVE UP after ${FORCE_RETRY_MAX} attempts over ~${Math.round((FORCE_RETRY_MAX * FORCE_RETRY_MS) / 1000)}s (target=${desiredForceState}) — ` +
+      'top-window Mvu never became available. The galgame stage may receive non-uniform image types this session.');
     forceRetryRunning = false;
   })();
 }

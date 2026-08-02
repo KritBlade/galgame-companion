@@ -118,8 +118,22 @@ async function onMessageEvent(messageId) {
       `beat-shaper msg=${id}:${stats.renamed ? ' gametxt→maintext' : ''} wrapped=${stats.wrapped}p ` +
       `scenes=${stats.scenes}${stats.scenes ? ' (hoisted #1)' : ''} strippedScenes=${stats.strippedScenes}` +
       `${stats.uid ? ` uid=${stats.uid}(${stats.uidMinted ? 'minted' : 'kept'})` : ''}` +
-      `${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ''}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ''}`,
+      `${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ''}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ''}` +
+      // ALWAYS printed, including the 0 case: "rolls=0" is the difference between "this reply had no
+      // check" and "the roll rendering silently failed", which a conditional suffix would blur. Both
+      // halves are named because rolls=3 alone cannot tell a fully-marked reply from an unmarked one.
+      ` rolls=${stats.rolls}(placed=${stats.rollsPlaced} unplaced=${stats.rollsUnplaced})`,
     );
+    // A short/missing marker set is a CARD-PROMPT defect, not a companion one: the roll still shows,
+    // but at the top instead of its moment. Warn so it is fixable, and name the count so it is obvious
+    // whether the narrator skipped one marker or all of them.
+    if (stats.rollsUnplaced) {
+      log.warn(
+        `beat-shaper msg=${id}: ${stats.rollsUnplaced} of ${stats.rolls} roll(s) had no <roll/> marker ` +
+        'in <gametxt> — shown as a beat at the TOP instead of at the moment they resolved. The narrator ' +
+        'should emit one <roll/> per <combat_log> line, in the same order.',
+      );
+    }
   } catch (e) {
     log.warn(`beat-shaper: setChatMessages(${id}) failed — message left unshaped:`, e);
   } finally {

@@ -10,7 +10,7 @@
 //                     · 4 image seam: saveBackground writer + ForceImageType flip (G4b)
 // ============================================================
 
-import { SCRIPT_NAME, VERSION, log } from '../env.js';
+import { SCRIPT_NAME, VERSION, BUILD, topWindow, log } from '../env.js';
 import { startGalgameDefaults } from './galgame-defaults.js';
 import { injectStyle } from './style.js';
 import { startI18n } from '../features/i18n/index.js';
@@ -19,6 +19,23 @@ import { startFullscreenGuard, startGeneratingGuard } from '../features/galgame-
 import { startImageSeam, startImageViewer, startImageRegen } from '../features/image/index.js';
 import { startBeatShaper } from '../features/beat-shaper/index.js';
 import { startChoices, startLocationTimeBridge, startNextBlock } from '../features/galgame-bridge/index.js';
+
+// WHICH BUILD IS RUNNING — deliberately UNGATED (not log.info, which needs DEBUG). This is the
+// first question every troubleshooting session asks, and gating it behind a flag means the one line
+// you need is missing exactly when you need it. One line, once per load. It also lands BEFORE any
+// feature starts, so a crash during boot still leaves the build identified.
+console.log(`[${SCRIPT_NAME}] v${VERSION} · build ${BUILD}`);
+
+// Same answer, queryable rather than scrolled-for: readable from the ST page (console or an
+// automated check) without hunting the log. Lives on the PARENT window because the companion runs
+// in its own TH iframe — `globalThis` here is that iframe, which nothing else can see.
+try {
+  topWindow.__schoolCompanion = Object.assign(topWindow.__schoolCompanion || {}, {
+    name: SCRIPT_NAME, version: VERSION, build: BUILD, loadedAt: new Date().toISOString(),
+  });
+} catch (e) {
+  log.warn('could not publish the build stamp on the parent window (troubleshooting handle unavailable):', e);
+}
 
 log.info(`v${VERSION} loading`);
 

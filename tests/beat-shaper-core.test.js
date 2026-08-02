@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   shapeMessage, sceneName, sceneUid, shortHash, uidOfSceneName, chatKeyOfSceneName,
-  SCENE_NAME_RE, LEGACY_SCENE_NAME_RE,
+  SCENE_NAME_RE, LEGACY_SCENE_NAME_RE, parseCombatLog,
 } from '../src/features/beat-shaper/beat-shaper-core.js';
 
 // A rendered image block exactly as mvu-helper's imagegen REPLACE path writes it.
@@ -335,5 +335,119 @@ describe('idempotency', () => {
     expect(names).toEqual([nameFor(m.uid, 1), nameFor(m.uid, 2)]);
     // every injected name carries a hash group (load-bearing for galgame's per-name cache, §2.1)
     for (const n of names) expect(n.match(SCENE_NAME_RE)[4]).toBeTruthy();
+  });
+});
+
+// ── §4 roll line: <combat_log> re-homed at the narrator's <roll/> markers ─────
+const combatLog = (...lines) => `\n<combat_log>\n${lines.join('\n')}\n</combat_log>\n`;
+const CRIT_FAIL = '[Support] on Mitsuki — DC 12, RawDie ①1 +2 CHA = 3 → CritFail';
+const SUCCESS = '[Repair] on Mitsuki — DC 12, RawDie 13 +0 CHA = 13 → Success';
+
+describe('parseCombatLog (§4)', () => {
+  it('reads each line and tiers it by its TRAILING verdict word', () => {
+    const rolls = parseCombatLog(combatLog(CRIT_FAIL, SUCCESS));
+    expect(rolls.map((r) => r.outcome)).toEqual(['CritFail', 'Success']);
+    expect(rolls[0].line).toBe(CRIT_FAIL);
+  });
+
+  it('never tiers a crit as an ordinary pass/fail (longest-first alternation)', () => {
+    expect(parseCombatLog(combatLog('[Flirt] on Ume — DC 5 → CritSuccess'))[0].outcome).toBe('CritSuccess');
+    expect(parseCombatLog(combatLog('[Flirt] on Ume — DC 20 → Failure'))[0].outcome).toBe('Failure');
+  });
+
+  it('yields nothing for the engine\'s no-roll sentence, comments, or a missing block', () => {
+    expect(parseCombatLog(combatLog('No calculation needed — mundane scene, no D20 roll this reply.'))).toEqual([]);
+    expect(parseCombatLog(combatLog('# a comment'))).toEqual([]);
+    expect(parseCombatLog('no block here')).toEqual([]);
+    expect(parseCombatLog('')).toEqual([]);
+  });
+});
+
+describe('roll placement (§4)', () => {
+  const shaped = (inner, log) => shapeMessage(`<gametxt>${inner}</gametxt>${log}`, mint()).text;
+  const bodyOf = (t) => t.slice(t.indexOf('<maintext>'), t.indexOf('</maintext>'));
+
+  it('substitutes marker #k with line #k, IN ORDER — not by target name', () => {
+    // Both checks name Mitsuki: only positional pairing can tell them apart.
+    const out = shaped('He tried to comfort her.\n<roll/>\n\nHe apologised.\n<roll/>\n', combatLog(CRIT_FAIL, SUCCESS));
+    expect(out.indexOf('CritFail')).toBeLessThan(out.indexOf('→ Success'));
+    expect(out).toContain('💀'); // CritFail
+    expect(out).toContain('✅'); // Success
+    expect(out).not.toContain('<roll/>');
+  });
+
+  it('carries severity as TEXT — galgame drops any beat holding HTML (live 2026-08-03)', () => {
+    const body = bodyOf(shaped('<roll/>', combatLog(CRIT_FAIL)));
+    expect(body).toContain('🎲 💀 [Support] on Mitsuki');
+    expect(body).not.toContain('<span');
+    expect(body).not.toContain('style=');
+  });
+
+  it('a marker on its OWN line becomes its own beat (substitution precedes the wrap)', () => {
+    const body = bodyOf(shaped('He apologised.\n\n<roll/>\n\nShe turned away.', combatLog(CRIT_FAIL)));
+    expect(body).toMatch(/<p>🎲 💀 \[Support\][^<]*<\/p>/);
+  });
+
+  it('escapes the model-written line rather than trusting it', () => {
+    // The raw line survives verbatim in the tail's <combat_log>, which we never rewrite and galgame
+    // never parses — so assert on the RENDERED body only.
+    const body = bodyOf(shaped('<roll/>', combatLog('[Probe] on <script>x</script> — DC 5 → Success')));
+    expect(body).toContain('&lt;script&gt;');
+    expect(body).not.toContain('<script>');
+  });
+
+  it('parks UNMARKED rolls at the top, labelled — a crit fail is never silently dropped', () => {
+    const body = bodyOf(shaped('He apologised.\n<roll/>\n', combatLog(SUCCESS, CRIT_FAIL)));
+    const unmarked = body.indexOf('(unmarked)');
+    expect(unmarked).toBeGreaterThan(-1);
+    expect(body.slice(unmarked, unmarked + 120)).toContain('CritFail');
+    expect(unmarked).toBeLessThan(body.indexOf('He apologised'));
+  });
+
+  it('an unmarked roll is a real BEAT, not bare text (wrapped like prose)', () => {
+    const body = bodyOf(shaped('He apologised.', combatLog(CRIT_FAIL)));
+    expect(body).toMatch(/<p>🎲 \(unmarked\) 💀 [^<]*<\/p>/);
+  });
+
+  it('drops a SURPLUS marker — it names a roll that never happened', () => {
+    const out = shaped('a\n<roll/>\n\nb\n<roll/>\n', combatLog(SUCCESS));
+    expect(out).not.toContain('<roll/>');
+    expect(bodyOf(out).match(/🎲/g)).toHaveLength(1);
+  });
+
+  it('a no-roll reply renders no die anywhere', () => {
+    const out = shaped('Just a quiet walk home.', combatLog('No calculation needed — mundane scene, no D20 roll this reply.'));
+    expect(bodyOf(out)).not.toContain('🎲');
+  });
+
+  it('counts placed vs unplaced honestly (the log reads off these)', () => {
+    const s = shapeMessage(`<gametxt>a\n<roll/>\n</gametxt>${combatLog(SUCCESS, CRIT_FAIL)}`, mint()).stats;
+    expect(s).toMatchObject({ rolls: 2, rollsPlaced: 1, rollsUnplaced: 1 });
+  });
+
+  it('re-shape converges — markers are RESTORED, not accumulated (idempotency)', () => {
+    const raw = `<gametxt>He apologised.\n<roll/>\n\nShe turned away.\n<roll/>\n</gametxt>${combatLog(CRIT_FAIL, SUCCESS)}`;
+    const once = shapeMessage(raw, mint());
+    const twice = shapeMessage(once.text, mint());
+    expect(twice.changed).toBe(false);
+    expect(twice.text).toBe(once.text);
+    expect(bodyOf(once.text).match(/🎲/g)).toHaveLength(2);
+  });
+
+  it('re-shape converges for UNMARKED rolls too (deleted, then re-derived)', () => {
+    const raw = `<gametxt>He apologised.</gametxt>${combatLog(CRIT_FAIL, SUCCESS)}`;
+    const once = shapeMessage(raw, mint());
+    const twice = shapeMessage(once.text, mint());
+    expect(twice.changed).toBe(false);
+    expect(bodyOf(once.text).match(/\(unmarked\)/g)).toHaveLength(2);
+  });
+
+  it('does not disturb scene binding — scene #1 still leads the whole body', () => {
+    const uid = sceneUid(CHAT_KEY, 'a1b2c3');
+    const raw = `<gametxt>beat one\n\n${img(1)}\n\nbeat two\n\n${img(2)}\n</gametxt>${combatLog(CRIT_FAIL)}`;
+    const out = shapeMessage(raw, stubMinter(uid)).text;
+    expect(out).toContain(nameFor(uid, 1));
+    expect(out).toContain(nameFor(uid, 2));
+    expect(out.indexOf(nameFor(uid, 1))).toBeLessThan(out.indexOf('🎲'));
   });
 });

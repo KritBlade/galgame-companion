@@ -1,8 +1,9 @@
-// galgame-companion v0.6.12 — built 2026-07-29T11:27:51.274Z
+// galgame-companion v0.6.13
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.6.12";
+  var VERSION = "0.6.14";
+  var BUILD = "26c13a7-dirty @2026-08-02T23:09:31.797Z";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -1610,6 +1611,10 @@
     const m = SCENE_NAME_RE.exec(String(name || ""));
     return m ? m[2] : null;
   }
+  function hashOfSceneName(name) {
+    const m = SCENE_NAME_RE.exec(String(name || ""));
+    return m ? m[4] : null;
+  }
   function shortHash(str) {
     let h = 2166136261;
     const s = String(str);
@@ -1653,6 +1658,59 @@
     "gi"
   );
   var RE_TAG_ONLY_PARAGRAPH = /^(?:\s|<[^>]+>)*$/;
+  var RE_COMBAT_LOG = /<combat_log>([\s\S]*?)<\/combat_log>/i;
+  var RE_ROLL_MARKER = /<roll\s*\/?\s*>/gi;
+  var RE_NO_ROLL = /no calculation needed|no d20 roll/i;
+  var RE_OUTCOME = /(CritSuccess|CritFail|Success|Failure)/g;
+  var ROLL_PREFIX = "🎲 ";
+  var UNPLACED_PREFIX = "🎲 (unmarked) ";
+  var OUTCOME_MARK = {
+    CritSuccess: "✨",
+    Success: "✅",
+    Failure: "⚠️",
+    CritFail: "💀"
+  };
+  function escapeHtml(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+  function parseCombatLog(text) {
+    const block = RE_COMBAT_LOG.exec(String(text || ""));
+    if (!block) return [];
+    return block[1].split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#") && !RE_NO_ROLL.test(l)).map((line) => {
+      RE_OUTCOME.lastIndex = 0;
+      let m;
+      let outcome = null;
+      while ((m = RE_OUTCOME.exec(line)) !== null) outcome = m[1];
+      return { line, outcome };
+    });
+  }
+  function renderRollText(roll, prefix = ROLL_PREFIX) {
+    const mark = OUTCOME_MARK[roll.outcome] || "•";
+    return `${prefix}${mark} ${escapeHtml(roll.line)}`;
+  }
+  function stripRollText(inner, rolls) {
+    let out = String(inner);
+    for (const roll of rolls) {
+      const text = renderRollText(roll, UNPLACED_PREFIX);
+      out = out.split(`<p>${text}</p>`).join("").split(text).join("");
+    }
+    for (const roll of rolls) out = out.split(renderRollText(roll, ROLL_PREFIX)).join("<roll/>");
+    return rolls.length ? out.replace(/\n{3,}/g, "\n\n") : out;
+  }
+  function placeRolls(inner, rolls) {
+    const list = Array.isArray(rolls) ? rolls : [];
+    let k = 0;
+    const text = String(inner).replace(RE_ROLL_MARKER, () => {
+      const roll = list[k++];
+      if (!roll) return "";
+      return renderRollText(roll, ROLL_PREFIX);
+    });
+    return { text, placed: Math.min(k, list.length), unplaced: list.slice(k) };
+  }
+  function renderUnplacedRolls(rolls) {
+    if (!rolls || !rolls.length) return "";
+    return rolls.map((r) => renderRollText(r, UNPLACED_PREFIX)).join("\n\n");
+  }
   function shapeMessage(raw, mintUid) {
     const blankStats = () => ({
       wrapped: 0,
@@ -1663,7 +1721,10 @@
       hidden: 0,
       strippedThink: 0,
       uid: null,
-      uidMinted: false
+      uidMinted: false,
+      rolls: 0,
+      rollsPlaced: 0,
+      rollsUnplaced: 0
     });
     const stats = blankStats();
     const unchanged = (deferred = null) => ({
@@ -1699,6 +1760,8 @@
     }
     if (RE_PIC_TAG.test(inner)) return unchanged("pics-pending");
     const priorUid = RE_EXISTING_UID.exec(inner);
+    const rolls = parseCombatLog(tail);
+    inner = stripRollText(inner, rolls);
     inner = inner.replace(RE_BACKGROUND_TAG, () => {
       stats.strippedScenes++;
       return "";
@@ -1715,6 +1778,15 @@
 ${m2}
 -->`;
     });
+    const placement = placeRolls(inner, rolls);
+    inner = placement.text;
+    const unplacedText = renderUnplacedRolls(placement.unplaced);
+    if (unplacedText) inner = `${unplacedText}
+
+${inner.replace(/^\n+/, "")}`;
+    stats.rolls = rolls.length;
+    stats.rollsPlaced = placement.placed;
+    stats.rollsUnplaced = placement.unplaced.length;
     inner = wrapBareProse(inner, stats);
     const imgs = [];
     RE_IMG_WRAP.lastIndex = 0;
@@ -1859,8 +1931,13 @@ ${m2}
     try {
       await window.setChatMessages([{ message_id: id, message: text }], { refresh: "affected" });
       log.image(
-        `beat-shaper msg=${id}:${stats.renamed ? " gametxt→maintext" : ""} wrapped=${stats.wrapped}p scenes=${stats.scenes}${stats.scenes ? " (hoisted #1)" : ""} strippedScenes=${stats.strippedScenes}${stats.uid ? ` uid=${stats.uid}(${stats.uidMinted ? "minted" : "kept"})` : ""}${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ""}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ""}`
+        `beat-shaper msg=${id}:${stats.renamed ? " gametxt→maintext" : ""} wrapped=${stats.wrapped}p scenes=${stats.scenes}${stats.scenes ? " (hoisted #1)" : ""} strippedScenes=${stats.strippedScenes}${stats.uid ? ` uid=${stats.uid}(${stats.uidMinted ? "minted" : "kept"})` : ""}${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ""}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ""} rolls=${stats.rolls}(placed=${stats.rollsPlaced} unplaced=${stats.rollsUnplaced})`
       );
+      if (stats.rollsUnplaced) {
+        log.warn(
+          `beat-shaper msg=${id}: ${stats.rollsUnplaced} of ${stats.rolls} roll(s) had no <roll/> marker in <gametxt> — shown as a beat at the TOP instead of at the moment they resolved. The narrator should emit one <roll/> per <combat_log> line, in the same order.`
+        );
+      }
     } catch (e) {
       log.warn(`beat-shaper: setChatMessages(${id}) failed — message left unshaped:`, e);
     } finally {
@@ -1891,6 +1968,43 @@ ${m2}
   }
 
   // src/features/image/image-seam-core.js
+  function decodeEntities(s) {
+    return String(s).replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&#x27;/gi, "'");
+  }
+  var RE_SCENE_OR_IMG = /<background\s+scene="([^"]+)"|<img\b[^>]*\bsrc="([^"]+)"/gi;
+  function pairImagesToScenes(rawMes) {
+    const scenesByHash = /* @__PURE__ */ new Map();
+    const images = [];
+    let foreignScenes = 0;
+    RE_SCENE_OR_IMG.lastIndex = 0;
+    let m;
+    while ((m = RE_SCENE_OR_IMG.exec(String(rawMes || ""))) !== null) {
+      if (m[1] != null) {
+        const scene = m[1].trim();
+        if (!SCENE_NAME_RE.test(scene)) {
+          foreignScenes++;
+          continue;
+        }
+        const hash = hashOfSceneName(scene);
+        if (!scenesByHash.has(hash)) scenesByHash.set(hash, []);
+        scenesByHash.get(hash).push(scene);
+      } else if (m[2] != null) {
+        const rawSrc = m[2].trim();
+        images.push({ hash: shortHash(rawSrc), url: decodeEntities(rawSrc) });
+      }
+    }
+    const pairs = [];
+    let unmatchedImages = 0;
+    for (const img of images) {
+      const scenes = scenesByHash.get(img.hash);
+      if (!scenes) {
+        unmatchedImages++;
+        continue;
+      }
+      for (const scene of scenes) pairs.push({ scene, url: img.url });
+    }
+    return { pairs, unmatchedImages, foreignScenes };
+  }
   function staleSiblingKeys(allKeys, uid, keep) {
     if (!uid || !keep || keep.size === 0) return [];
     const prefix = `${uid}_scene_`;
@@ -1937,9 +2051,6 @@ ${m2}
       req.onblocked = () => log.warn("image-seam: IndexedDB open blocked (another tab upgrading?)");
     });
   }
-  function decodeEntities(s) {
-    return String(s).replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&#x27;/gi, "'");
-  }
   async function writeBackground(sceneName2, imageUrl) {
     let db;
     try {
@@ -1977,29 +2088,6 @@ ${m2}
       } catch (e) {
       }
     }
-  }
-  function pairImagesToScenes(rawMes) {
-    const re = /<background\s+scene="([^"]+)"|<img\b[^>]*\bsrc="([^"]+)"/gi;
-    const pairs = [];
-    let currentScene = null;
-    let m;
-    while ((m = re.exec(rawMes)) !== null) {
-      if (m[1] != null) {
-        currentScene = m[1].trim();
-      } else if (m[2] != null) {
-        const url = decodeEntities(m[2].trim());
-        if (!currentScene) {
-          log.warn(`image-seam: <img> with no preceding <background scene> — skipped (${url.slice(0, 60)})`);
-          continue;
-        }
-        if (!SCENE_NAME_RE.test(currentScene)) {
-          log.image(`image-seam: scene "${currentScene}" is not a current uid-scoped name — skipped (waiting for beat-shaper)`);
-          continue;
-        }
-        pairs.push({ scene: currentScene, url });
-      }
-    }
-    return pairs;
   }
   function rawMessage2(id) {
     try {
@@ -2052,7 +2140,12 @@ ${m2}
   async function processMessage(id) {
     const raw = rawMessage2(id);
     if (!raw) return;
-    const pairs = pairImagesToScenes(raw);
+    const { pairs, unmatchedImages, foreignScenes } = pairImagesToScenes(raw);
+    if (pairs.length && (unmatchedImages || foreignScenes)) {
+      log.image(
+        `image-seam: message ${id} — ${unmatchedImages} image(s) matched no scene hash, ${foreignScenes} non-uid scene tag(s) skipped`
+      );
+    }
     if (!pairs.length) return;
     let ok = 0;
     for (const { scene, url } of pairs) {
@@ -2207,18 +2300,18 @@ ${m2}
   async function attemptForceImageType(on) {
     const Mvu = topMvu();
     if (!Mvu || typeof Mvu.setMvuVariable !== "function") {
-      log.warn("image-seam: Mvu unavailable on top window — cannot flip ForceImageType (will retry)");
+      log.image("image-seam: top-window Mvu not attached yet — ForceImageType flip deferred to the retry loop");
       return "retry";
     }
     const id = latestDataFloor();
     if (id < 0) {
-      log.warn("image-seam: no data floor — cannot flip ForceImageType (will retry)");
+      log.image("image-seam: no data floor yet — ForceImageType flip deferred to the retry loop");
       return "retry";
     }
     try {
       const data = Mvu.getMvuData({ type: "message", message_id: id });
       if (!data || !data.stat_data) {
-        log.warn("image-seam: floor has no stat_data — will retry ForceImageType flip");
+        log.image(`image-seam: floor ${id} has no stat_data yet — ForceImageType flip deferred to the retry loop`);
         return "retry";
       }
       const okSet = Mvu.setMvuVariable(data, FORCE_PATH, on, { reason: `galgame ${on ? "enter" : "exit"}` });
@@ -2230,7 +2323,7 @@ ${m2}
       log.image(`image-seam: ForceImageType → ${on} (floor ${id})`);
       return "ok";
     } catch (e) {
-      log.warn("image-seam: setForceImageType failed (will retry):", e);
+      log.warn("image-seam: ForceImageType flip threw (will retry):", e);
       return "retry";
     }
   }
@@ -2253,7 +2346,7 @@ ${m2}
         if (result === "ok" || result === "skip") continue;
         await new Promise((res) => setTimeout(res, FORCE_RETRY_MS));
       }
-      log.warn(`image-seam: ForceImageType flip gave up after ${FORCE_RETRY_MAX} attempts (target=${desiredForceState}) — the galgame stage may receive non-uniform image types this session.`);
+      log.warn(`image-seam: ForceImageType flip GAVE UP after ${FORCE_RETRY_MAX} attempts over ~${Math.round(FORCE_RETRY_MAX * FORCE_RETRY_MS / 1e3)}s (target=${desiredForceState}) — top-window Mvu never became available. The galgame stage may receive non-uniform image types this session.`);
       forceRetryRunning = false;
     })();
   }
@@ -2850,6 +2943,17 @@ ${m2}
   }
 
   // src/app/index.js
+  console.log(`[${SCRIPT_NAME}] v${VERSION} · build ${BUILD}`);
+  try {
+    topWindow.__schoolCompanion = Object.assign(topWindow.__schoolCompanion || {}, {
+      name: SCRIPT_NAME,
+      version: VERSION,
+      build: BUILD,
+      loadedAt: (/* @__PURE__ */ new Date()).toISOString()
+    });
+  } catch (e) {
+    log.warn("could not publish the build stamp on the parent window (troubleshooting handle unavailable):", e);
+  }
   log.info(`v${VERSION} loading`);
   startGalgameDefaults();
   injectStyle();
