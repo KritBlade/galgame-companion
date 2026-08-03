@@ -1,9 +1,9 @@
-// galgame-companion v0.6.13
+// galgame-companion v0.6.14
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
   var VERSION = "0.6.14";
-  var BUILD = "26c13a7-dirty @2026-08-02T23:09:31.797Z";
+  var BUILD = "13507eb @2026-08-03T11:46:15.339Z";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
