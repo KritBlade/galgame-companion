@@ -18,12 +18,54 @@
 //   .mes_text MutationObserver picks the re-render up and re-parses. Belt-and-braces: the
 //   transform is idempotent, and a per-floor in-flight set blocks re-entry.
 
-import { topWindow, log } from '../../env.js';
+import { topWindow, log, warnToast } from '../../env.js';
 import { shapeMessage, sceneUid, shortHash, repairTruncatedEnvelope } from './beat-shaper-core.js';
 import { isSillyTavernBusy } from '../galgame-quirks/index.js';
 
 const inFlight = new Set(); // message ids currently being shaped (re-entrancy guard)
 const deferralLogged = new Set(); // one deferral log per floor per reason — not one per event
+// One incomplete-reply toast per message, keyed `${id}:${reason}`. Without this the GENERATION_ENDED
+// retry + every later MESSAGE_UPDATED (image splices) would each re-toast the same dead turn.
+const incompleteToasted = new Set();
+
+// ── incomplete-reply detection (§4b) ─────────────────────────────────────────
+// TWO independent ways a generation can end without a usable turn, and the player must be told
+// about BOTH because the consequence is identical and invisible: the prose advanced the story and
+// the ENGINE DID NOT MOVE. Next turn the narrator reads that prose as fact while stat_data says it
+// never happened, and the divergence compounds silently from there.
+//
+//   • envelope    — no </maintext>|</gametxt>. Cut off mid-output; also breaks galgame's parser.
+//   • no-updatevar— envelope closed, but no <UpdateVariable> at all. Either the cut landed after
+//                   the closing tag, or the narrator simply omitted it. Either way RES gets no
+//                   Intent, resolves nothing, and the reply LOOKS complete — which makes this the
+//                   more dangerous of the two.
+//
+// A greeting / imported first message legitimately has no <UpdateVariable>, so id 0 is exempt.
+const RE_HAS_UPDATEVAR = /<UpdateVariable>/i;
+const RE_ENVELOPE_CLOSE = /<\/maintext>|<\/gametxt>/i;
+const RE_ENVELOPE_OPEN = /<maintext>|<gametxt>/i;
+
+function incompleteReplyReason(raw, id) {
+  if (id === 0) return null;                            // greeting: no engine turn is expected
+  if (!RE_ENVELOPE_OPEN.test(raw)) return null;         // not a galgame-format reply at all
+  if (!RE_ENVELOPE_CLOSE.test(raw)) return 'envelope';
+  if (!RE_HAS_UPDATEVAR.test(raw)) return 'no-updatevar';
+  return null;
+}
+
+// The player-facing half. Deliberately says REGENERATE rather than "continue": a continue can
+// truncate again at the same ceiling and leaves a stitched reply, while a regenerate is one action
+// with a clean result. Nothing is auto-recovered — that is the user's call to make, not ours.
+function toastIncompleteReply(id, reason) {
+  const key = `${id}:${reason}`;
+  if (incompleteToasted.has(key)) return;
+  incompleteToasted.add(key);
+  const why = reason === 'envelope'
+    ? 'the reply was CUT OFF mid-output'
+    : 'the reply carries no <UpdateVariable> block';
+  warnToast(`Incomplete reply (message ${id}): ${why}, so NO game state was applied this turn — stats, time and relationships did not move. Regenerate this message.`);
+  log.warn(`beat-shaper msg=${id}: incomplete reply (${reason}) — no state applied this turn; player advised to regenerate.`);
+}
 
 // ── chat identity (feeds the scene uid's chatKey half, core §2.1) ─────────────
 // SillyTavern's chat id, resolved in galgame's OWN order (its special-cg-trigger.js
@@ -97,6 +139,15 @@ async function onMessageEvent(messageId) {
 
   const raw = rawMessage(id);
   if (raw === null) return;
+
+  // Tell the player BEFORE any repair — the repair fixes the display, never the lost turn, and a
+  // repaired message looks healthy afterwards. Only once ST is idle: mid-stream every reply is
+  // legitimately "incomplete".
+  if (!isSillyTavernBusy()) {
+    const reason = incompleteReplyReason(raw, id);
+    if (reason) toastIncompleteReply(id, reason);
+    else incompleteToasted.forEach((k) => { if (k.startsWith(`${id}:`)) incompleteToasted.delete(k); });
+  }
 
   let { text, changed, deferred, stats } = shapeMessage(raw, mintUidForCurrentChat);
 

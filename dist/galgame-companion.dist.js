@@ -1,9 +1,9 @@
-// galgame-companion v0.6.15
+// galgame-companion v0.6.16
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.6.15";
-  var BUILD = "acc6486-dirty @2026-08-04T00:08:43.948Z";
+  var VERSION = "0.6.16";
+  var BUILD = "cfba299-dirty @2026-08-04T00:18:34.447Z";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -29,6 +29,17 @@
     warn: (...a) => console.warn(`[${SCRIPT_NAME}]`, ...a),
     error: (...a) => console.error(`[${SCRIPT_NAME}]`, ...a)
   };
+  function warnToast(message, title = SCRIPT_NAME, timeOut = 12e3) {
+    try {
+      if (topWindow && topWindow.toastr && typeof topWindow.toastr.warning === "function") {
+        topWindow.toastr.warning(message, title, { timeOut, extendedTimeOut: 4e3 });
+        return;
+      }
+    } catch (e) {
+      console.warn(`[${SCRIPT_NAME}] toastr unavailable — falling back to console:`, e);
+    }
+    console.warn(`[${SCRIPT_NAME}] ${message}`);
+  }
 
   // src/app/galgame-defaults.js
   var GAL_SETTINGS_KEY = "galgame-ui-plugin_settings";
@@ -36,7 +47,7 @@
   var GAL_INIT_LOCK = "__galgame_init_lock__";
   var SEED_FLAG_KEY = "galgame-companion_seed_version";
   var RELOAD_MARKER = "galgame-companion_seed_reload";
-  var SEED_VERSION = 3.1;
+  var SEED_VERSION = 3.2;
   var MAX_RELOADS = 2;
   var MANAGED = [
     { key: "dialogSegLengthOverride", value: 460, def: 0 },
@@ -59,6 +70,16 @@
     // BGM off (also drops <bgm> from galgame's COT)
     { key: "ctrlKeySkip", value: false, def: true },
     // Hold-Ctrl fast-forward off (eats Ctrl while typing)
+    { key: "ttsEnabled", value: false, def: false },
+    // TTS off — the in-blob twin of GAL_TTS_ENABLED_KEY
+    { key: "ttsAutoPlay", value: false, def: false },
+    // Auto-read on segment off (user, 2026-08-04)
+    //   ⚠ These two were the MISSING HALF of SEEDED_TTS_ENABLED. The companion has always written the
+    //   standalone 'galgame-ui-plugin_tts_enabled' key to 'false', but galgame ALSO keeps `ttsEnabled`
+    //   inside the settings blob, and that one was left at true. Live 2026-08-04: blob true +
+    //   ttsProvider 'littlewhitebox' made galgame fetch a config for a provider that is not installed,
+    //   spamming `GET /user/files/LittleWhiteBox_TTS.json 404` — while the outside key claimed TTS was
+    //   off. Two sources of truth for one setting, disagreeing silently. Seeding both closes it.
     { key: "bgImageSource", value: "chatu8", def: "none" }
     // Zhihuiji mode: galgame must NOT self-generate backdrops
     //   (comfyui/banana/novelai/wallhaven all disabled; galgame only recognizes rendered images in messages —
@@ -286,9 +307,11 @@
     "下一句": "Next",
     "快进": "Fast-forward",
     "刷新视图": "Refresh view",
+    // '重绘当前' regenerates the whole MESSAGE, not just its image — "Redraw" read as an
+    // image-only action and sent people looking for a picture button (user, 2026-08-04).
     "视图已刷新": "View refreshed",
     "复制全部": "Copy all",
-    "重绘当前": "Redraw current",
+    "重绘当前": "Regen mesg",
     "查看提示词": "View prompt",
     "添加角色": "Add Character",
     "生成背景图片": "Generate Background",
@@ -319,6 +342,11 @@
     "自由对话": "Free chat",
     "自由输入": "Free input",
     "自动播放": "Auto-play",
+    // The Free-input textarea placeholder (translated via the ATTRS pass in i18n.js). Both dot
+    // forms: galgame writes the ASCII '...', but a future upstream edit to '…' would go untranslated
+    // and silently — an exact-match dict cannot warn about a near-miss.
+    "输入你想说的话...": "Type what you want to say...",
+    "输入你想说的话…": "Type what you want to say...",
     "智能判断主界面显示": "Smart main-view detection",
     // --- enhanced mode / worldbook ---
     "加强模式": "Enhanced mode",
@@ -1888,6 +1916,25 @@ ${inner.replace(/^\n+/, "")}`;
   // src/features/beat-shaper/beat-shaper.js
   var inFlight = /* @__PURE__ */ new Set();
   var deferralLogged = /* @__PURE__ */ new Set();
+  var incompleteToasted = /* @__PURE__ */ new Set();
+  var RE_HAS_UPDATEVAR = /<UpdateVariable>/i;
+  var RE_ENVELOPE_CLOSE = /<\/maintext>|<\/gametxt>/i;
+  var RE_ENVELOPE_OPEN = /<maintext>|<gametxt>/i;
+  function incompleteReplyReason(raw, id) {
+    if (id === 0) return null;
+    if (!RE_ENVELOPE_OPEN.test(raw)) return null;
+    if (!RE_ENVELOPE_CLOSE.test(raw)) return "envelope";
+    if (!RE_HAS_UPDATEVAR.test(raw)) return "no-updatevar";
+    return null;
+  }
+  function toastIncompleteReply(id, reason) {
+    const key = `${id}:${reason}`;
+    if (incompleteToasted.has(key)) return;
+    incompleteToasted.add(key);
+    const why = reason === "envelope" ? "the reply was CUT OFF mid-output" : "the reply carries no <UpdateVariable> block";
+    warnToast(`Incomplete reply (message ${id}): ${why}, so NO game state was applied this turn — stats, time and relationships did not move. Regenerate this message.`);
+    log.warn(`beat-shaper msg=${id}: incomplete reply (${reason}) — no state applied this turn; player advised to regenerate.`);
+  }
   function currentChatId() {
     try {
       const getter = topWindow.getCurrentChatId;
@@ -1939,6 +1986,13 @@ ${inner.replace(/^\n+/, "")}`;
     if (!topWindow.galgame) return;
     const raw = rawMessage(id);
     if (raw === null) return;
+    if (!isSillyTavernBusy()) {
+      const reason = incompleteReplyReason(raw, id);
+      if (reason) toastIncompleteReply(id, reason);
+      else incompleteToasted.forEach((k) => {
+        if (k.startsWith(`${id}:`)) incompleteToasted.delete(k);
+      });
+    }
     let { text, changed, deferred, stats } = shapeMessage(raw, mintUidForCurrentChat);
     if ((deferred === "maintext-unclosed" || deferred === "gametxt-unclosed") && !isSillyTavernBusy()) {
       const repair = repairTruncatedEnvelope(raw);

@@ -49,7 +49,7 @@ const GAL_INIT_LOCK = '__galgame_init_lock__';                // set by galgame 
 const SEED_FLAG_KEY = 'galgame-companion_seed_version';       // localStorage version gate (see SEED_VERSION RULE)
 const RELOAD_MARKER = 'galgame-companion_seed_reload';        // sessionStorage: # of seed-reloads this session
 // Fractional bumps for small data tweaks (numeric compare: 3.1 > 3 works through the Number() gate).
-const SEED_VERSION = 3.1;                                     // 1→2 v0.5.15 re-heal; 2→3 ctrlKeySkip; 3→3.1 bgImageSource chatu8
+const SEED_VERSION = 3.2;                                     // 1→2 v0.5.15 re-heal; 2→3 ctrlKeySkip; 3→3.1 bgImageSource chatu8; 3.1→3.2 ttsEnabled/ttsAutoPlay
 const MAX_RELOADS = 2;                                        // hard cap per session — never a reload loop
 
 // Card-intended values + galgame's own DEFAULT_SETTINGS value (`def`, verified against
@@ -66,6 +66,14 @@ const MANAGED = [
   { key: 'showSprites', value: false, def: true },               // Sprites off
   { key: 'bgmEnabled', value: false, def: true },                // BGM off (also drops <bgm> from galgame's COT)
   { key: 'ctrlKeySkip', value: false, def: true },               // Hold-Ctrl fast-forward off (eats Ctrl while typing)
+  { key: 'ttsEnabled', value: false, def: false },               // TTS off — the in-blob twin of GAL_TTS_ENABLED_KEY
+  { key: 'ttsAutoPlay', value: false, def: false },              // Auto-read on segment off (user, 2026-08-04)
+  //   ⚠ These two were the MISSING HALF of SEEDED_TTS_ENABLED. The companion has always written the
+  //   standalone 'galgame-ui-plugin_tts_enabled' key to 'false', but galgame ALSO keeps `ttsEnabled`
+  //   inside the settings blob, and that one was left at true. Live 2026-08-04: blob true +
+  //   ttsProvider 'littlewhitebox' made galgame fetch a config for a provider that is not installed,
+  //   spamming `GET /user/files/LittleWhiteBox_TTS.json 404` — while the outside key claimed TTS was
+  //   off. Two sources of truth for one setting, disagreeing silently. Seeding both closes it.
   { key: 'bgImageSource', value: 'chatu8', def: 'none' },        // Zhihuiji mode: galgame must NOT self-generate backdrops
   //   (comfyui/banana/novelai/wallhaven all disabled; galgame only recognizes rendered images in messages —
   //    ours come from mvu-helper via the image-seam. Kills the "未找到默认背景生成工作流: default_bg" error spam

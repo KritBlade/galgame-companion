@@ -8,7 +8,9 @@ export const DICT = {
   '导入': 'Import', '导出': 'Export', '发送': 'Send', '确定': 'OK',
   '试听': 'Preview', '全屏': 'Fullscreen', '关于': 'About',
   '下一句': 'Next', '快进': 'Fast-forward', '刷新视图': 'Refresh view',
-  '视图已刷新': 'View refreshed', '复制全部': 'Copy all', '重绘当前': 'Redraw current',
+  // '重绘当前' regenerates the whole MESSAGE, not just its image — "Redraw" read as an
+  // image-only action and sent people looking for a picture button (user, 2026-08-04).
+  '视图已刷新': 'View refreshed', '复制全部': 'Copy all', '重绘当前': 'Regen mesg',
   '查看提示词': 'View prompt', '添加角色': 'Add Character', '生成背景图片': 'Generate Background',
   '保存音色列表': 'Save voice list',
 
@@ -25,6 +27,11 @@ export const DICT = {
   '请先开启 Galgame 模式': 'Enable Galgame mode first', '请选择行动': 'Choose an action',
   '剧情选项': 'Story choices', '剧情回顾': 'Story recap', '沉浸模式': 'Immersive mode',
   '自由对话': 'Free chat', '自由输入': 'Free input', '自动播放': 'Auto-play',
+  // The Free-input textarea placeholder (translated via the ATTRS pass in i18n.js). Both dot
+  // forms: galgame writes the ASCII '...', but a future upstream edit to '…' would go untranslated
+  // and silently — an exact-match dict cannot warn about a near-miss.
+  '输入你想说的话...': 'Type what you want to say...',
+  '输入你想说的话…': 'Type what you want to say...',
   '智能判断主界面显示': 'Smart main-view detection',
 
   // --- enhanced mode / worldbook ---

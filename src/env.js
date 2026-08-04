@@ -4,7 +4,7 @@
 // so we reach it via window.parent.document (GCP §1).
 
 export const SCRIPT_NAME = 'School-Companion';
-export const VERSION = '0.6.15';
+export const VERSION = '0.6.16';
 
 // WHICH BUILD IS ACTUALLY RUNNING — not which release. build.mjs rewrites this placeholder in the
 // bundled output on EVERY build (see its stamp plugin); in source it stays the literal below, so a
@@ -67,3 +67,24 @@ export const log = {
   warn: (...a) => console.warn(`[${SCRIPT_NAME}]`, ...a),
   error: (...a) => console.error(`[${SCRIPT_NAME}]`, ...a),
 };
+
+/**
+ * A visible warning for the PLAYER, not the console. Use ONLY where the player must act — a
+ * console line is invisible to someone in galgame mode, so a silent failure there reads as
+ * "nothing happened" when the truth is "your turn was lost".
+ *
+ * Never gated by DEBUG: the cases that reach here are exactly the ones a release build must still
+ * surface. Degrades to a console warn when toastr is absent (never throws — this is itself the
+ * error path).
+ */
+export function warnToast(message, title = SCRIPT_NAME, timeOut = 12000) {
+  try {
+    if (topWindow && topWindow.toastr && typeof topWindow.toastr.warning === 'function') {
+      topWindow.toastr.warning(message, title, { timeOut, extendedTimeOut: 4000 });
+      return;
+    }
+  } catch (e) {
+    console.warn(`[${SCRIPT_NAME}] toastr unavailable — falling back to console:`, e);
+  }
+  console.warn(`[${SCRIPT_NAME}] ${message}`);
+}
