@@ -358,6 +358,48 @@ export function renderUnplacedRolls(rolls) {
  *   ('maintext-unclosed'/'gametxt-unclosed' while streaming, 'pics-pending' while image
  *   generation is in flight).
  */
+// ── §4b truncation repair ────────────────────────────────────────────────────
+// A reply that hits the token ceiling stops mid-anything and NEVER emits its closing envelope tag.
+// The shaper's "unclosed ⇒ still streaming, retry later" rule is right during a stream and WRONG
+// forever after one: no further event ever arrives, so the message stays raw permanently.
+//
+// That is not cosmetic. galgame parses the RAW text and pulls speaker names out of `Name: "…"`
+// shapes — in raw text that includes whatever the truncation left exposed. Live 2026-08-04 a
+// half-emitted `<UpdateVariable>` handed it `{ "op"` as a character name; the embedded quote made
+// galgame build `.gal-char-container[data-character="{ "op"]`, jQuery threw, and the main-interface
+// render failed on EVERY attempt — the Galgame button stopped working entirely until a reload.
+//
+// The repair is deliberately NON-DESTRUCTIVE: insert the closing tag after the last COMPLETE `</p>`
+// and leave the partial tail where it is. Everything after the tag falls outside the envelope, so
+// galgame ignores it while the text a reader might want is still in the message. Deleting the tail
+// would be the tidier-looking choice and the wrong one — it is the only evidence of what truncated.
+//
+// Returns null when the text cannot be safely repaired (no complete beat to close after) — the
+// caller then keeps deferring, which is still better than closing an envelope around nothing.
+export function repairTruncatedEnvelope(raw) {
+  const text = String(raw == null ? '' : raw);
+  const openMatch = text.match(RE_MAINTEXT_OPEN) || text.match(RE_GAMETXT_OPEN);
+  if (!openMatch) return null;
+  const isGametxt = !RE_MAINTEXT_OPEN.test(text);
+  const closeTag = isGametxt ? '</gametxt>' : '</maintext>';
+  const innerStart = openMatch.index + openMatch[0].length;
+
+  // The last COMPLETE paragraph inside the envelope. Anything after it is the truncation.
+  const RE_P_CLOSE = /<\/p>/gi;
+  RE_P_CLOSE.lastIndex = innerStart;
+  let lastEnd = -1;
+  let m;
+  while ((m = RE_P_CLOSE.exec(text)) !== null) lastEnd = m.index + m[0].length;
+  if (lastEnd < 0) return null;                       // no finished beat — nothing safe to close after
+
+  const droppedChars = text.length - lastEnd;
+  return {
+    text: `${text.slice(0, lastEnd)}\n${closeTag}${text.slice(lastEnd)}`,
+    closeTag,
+    droppedChars,                                     // how much fell OUTSIDE the envelope (not deleted)
+  };
+}
+
 export function shapeMessage(raw, mintUid) {
   const blankStats = () => ({
     wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false,

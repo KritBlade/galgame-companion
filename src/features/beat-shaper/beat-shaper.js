@@ -19,7 +19,8 @@
 //   transform is idempotent, and a per-floor in-flight set blocks re-entry.
 
 import { topWindow, log } from '../../env.js';
-import { shapeMessage, sceneUid, shortHash } from './beat-shaper-core.js';
+import { shapeMessage, sceneUid, shortHash, repairTruncatedEnvelope } from './beat-shaper-core.js';
+import { isSillyTavernBusy } from '../galgame-quirks/index.js';
 
 const inFlight = new Set(); // message ids currently being shaped (re-entrancy guard)
 const deferralLogged = new Set(); // one deferral log per floor per reason — not one per event
@@ -97,7 +98,27 @@ async function onMessageEvent(messageId) {
   const raw = rawMessage(id);
   if (raw === null) return;
 
-  const { text, changed, deferred, stats } = shapeMessage(raw, mintUidForCurrentChat);
+  let { text, changed, deferred, stats } = shapeMessage(raw, mintUidForCurrentChat);
+
+  // §4b: an unclosed envelope means "still streaming" ONLY while something is actually generating.
+  // Once ST is idle it means TRUNCATED — the closing tag is never coming, so deferring forever
+  // leaves galgame parsing raw text (which blocked the whole GUI once — see repairTruncatedEnvelope).
+  // Repair, then re-shape the repaired text so this turn still gets its normal treatment.
+  if ((deferred === 'maintext-unclosed' || deferred === 'gametxt-unclosed') && !isSillyTavernBusy()) {
+    const repair = repairTruncatedEnvelope(raw);
+    if (repair) {
+      log.warn(
+        `beat-shaper msg=${id}: reply is TRUNCATED — no ${repair.closeTag} and ST is idle, so it is never coming. ` +
+        `Inserted ${repair.closeTag} after the last complete </p>; ${repair.droppedChars} char(s) of partial output now sit ` +
+        'OUTSIDE the envelope (kept, not deleted). The turn likely emitted no <UpdateVariable>, so RES resolved nothing — ' +
+        'check the narrator\'s max response tokens.',
+      );
+      ({ text, changed, deferred, stats } = shapeMessage(repair.text, mintUidForCurrentChat));
+      changed = true;   // the repair itself is a change even if shaping found nothing else to do
+    } else {
+      log.warn(`beat-shaper msg=${id}: reply is TRUNCATED with no complete </p> to close after — leaving it raw (galgame may mis-parse it).`);
+    }
+  }
 
   if (deferred) {
     const key = `${id}:${deferred}`;
@@ -156,6 +177,26 @@ export function startBeatShaper() {
     if (!ev) continue;
     try {
       window.eventOn(ev, onMessageEvent);
+      bound++;
+    } catch (e) {
+      log.warn(`beat-shaper: eventOn(${ev}) failed:`, e);
+    }
+  }
+  // §4b retry hook. MESSAGE_RECEIVED can land while ST still reads BUSY (GENERATION_ENDED trails
+  // it), and a truncated reply produces no further message event — so the idle-only repair would
+  // never get its chance, which is the exact "defers forever" bug it exists to fix. Re-run the last
+  // message once generation is provably over. GENERATION_STOPPED matters most: a user pressing stop
+  // is the commonest way to strand an unclosed envelope. Idempotent — a healthy message re-shapes
+  // to identical text and the `changed` check makes it a no-op.
+  for (const ev of [te.GENERATION_ENDED, te.GENERATION_STOPPED]) {
+    if (!ev) continue;
+    try {
+      window.eventOn(ev, () => {
+        const chat = topWindow.SillyTavern
+          && typeof topWindow.SillyTavern.getContext === 'function'
+          && topWindow.SillyTavern.getContext().chat;
+        if (Array.isArray(chat) && chat.length) void onMessageEvent(chat.length - 1);
+      });
       bound++;
     } catch (e) {
       log.warn(`beat-shaper: eventOn(${ev}) failed:`, e);

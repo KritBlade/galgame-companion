@@ -1,9 +1,9 @@
-// galgame-companion v0.6.14
+// galgame-companion v0.6.15
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.6.14";
-  var BUILD = "13507eb @2026-08-03T11:46:15.339Z";
+  var VERSION = "0.6.15";
+  var BUILD = "acc6486-dirty @2026-08-04T00:08:43.948Z";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -1398,6 +1398,9 @@
   var INDICATOR_ID = "gal-generating-indicator";
   var POLL_MS = 750;
   var generating = false;
+  function isSillyTavernBusy() {
+    return stBusy();
+  }
   function stBusy() {
     if (generating) return true;
     try {
@@ -1711,6 +1714,28 @@
     if (!rolls || !rolls.length) return "";
     return rolls.map((r) => renderRollText(r, UNPLACED_PREFIX)).join("\n\n");
   }
+  function repairTruncatedEnvelope(raw) {
+    const text = String(raw == null ? "" : raw);
+    const openMatch = text.match(RE_MAINTEXT_OPEN) || text.match(RE_GAMETXT_OPEN);
+    if (!openMatch) return null;
+    const isGametxt = !RE_MAINTEXT_OPEN.test(text);
+    const closeTag = isGametxt ? "</gametxt>" : "</maintext>";
+    const innerStart = openMatch.index + openMatch[0].length;
+    const RE_P_CLOSE = /<\/p>/gi;
+    RE_P_CLOSE.lastIndex = innerStart;
+    let lastEnd = -1;
+    let m;
+    while ((m = RE_P_CLOSE.exec(text)) !== null) lastEnd = m.index + m[0].length;
+    if (lastEnd < 0) return null;
+    const droppedChars = text.length - lastEnd;
+    return {
+      text: `${text.slice(0, lastEnd)}
+${closeTag}${text.slice(lastEnd)}`,
+      closeTag,
+      droppedChars
+      // how much fell OUTSIDE the envelope (not deleted)
+    };
+  }
   function shapeMessage(raw, mintUid) {
     const blankStats = () => ({
       wrapped: 0,
@@ -1914,7 +1939,19 @@ ${inner.replace(/^\n+/, "")}`;
     if (!topWindow.galgame) return;
     const raw = rawMessage(id);
     if (raw === null) return;
-    const { text, changed, deferred, stats } = shapeMessage(raw, mintUidForCurrentChat);
+    let { text, changed, deferred, stats } = shapeMessage(raw, mintUidForCurrentChat);
+    if ((deferred === "maintext-unclosed" || deferred === "gametxt-unclosed") && !isSillyTavernBusy()) {
+      const repair = repairTruncatedEnvelope(raw);
+      if (repair) {
+        log.warn(
+          `beat-shaper msg=${id}: reply is TRUNCATED — no ${repair.closeTag} and ST is idle, so it is never coming. Inserted ${repair.closeTag} after the last complete </p>; ${repair.droppedChars} char(s) of partial output now sit OUTSIDE the envelope (kept, not deleted). The turn likely emitted no <UpdateVariable>, so RES resolved nothing — check the narrator's max response tokens.`
+        );
+        ({ text, changed, deferred, stats } = shapeMessage(repair.text, mintUidForCurrentChat));
+        changed = true;
+      } else {
+        log.warn(`beat-shaper msg=${id}: reply is TRUNCATED with no complete </p> to close after — leaving it raw (galgame may mis-parse it).`);
+      }
+    }
     if (deferred) {
       const key = `${id}:${deferred}`;
       if (!deferralLogged.has(key)) {
@@ -1955,6 +1992,18 @@ ${inner.replace(/^\n+/, "")}`;
       if (!ev) continue;
       try {
         window.eventOn(ev, onMessageEvent);
+        bound++;
+      } catch (e) {
+        log.warn(`beat-shaper: eventOn(${ev}) failed:`, e);
+      }
+    }
+    for (const ev of [te.GENERATION_ENDED, te.GENERATION_STOPPED]) {
+      if (!ev) continue;
+      try {
+        window.eventOn(ev, () => {
+          const chat = topWindow.SillyTavern && typeof topWindow.SillyTavern.getContext === "function" && topWindow.SillyTavern.getContext().chat;
+          if (Array.isArray(chat) && chat.length) void onMessageEvent(chat.length - 1);
+        });
         bound++;
       } catch (e) {
         log.warn(`beat-shaper: eventOn(${ev}) failed:`, e);

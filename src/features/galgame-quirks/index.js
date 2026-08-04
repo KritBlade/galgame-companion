@@ -5,4 +5,7 @@
 // currentFullscreenEl is exported because image/ and menu/ must not mount over a
 // fullscreen element — the quirk owns that state, so it owns the query.
 export { startFullscreenGuard, currentFullscreenEl } from './fullscreen-guard.js';
-export { startGeneratingGuard } from './generating-guard.js';
+// isSillyTavernBusy is the quirk's OTHER export: it owns the one definition of "a real generation
+// is in flight" (tracked loud GENERATION_STARTED + ST's live flags, dry-run/quiet filtered out).
+// beat-shaper needs the same answer to tell a streaming reply from a truncated one.
+export { startGeneratingGuard, isSillyTavernBusy } from './generating-guard.js';

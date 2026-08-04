@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   shapeMessage, sceneName, sceneUid, shortHash, uidOfSceneName, chatKeyOfSceneName,
-  SCENE_NAME_RE, LEGACY_SCENE_NAME_RE, parseCombatLog,
+  SCENE_NAME_RE, LEGACY_SCENE_NAME_RE, parseCombatLog, repairTruncatedEnvelope,
 } from '../src/features/beat-shaper/beat-shaper-core.js';
 
 // A rendered image block exactly as mvu-helper's imagegen REPLACE path writes it.
@@ -449,5 +449,54 @@ describe('roll placement (§4)', () => {
     expect(out).toContain(nameFor(uid, 1));
     expect(out).toContain(nameFor(uid, 2));
     expect(out.indexOf(nameFor(uid, 1))).toBeLessThan(out.indexOf('🎲'));
+  });
+});
+
+// §4b — truncation repair. A reply that hits the token ceiling never emits its closing tag, so the
+// "unclosed ⇒ still streaming" rule defers FOREVER and galgame keeps parsing raw text. Live
+// 2026-08-04 that handed galgame `{ "op"` (from a half-emitted <UpdateVariable>) as a character
+// name; the quote broke its CSS selector and the main-interface render failed on every attempt —
+// the Galgame button stopped working until a reload.
+describe('repairTruncatedEnvelope (§4b)', () => {
+  it('closes after the last COMPLETE </p> and keeps the partial tail OUTSIDE the envelope', () => {
+    const raw = '<maintext>\n<p>done</p>\n<charImage char="Mitsuki" body="golden amber';
+    const out = repairTruncatedEnvelope(raw);
+    expect(out).toBeTruthy();
+    const inner = out.text.match(/<maintext>([\s\S]*?)<\/maintext>/i)[1];
+    expect(inner).toContain('<p>done</p>');
+    expect(inner).not.toContain('charImage');          // the truncation is outside
+    expect(out.text).toContain('charImage');           // …but NOT deleted
+    expect(out.droppedChars).toBeGreaterThan(0);
+  });
+
+  it('quarantines a half-emitted JSONPatch — the exact text that broke galgame', () => {
+    const raw = '<maintext>\n<p>She turned away.</p>\n<UpdateVariable>\n[{ "op": "replace", "path": "/Cla';
+    const inner = repairTruncatedEnvelope(raw).text.match(/<maintext>([\s\S]*?)<\/maintext>/i)[1];
+    expect(inner).not.toContain('"op"');               // galgame can no longer read it as a speaker
+  });
+
+  it('repairs a <gametxt> reply with its own tag, not maintext', () => {
+    const out = repairTruncatedEnvelope('<gametxt>\n<p>beat</p>\n<charImage char="X" body="cut');
+    expect(out.closeTag).toBe('</gametxt>');
+    expect(out.text).toContain('</gametxt>');
+    expect(out.text).not.toContain('</maintext>');
+  });
+
+  it('refuses when there is no complete </p> to close after — better raw than an empty envelope', () => {
+    expect(repairTruncatedEnvelope('<maintext>\n<p>never finished')).toBe(null);
+  });
+
+  it('returns null for text with no envelope at all', () => {
+    expect(repairTruncatedEnvelope('just prose')).toBe(null);
+    expect(repairTruncatedEnvelope('')).toBe(null);
+    expect(repairTruncatedEnvelope(null)).toBe(null);
+  });
+
+  it('the repaired text then shapes normally — the turn still gets its beats', () => {
+    const raw = '<maintext>\n<p>She smiled.</p>\n<p>Then she left.</p>\n<charImage char="X" body="cut';
+    const shaped = shapeMessage(repairTruncatedEnvelope(raw).text, () => 'gcuidtest-aaaaaa');
+    expect(shaped.deferred).toBe(null);
+    expect(shaped.text).toContain('She smiled.');
+    expect(shaped.text).toContain('Then she left.');
   });
 });

@@ -21,6 +21,14 @@ const POLL_MS = 750;
 
 let generating = false; // a REAL (loud, non-dry) generation is in flight, per tracked TH events
 
+// Exported because a SECOND consumer needs the same question answered: beat-shaper must tell
+// "still streaming" from "truncated and never coming back" before it repairs an unclosed envelope
+// (§4b). One definition of "busy", so the two can never disagree — a shaper that repaired during a
+// live stream would corrupt the message it was trying to save.
+export function isSillyTavernBusy() {
+  return stBusy();
+}
+
 function stBusy() {
   if (generating) return true;
   try {
