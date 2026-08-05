@@ -2,3 +2,5 @@
 # bigmalove/galgame's dist/数据库界面插件.dist.js)
 node_modules/
 logs/
+dist/
+.gitignore
