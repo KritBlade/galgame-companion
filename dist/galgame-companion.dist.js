@@ -1,9 +1,9 @@
-// galgame-companion v0.6.17
+// galgame-companion v0.6.18
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.6.17";
-  var BUILD = "7d96a43-dirty @2026-08-07T14:08:41.059Z";
+  var VERSION = "0.6.18";
+  var BUILD = "ab2d7da-dirty @2026-08-07T15:37:35.316Z";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -1775,6 +1775,7 @@ ${closeTag}${text.slice(lastEnd)}`,
       strippedThink: 0,
       uid: null,
       uidMinted: false,
+      picsPending: false,
       rolls: 0,
       rollsPlaced: 0,
       rollsUnplaced: 0
@@ -1811,7 +1812,8 @@ ${closeTag}${text.slice(lastEnd)}`,
       head = head.slice(lastThinkEnd).replace(/^\s+/, "");
       stats.strippedThink = 1;
     }
-    if (RE_PIC_TAG.test(inner)) return unchanged("pics-pending");
+    const picsPending = RE_PIC_TAG.test(inner);
+    stats.picsPending = picsPending;
     const priorUid = RE_EXISTING_UID.exec(inner);
     const rolls = parseCombatLog(tail);
     inner = stripRollText(inner, rolls);
@@ -1849,10 +1851,11 @@ ${inner.replace(/^\n+/, "")}`;
     RE_P_OPEN.lastIndex = 0;
     let pm;
     while ((pm = RE_P_OPEN.exec(inner)) !== null) beatStarts.push(pm.index);
-    const uid = imgs.length >= 1 ? priorUid ? priorUid[1] : mintUid() : null;
+    const uid = !picsPending && imgs.length >= 1 ? priorUid ? priorUid[1] : mintUid() : null;
     stats.uid = uid;
     stats.uidMinted = Boolean(uid) && !priorUid;
-    if (imgs.length >= 1 && beatStarts.length >= 1) {
+    if (picsPending) {
+    } else if (imgs.length >= 1 && beatStarts.length >= 1) {
       const owner = beatStarts.map((b) => {
         const after = imgs.findIndex((im) => im.index > b);
         return after === -1 ? imgs.length - 1 : after;
@@ -2022,7 +2025,7 @@ ${inner.replace(/^\n+/, "")}`;
     try {
       await window.setChatMessages([{ message_id: id, message: text }], { refresh: "affected" });
       log.image(
-        `beat-shaper msg=${id}:${stats.renamed ? " gametxt→maintext" : ""} wrapped=${stats.wrapped}p scenes=${stats.scenes}${stats.scenes ? " (hoisted #1)" : ""} strippedScenes=${stats.strippedScenes}${stats.uid ? ` uid=${stats.uid}(${stats.uidMinted ? "minted" : "kept"})` : ""}${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ""}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ""} rolls=${stats.rolls}(placed=${stats.rollsPlaced} unplaced=${stats.rollsUnplaced})`
+        `beat-shaper msg=${id}:${stats.renamed ? " gametxt→maintext" : ""} wrapped=${stats.wrapped}p scenes=${stats.scenes}${stats.scenes ? " (hoisted #1)" : ""}${stats.picsPending ? " [scene binding HELD BACK — raw <pic> still un-rendered]" : ""} strippedScenes=${stats.strippedScenes}${stats.uid ? ` uid=${stats.uid}(${stats.uidMinted ? "minted" : "kept"})` : ""}${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ""}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ""} rolls=${stats.rolls}(placed=${stats.rollsPlaced} unplaced=${stats.rollsUnplaced})`
       );
       if (stats.rollsUnplaced) {
         log.warn(

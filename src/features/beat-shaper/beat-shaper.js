@@ -1,16 +1,17 @@
 // galgame-companion · beat-shaper — deterministic reshaping of AI replies into galgame's beat
-// contract (plan: mvu-helper plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). v0.2
+// contract (plan: mvu-helper plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). v0.3
 //
 // Event-driven wrapper around the pure transform in beat-shaper-core.js: on MESSAGE_RECEIVED /
 // MESSAGE_UPDATED, read the floor's raw text (TH getChatMessages), shape it, and write it back
 // (TH setChatMessages) ONLY when the text actually changed.
 //
 // WHY THESE TRIGGERS / LOOP + RACE SAFETY (verified against the real sources 2026-07-17):
-// - mvu-helper's imagegen captures <pic> tag string-INDICES at MESSAGE_RECEIVED and splices the
-//   rendered <img> in by those indices AFTER a multi-second generation await (image-gen.js
-//   REPLACE path). Rewriting the message meanwhile would corrupt that splice — so the core
-//   DEFERS ('pics-pending') while any raw <pic> remains, and we retry on the MESSAGE_UPDATED
-//   that mvu-helper emits once every tag has been replaced.
+// - mvu-helper's imagegen splices the rendered <img> in AFTER a multi-second generation await
+//   (image-gen.js REPLACE path). Since 2026-07-22 it RE-ANCHORS each splice by searching the
+//   CURRENT text for the raw tag, so our edits shifting offsets is a non-event — we shape the
+//   message immediately and hold back only the scene binding (core §3b), retrying it on the
+//   MESSAGE_UPDATED mvu-helper emits once every tag has been replaced. It used to defer the whole
+//   transform; see core §3b for why an unreachable image backend then took the GUI down with it.
 // - TH setChatMessages mutates chat[id] IN PLACE (_.set(t,'mes',…) + swipes[swipe_id] sync,
 //   JS-Slash-Runner dist) → mvu-helper's `chat[mesId] !== message` race guard still passes.
 // - Our write uses refresh:'affected', which re-renders the floor and fires
@@ -188,7 +189,13 @@ async function onMessageEvent(messageId) {
     await window.setChatMessages([{ message_id: id, message: text }], { refresh: 'affected' });
     log.image(
       `beat-shaper msg=${id}:${stats.renamed ? ' gametxt→maintext' : ''} wrapped=${stats.wrapped}p ` +
-      `scenes=${stats.scenes}${stats.scenes ? ' (hoisted #1)' : ''} strippedScenes=${stats.strippedScenes}` +
+      // picsPending is named EXPLICITLY: without it `scenes=0` reads as "scene binding ran and found
+      // nothing", when in fact it was the one step deliberately held back (core §3b). Same line, two
+      // very different situations — one is normal for a text-only reply, the other means an image is
+      // still generating (or its backend is wedged) and backdrops are still owed.
+      `scenes=${stats.scenes}${stats.scenes ? ' (hoisted #1)' : ''}` +
+      `${stats.picsPending ? ' [scene binding HELD BACK — raw <pic> still un-rendered]' : ''}` +
+      ` strippedScenes=${stats.strippedScenes}` +
       `${stats.uid ? ` uid=${stats.uid}(${stats.uidMinted ? 'minted' : 'kept'})` : ''}` +
       `${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ''}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ''}` +
       // ALWAYS printed, including the 0 case: "rolls=0" is the difference between "this reply had no

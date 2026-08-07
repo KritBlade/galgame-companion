@@ -4,7 +4,7 @@
 // so we reach it via window.parent.document (GCP §1).
 
 export const SCRIPT_NAME = 'School-Companion';
-export const VERSION = '0.6.17';
+export const VERSION = '0.6.18';
 
 // WHICH BUILD IS ACTUALLY RUNNING — not which release. build.mjs rewrites this placeholder in the
 // bundled output on EVERY build (see its stamp plugin); in source it stays the literal below, so a

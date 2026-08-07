@@ -142,10 +142,30 @@ describe('gating', () => {
     expect(r.changed).toBe(false);
     expect(r.deferred).toBe('maintext-unclosed');
   });
-  it('defers while a raw <pic> tag is pending (image gen in flight)', () => {
-    const r = shapeMessage('<maintext>\n<p>a</p>\n<pic char="X" prompt="y">\n</maintext>', mint());
-    expect(r.changed).toBe(false);
-    expect(r.deferred).toBe('pics-pending');
+  // A pending <pic> holds back SCENE BINDING ONLY — never the envelope rename. An image backend that
+  // hangs (unreachable ComfyUI, blocked port, wedged queue) leaves the raw <pic> in the message
+  // forever, and deferring the rename that long left galgame parsing the WHOLE message — including
+  // <UpdateVariable>, whose `{ "op"` became a speaker name and broke the GUI until reload.
+  it('shapes a <gametxt> reply even while a raw <pic> is pending — the rename must not wait on images', () => {
+    const r = shapeMessage('<gametxt>\nbare prose.\n\n<pic char="X" prompt="y">\n</gametxt>', mint());
+    expect(r.deferred).toBeNull();
+    expect(r.changed).toBe(true);
+    expect(r.stats.renamed).toBe(true);
+    expect(r.text).toContain('<maintext>');
+    expect(r.text).toContain('</maintext>');
+    expect(r.text).not.toContain('<gametxt>');
+    expect(r.stats.picsPending).toBe(true);
+    expect(r.stats.scenes).toBe(0);          // held back — the image set is incomplete
+    expect(r.stats.uid).toBeNull();          // and no identity is burned on a scene we won't write
+    expect(r.text).toContain('<pic char="X" prompt="y">'); // the splice anchor survives VERBATIM
+  });
+
+  it('binds scenes on the retry once the <pic> has become a rendered image', () => {
+    const rendered = '<span class="auto-img-wrap" data-rawtag="&lt;pic&gt;"><img src="a.png"><span></span></span>';
+    const r = shapeMessage(`<maintext>\n<p>a</p>\n${rendered}\n</maintext>`, mint());
+    expect(r.stats.picsPending).toBe(false);
+    expect(r.stats.scenes).toBe(1);
+    expect(r.stats.uid).not.toBeNull();
   });
   it('handles empty/non-string input', () => {
     expect(shapeMessage('', mint()).changed).toBe(false);

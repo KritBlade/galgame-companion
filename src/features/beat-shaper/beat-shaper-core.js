@@ -1,4 +1,4 @@
-// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v0.6
+// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v0.8
 //
 // Deterministically reshapes an AI reply into galgame's beat contract (plan: mvu-helper
 // plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). galgame's standard parser builds display beats ONLY
@@ -24,6 +24,9 @@
 // <roll/> markers (§4) — the block was always printed but always landed in the untouched TAIL, outside
 // <maintext>, so no roll ever reached the GUI. The injected beat is PLAIN TEXT: galgame silently drops
 // any beat carrying HTML, so severity rides in an emoji instead of a colour (§4).
+// v0.8: a pending <pic> no longer defers the WHOLE transform, only scene injection (§3b) — the
+// envelope rename is what keeps galgame's parser scoped, and withholding it during a stalled image
+// generation is what let a broken image backend take down the entire GUI.
 //
 // The transform must be IDEMPOTENT: shape(shape(x)) === shape(x). It re-derives all scene tags
 // from scratch each run (strip-then-inject) and unwraps-then-rehides its own gc:hidden comments,
@@ -133,9 +136,25 @@ const RE_TRAIT_CHECK = /<classmate_trait_check>[\s\S]*?<\/classmate_trait_check>
 const RE_GC_HIDDEN = /<!--gc:hidden\n([\s\S]*?)\n-->/g;
 // Any <background …> tag, self-closing or not (we strip ALL and re-inject our own).
 const RE_BACKGROUND_TAG = /[ \t]*<background\b[^>]*\/?>(?:\s*<\/background>)?[ \t]*\r?\n?/gi;
-// Un-rendered image tag — its presence means mvu-helper's generation is still in flight (or
-// failed); mvu-helper replaces <pic> by STRING INDEX captured at detection time, so rewriting the
-// message now would corrupt that splice. We defer until no raw <pic> remains.
+// Un-rendered image tag — its presence means mvu-helper's generation is still in flight (or failed).
+// It gates SCENE INJECTION ONLY (§3b): the image set is incomplete, so beat→image binding would be
+// derived from a partial set. Everything else — envelope rename, <p>-wrap, roll placement — runs now.
+//
+// IT USED TO GATE THE WHOLE TRANSFORM, and that was a GUI-killer. Rationale then (2026-07-17):
+// "mvu-helper replaces <pic> by STRING INDEX captured at detection time, so rewriting the message now
+// would corrupt that splice." That stopped being true five days later — mvu-helper's REPLACE pass
+// re-anchors every splice with indexOf against the CURRENT text (image-gen.js, 2026-07-22), so our
+// edits shifting offsets is a non-event. Meanwhile the deferral had a failure mode nobody costed:
+// mvu-helper awaits ST's /sd with NO timeout and ST's /sd has no wall-clock abort, so an image backend
+// that HANGS (blocked port, dropped packets, stalled VPN, wedged queue — not a clean failure, which the
+// leftover-<pic> sweep already handles) leaves the raw <pic> in the message forever. We then deferred
+// forever, so the message kept its <gametxt> envelope, so galgame's RE_MAINTEXT_* never matched, so its
+// parser fell through to the WHOLE message including <UpdateVariable> — and read `{ "op"` as a speaker
+// name. The embedded quote made `[data-character="{ "op"]` invalid CSS, jQuery threw, and the main
+// interface failed to render on every attempt until a reload (live 2026-08-04 and again 2026-08-07).
+//
+// So: a stalled image now costs backdrops, never the GUI. That is the whole point of the split — the
+// rename is what SCOPES galgame's parser, and it must never be hostage to an image backend.
 const RE_PIC_TAG = /<pic\b/i;
 // Rendered image block, fixed structure from mvu-helper imagegen (image-gen.js newImageTag):
 // <span class="auto-img-wrap" data-rawtag="…"><img …><span class="auto-img-regen" …></span></span>
@@ -352,11 +371,12 @@ export function renderUnplacedRolls(rolls) {
  * @returns {{ text: string, changed: boolean, deferred: string|null,
  *            stats: { wrapped: number, scenes: number, strippedScenes: number,
  *                     renamed: boolean, strippedBgimg: number, hidden: number,
- *                     strippedThink: number, uid: string|null,
+ *                     strippedThink: number, uid: string|null, picsPending: boolean,
  *                     rolls: number, rollsPlaced: number, rollsUnplaced: number } }}
  *   deferred ≠ null → text is returned UNCHANGED and the caller should retry on a later event
- *   ('maintext-unclosed'/'gametxt-unclosed' while streaming, 'pics-pending' while image
- *   generation is in flight).
+ *   ('maintext-unclosed'/'gametxt-unclosed' while streaming). A pending <pic> is NOT a deferral:
+ *   the text is shaped and returned, with stats.picsPending marking that scene binding was the one
+ *   step held back (§3b) — the caller retries it on mvu-helper's MESSAGE_UPDATED.
  */
 // ── §4b truncation repair ────────────────────────────────────────────────────
 // A reply that hits the token ceiling stops mid-anything and NEVER emits its closing envelope tag.
@@ -403,7 +423,7 @@ export function repairTruncatedEnvelope(raw) {
 export function shapeMessage(raw, mintUid) {
   const blankStats = () => ({
     wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false,
-    strippedBgimg: 0, hidden: 0, strippedThink: 0, uid: null, uidMinted: false,
+    strippedBgimg: 0, hidden: 0, strippedThink: 0, uid: null, uidMinted: false, picsPending: false,
     rolls: 0, rollsPlaced: 0, rollsUnplaced: 0,
   });
   const stats = blankStats();
@@ -450,9 +470,10 @@ export function shapeMessage(raw, mintUid) {
     stats.strippedThink = 1;
   }
 
-  // mvu-helper still owes this message rendered images — shaping now would invalidate the
-  // string indices its REPLACE pass captured at detection time. Retry on its MESSAGE_UPDATED.
-  if (RE_PIC_TAG.test(inner)) return unchanged('pics-pending');
+  // mvu-helper still owes this message rendered images. Shape everything else NOW and skip only the
+  // scene binding (§3b); mvu-helper's MESSAGE_UPDATED brings us back once every tag is replaced.
+  const picsPending = RE_PIC_TAG.test(inner);
+  stats.picsPending = picsPending;
 
   // 0c) Recover this message's uid from the scene tags a previous shape wrote, BEFORE step 1 strips
   //     them away (§2.1). Found → the identity is reused, so the names stay stable across re-shapes,
@@ -524,11 +545,20 @@ export function shapeMessage(raw, mintUid) {
 
   // Mint only once we know there is an image to name (a uid nobody writes into the text is a uid that
   // can never be recovered). Reuse the recovered one whenever this message already has an identity.
-  const uid = imgs.length >= 1 ? (priorUid ? priorUid[1] : mintUid()) : null;
+  // NOT while pics are pending: a uid is only recoverable from a scene tag we actually wrote, so
+  // minting one we then decline to use would burn a fresh identity on every retry.
+  const uid = !picsPending && imgs.length >= 1 ? (priorUid ? priorUid[1] : mintUid()) : null;
   stats.uid = uid;
   stats.uidMinted = Boolean(uid) && !priorUid; // logged: a message that CHANGES identity orphans its old backdrops
 
-  if (imgs.length >= 1 && beatStarts.length >= 1) {
+  if (picsPending) {
+    // §3b — the image set is INCOMPLETE, so every binding below would be derived from a partial one:
+    // owner[] maps beats to the images that exist RIGHT NOW, and the starved-tail rule reshuffles by
+    // imgs.length. Both WOULD be re-derived correctly on the next pass (this step rebuilds every scene
+    // tag from scratch), but the names written meanwhile are not inert — the image-seam prunes siblings
+    // by uid+n, so a provisional scene #2 can delete the record a later, real scene #2 needs.
+    // Withholding the binding is cheap; withholding the rename is what cost us the whole GUI.
+  } else if (imgs.length >= 1 && beatStarts.length >= 1) {
     // owner[j] = image that depicts beat j = the nearest image AFTER the beat (else the last image).
     const owner = beatStarts.map((b) => {
       const after = imgs.findIndex((im) => im.index > b);
