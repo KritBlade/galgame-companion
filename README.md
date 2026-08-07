@@ -16,7 +16,7 @@ Four capabilities:
    with a TH-globals bridge.
 4. **Image seam** — writes [mvu-helper](https://github.com/KritBlade/mvu-helper)-generated
    images into galgame's own background library (`saveBackground`, keyed by the
-   nearest-preceding `<background scene>`), and flips `World_Calc.ForceImageType` on
+   nearest-preceding `<background scene>`), and flips `Preferences.ForceImageType` on
    immersive enter/exit so every image matches the user's chosen aspect.
 
 ## Install (Tavern Helper script library)

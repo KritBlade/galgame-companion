@@ -57,11 +57,11 @@ startImageSeam();       // G4b: mvu-helper images → galgame backdrop DB (uid-s
 startGeneratingGuard(); // clear galgame's "Generating" indicator when it latches on with no real generation (load-race / 120s-hang)
 startLocationTimeBridge(); // feed galgame's location/time pills from stat_data.World (AutoCardUpdaterAPI shim; MVU cards have none)
 startChoices();            // A2 all-genre: inject a <choices> format instruction + feed galgame's Story-choices UI via the same shim's 选项表 sheet
-startNextBlock();          // surface the engine's manual Next-Block advance (World_Calc.BlockDone) top-right, driving the real stat-menu checkbox
+startNextBlock();          // surface the engine's manual Next-Block advance (PendingState.BlockDone) top-right, driving the real stat-menu checkbox
 startImageViewer();        // top-right button → near-full-viewport lightbox of galgame's current backdrop image
 startImageRegen();         // top-right button (under 🖼) → click mvu-helper's regen control for the current backdrop
 // G3: StatusMenu bridge wires into menu-modal.js
 // G4b: image-seam writer (saveBackground keyed by nearest-preceding <background scene>)
-//      + World_Calc.ForceImageType flip on immersive enter/exit
+//      + Preferences.ForceImageType flip on immersive enter/exit
 
 log.info(`v${VERSION} ready`);

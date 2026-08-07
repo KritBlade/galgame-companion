@@ -21,7 +21,7 @@ const CSS = `
    mirrors galgame's top-right pills. Keyed on our own class → cannot touch galgame's layout. */
 #gal-global-overlay .school-corner-btn { position: absolute; top: 12px; left: 14px; z-index: 30; }
 
-/* Next-Block control (next-block.js) — the engine's manual time-block advance (World_Calc.BlockDone),
+/* Next-Block control (next-block.js) — the engine's manual time-block advance (PendingState.BlockDone),
    surfaced on the overlay under the fullscreen button so it works with the stat-menu hidden. Ticking
    OUR checkbox drives the real (hidden) stat-menu checkbox. Small dark chip to read over the artwork. */
 #gal-global-overlay .school-nextblock {

@@ -1,5 +1,5 @@
 // galgame-companion · image-seam (G4b) — feed mvu-helper's generated images into galgame's own
-// backdrop library, and flip the ForceImageType latch on immersive enter/exit. GCP §10.3 / VPP §3. v0.4
+// backdrop library, and flip the ForceImageType latch on immersive enter/exit. GCP §10.3 / VPP §3. v0.5
 //
 // PIPELINE: the narrator writes `<background scene="X">` beats; mvu-helper draws each `<pic>` and
 // stamps `<span class="auto-img-wrap"><img src="…"></span>` into the message (then emits
@@ -23,7 +23,8 @@ const CURRENT_PACK_LS = 'galgame-ui-plugin_current_pack';
 const DEFAULT_PACK_ID = 'pack_default';
 const OVERLAY_ID = 'gal-global-overlay';
 
-const FORCE_PATH = 'World_Calc.ForceImageType'; // dot-path WITHOUT the stat_data. prefix (Mvu API)
+// EXPORTED for tests/schoolv4-contract-core.mjs — see the note on next-block.js's BIND_PATH.
+export const FORCE_PATH = 'Preferences.ForceImageType'; // dot-path WITHOUT the stat_data. prefix (Mvu API)
 const FLOOR_LOOKBACK = 30;
 
 // ── galgame IndexedDB write ───────────────────────────────────────────────────
@@ -318,7 +319,7 @@ function latestDataFloor() {
 
 // Single flip attempt. Returns 'ok' (written) | 'retry' (transient — Mvu/floor not ready yet, worth
 // trying again) | 'skip' (PERMANENT — setMvuVariable returned false, meaning this card has no
-// World_Calc.ForceImageType path at all; retrying can never create it).
+// ForceImageType path at all; retrying can never create it).
 //
 // LOG LEVELS HERE ARE DELIBERATE (fixed 2026-08-02). Every 'retry' reason below is EXPECTED on a
 // cold page load: JS-Slash-Runner attaches top-window Mvu asynchronously, and galgame-mode entry

@@ -1,9 +1,9 @@
-// galgame-companion v0.6.16
+// galgame-companion v0.6.17
 (() => {
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.6.16";
-  var BUILD = "cfba299-dirty @2026-08-04T00:18:34.447Z";
+  var VERSION = "0.6.17";
+  var BUILD = "7d96a43-dirty @2026-08-07T14:08:41.059Z";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -224,7 +224,7 @@
    mirrors galgame's top-right pills. Keyed on our own class → cannot touch galgame's layout. */
 #gal-global-overlay .school-corner-btn { position: absolute; top: 12px; left: 14px; z-index: 30; }
 
-/* Next-Block control (next-block.js) — the engine's manual time-block advance (World_Calc.BlockDone),
+/* Next-Block control (next-block.js) — the engine's manual time-block advance (PendingState.BlockDone),
    surfaced on the overlay under the fullscreen button so it works with the stat-menu hidden. Ticking
    OUR checkbox drives the real (hidden) stat-menu checkbox. Small dark chip to read over the artwork. */
 #gal-global-overlay .school-nextblock {
@@ -2130,7 +2130,7 @@ ${inner.replace(/^\n+/, "")}`;
   var CURRENT_PACK_LS = "galgame-ui-plugin_current_pack";
   var DEFAULT_PACK_ID = "pack_default";
   var OVERLAY_ID = "gal-global-overlay";
-  var FORCE_PATH = "World_Calc.ForceImageType";
+  var FORCE_PATH = "Preferences.ForceImageType";
   var FLOOR_LOOKBACK2 = 30;
   function currentPackId() {
     try {
@@ -2963,7 +2963,7 @@ ${inner.replace(/^\n+/, "")}`;
   // src/features/galgame-bridge/next-block.js
   var WRAP_CLASS = "school-nextblock";
   var CB_CLASS = "school-nextblock-cb";
-  var BIND_PATH = "World_Calc.BlockDone";
+  var BIND_PATH = "PendingState.BlockDone";
   var OVERLAY_SEL4 = "#gal-global-overlay";
   var HTML = `<label class="${WRAP_CLASS}" title="Advance one time block — uncheck to cancel (until you send a message)"><span class="school-nextblock-label">Next</span><input type="checkbox" class="${CB_CLASS}" aria-label="Advance one time block; uncheck to cancel" /></label>`;
   function findRealCb() {
@@ -2997,7 +2997,7 @@ ${inner.replace(/^\n+/, "")}`;
   function setFlag(want) {
     const cb = findRealCb();
     if (!cb) {
-      log.warn("next-block: real World_Calc.BlockDone checkbox not found — cannot set the flag");
+      log.warn(`next-block: real ${BIND_PATH} checkbox not found — cannot set the flag`);
       return false;
     }
     if (cb.checked !== want) {

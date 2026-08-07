@@ -1,16 +1,16 @@
-// galgame-companion · next-block — surface School v4's manual "Next-Block" control on galgame's GUI. v0.7 (flag model)
+// galgame-companion · next-block — surface School v4's manual "Next-Block" control on galgame's GUI. v0.8 (flag model)
 //
-// v4 uses a v1-style FLAG model: checking the box just sets World_Calc.BlockDone=true — NOTHING advances at click
+// v4 uses a v1-style FLAG model: checking the box just sets PendingState.BlockDone=true — NOTHING advances at click
 // time. The engine's Window A (current_variable_data) PREVIEWS where the advance lands so narrate writes the reply in
 // the new time slot, and RES commits Date/Time at reply-end. So this control is a pure FLAG MIRROR: our overlay box
-// drives the REAL stat-menu BlockDone checkbox (input[data-bind-checked="World_Calc.BlockDone"]) whose native handler
+// drives the REAL stat-menu BlockDone checkbox (input[data-bind-checked="PendingState.BlockDone"]) whose native handler
 // (rt_bindings applyValueUpdate) writes the flag — no resolve. Uncheck just clears the flag; because nothing was
 // mutated there is no snapshot/undo to manage (v3's click-time __resolveTurn + companion snapshot/undo are RETIRED —
 // both were iframe-wall workarounds v4 no longer needs). The flag auto-clears when RES consumes it at reply-end; the
 // real checkbox re-renders from BlockDone on each stat-menu redraw, and we re-derive our box from it on every rebuild.
 //
 // COUPLING: the stat-menu renders per message into TH-message--<id>--0 iframes (same-origin srcdoc); the checkbox is
-// input[data-bind-checked="World_Calc.BlockDone"]. We target the NEWEST reply's iframe (highest id) so the flag lands
+// input[data-bind-checked="PendingState.BlockDone"]. We target the NEWEST reply's iframe (highest id) so the flag lands
 // on the current turn (schoolv3 concurrency audit). Degrades to a no-op + warn if unreachable — never throws.
 
 import { DOC, topWindow, log } from '../../env.js';
@@ -18,7 +18,9 @@ import { refreshLocationTimePills } from './location-time-bridge.js';
 
 const WRAP_CLASS = 'school-nextblock';
 const CB_CLASS = 'school-nextblock-cb';
-const BIND_PATH = 'World_Calc.BlockDone';
+// EXPORTED for tests/schoolv4-contract-core.mjs — the check needs the literal this file actually uses,
+// not a second copy of it typed into the test (a copy drifts, and drift is the bug being guarded).
+export const BIND_PATH = 'PendingState.BlockDone';
 const OVERLAY_SEL = '#gal-global-overlay';
 
 // A <label> (not a <div>) so a click ANYWHERE on the chip — the "Next" word included — natively forwards to the
@@ -45,7 +47,7 @@ function findRealCb() {
   return null;
 }
 
-// The live flag state, read off the real checkbox (which reflects World_Calc.BlockDone). false when unreachable.
+// The live flag state, read off the real checkbox (which reflects PendingState.BlockDone). false when unreachable.
 function readFlag() {
   const cb = findRealCb();
   return !!(cb && cb.checked);
@@ -59,7 +61,7 @@ function nudgePills() {
   }, ms));
 }
 
-// Drive the real BlockDone checkbox to `want` and fire its native handler (writes World_Calc.BlockDone=want — flag
+// Drive the real BlockDone checkbox to `want` and fire its native handler (writes PendingState.BlockDone=want — flag
 // only, no resolve). Returns the flag state actually achieved (so a failed write reverts our box instead of lying).
 //
 // ⚠ The bound handler (rt_bindings `el.onclick`) reads `el.checked` AFTER the browser toggles it on click. So to
@@ -68,7 +70,7 @@ function nudgePills() {
 // opposite (live-caught 2026-07-28: checking our box wrote BlockDone=false).
 function setFlag(want) {
   const cb = findRealCb();
-  if (!cb) { log.warn('next-block: real World_Calc.BlockDone checkbox not found — cannot set the flag'); return false; }
+  if (!cb) { log.warn(`next-block: real ${BIND_PATH} checkbox not found — cannot set the flag`); return false; }
   if (cb.checked !== want) {
     cb.checked = !want;   // prime so the click toggles TO `want`
     cb.click();           // rt_bindings onclick → applyValueUpdate(BlockDone, want) — persisted flag write, no advance
