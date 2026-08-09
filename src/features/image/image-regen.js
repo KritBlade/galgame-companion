@@ -52,10 +52,18 @@ function regenForCurrentBg() {
 // replacement generates at the narrator's own aspect. Live 2026-07-28 — the exit-and-regen workaround
 // produced a 768×1152 PORTRAIT image that then had to serve as a landscape backdrop. Keeping the
 // player inside galgame keeps the latch on, so this is an aspect-correctness fix, not a convenience.
+// Scans BACKWARDS rather than reading wraps[last] blindly: mvu-helper gives an UNRENDERED <pic> (failed
+// generation / over the per-reply cap) the same auto-img-wrap envelope, and that placeholder carries no
+// regen control — so the newest wrap in the chat is quite often not the newest IMAGE. Taking it returned
+// null and reported "no generated image in this chat", with a perfectly regeneratable image sitting right
+// above it.
 function newestImageRegenControl() {
   const wraps = DOC.querySelectorAll('[class*="auto-img-wrap"]');
-  if (!wraps.length) return null;
-  return wraps[wraps.length - 1].querySelector('[class*="auto-img-regen"]') || null;
+  for (let i = wraps.length - 1; i >= 0; i--) {
+    const regen = wraps[i].querySelector('[class*="auto-img-regen"]');
+    if (regen) return regen;
+  }
+  return null;
 }
 
 function fireRegen(btn) {

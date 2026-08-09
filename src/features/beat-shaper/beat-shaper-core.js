@@ -1,4 +1,4 @@
-// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v0.8
+// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v0.9
 //
 // Deterministically reshapes an AI reply into galgame's beat contract (plan: mvu-helper
 // plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). galgame's standard parser builds display beats ONLY
@@ -27,6 +27,9 @@
 // v0.8: a pending <pic> no longer defers the WHOLE transform, only scene injection (§3b) — the
 // envelope rename is what keeps galgame's parser scoped, and withholding it during a stalled image
 // generation is what let a broken image backend take down the entire GUI.
+// v0.9: the image census requires an actual <img> — mvu-helper now gives an UNRENDERED <pic> the same
+// auto-img-wrap envelope, and counting one as an image bound a beat run to a scene nobody could ever
+// write a record for (see RE_IMG_WRAP).
 //
 // The transform must be IDEMPOTENT: shape(shape(x)) === shape(x). It re-derives all scene tags
 // from scratch each run (strip-then-inject) and unwraps-then-rehides its own gc:hidden comments,
@@ -156,10 +159,25 @@ const RE_BACKGROUND_TAG = /[ \t]*<background\b[^>]*\/?>(?:\s*<\/background>)?[ \
 // So: a stalled image now costs backdrops, never the GUI. That is the whole point of the split — the
 // rename is what SCOPES galgame's parser, and it must never be hostage to an image backend.
 const RE_PIC_TAG = /<pic\b/i;
-// Rendered image block, fixed structure from mvu-helper imagegen (image-gen.js newImageTag):
+// An image-machinery block from mvu-helper imagegen, fixed structure:
 // <span class="auto-img-wrap" data-rawtag="…"><img …><span class="auto-img-regen" …></span></span>
 // The outer span contains exactly ONE nested span → match through the second </span>.
+//
+// TWO KINDS OF WRAP SHARE THIS ENVELOPE, and the difference is load-bearing here. mvu-helper also
+// wraps a <pic> it could NOT render (generation failed, or over the per-reply image cap) in the same
+// envelope — deliberately, so every consumer keeps recognising it as image machinery instead of prose
+// (a bare <code> got <p>-wrapped by ST's renderer and corrupted our display, live 2026-08-09). The
+// placeholder carries no <img> and no regen control; that is what tells the two apart.
+//
+// So this regex answers "is this ours to protect from the <p>-wrap?" — yes for BOTH kinds — while the
+// image census (§3) additionally requires an <img>. Counting a placeholder as an image is not cosmetic:
+// it mints a scene tag for an image that does not exist, image-seam's pairImagesToScenes finds no <img>
+// whose hash matches, the record is never written, and every beat that scene governs renders with NO
+// BACKDROP (live 2026-08-09: image on the first beats, blank stage from the placeholder's beat on).
 const RE_IMG_WRAP = /<span class="(?:custom-)?auto-img-wrap"[^>]*>[\s\S]*?<\/span>\s*<\/span>/gi;
+// A wrap that actually holds a displayable image. Non-global on purpose — .test() on a /g regex carries
+// lastIndex between calls and would skip every other match.
+const RE_HAS_IMG = /<img\b/i;
 // A prose BEAT open tag — <p> or <p class="…">. Requires a delimiter right after `p` (`>` or whitespace),
 // so it never false-matches <pixiPerform>/<pic>. Used to bind scenes to beats (§3 below), not raw images.
 const RE_P_OPEN = /<p(?:\s[^>]*)?>/gi;
@@ -537,7 +555,12 @@ export function shapeMessage(raw, mintUid) {
   const imgs = [];
   RE_IMG_WRAP.lastIndex = 0;
   let m;
-  while ((m = RE_IMG_WRAP.exec(inner)) !== null) imgs.push({ index: m.index, src: imgSrcOf(m[0]) });
+  while ((m = RE_IMG_WRAP.exec(inner)) !== null) {
+    // Placeholder wrap (an unrendered <pic>) — protected from the <p>-wrap above, but there is no image
+    // to back a backdrop, so it must never take a scene number. See RE_IMG_WRAP.
+    if (!RE_HAS_IMG.test(m[0])) continue;
+    imgs.push({ index: m.index, src: imgSrcOf(m[0]) });
+  }
   const beatStarts = [];
   RE_P_OPEN.lastIndex = 0;
   let pm;

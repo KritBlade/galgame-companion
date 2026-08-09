@@ -268,6 +268,64 @@ describe('scene strip + inject', () => {
   });
 });
 
+// mvu-helper wraps a <pic> it could NOT render in the SAME auto-img-wrap envelope as a real image, so
+// downstream consumers keep treating it as image machinery rather than prose. It carries no <img> and no
+// regen control. Counting one as an image is what broke the live reply of 2026-08-09.
+const placeholder = () =>
+  '<span class="auto-img-wrap" data-rawtag="&lt;pic char=&quot;Mitsuki&quot;&gt;">'
+  + '<code class="auto-img-pictag" style="display:block;">&lt;pic char=&quot;Mitsuki&quot;&gt;</code>'
+  + '<span class="auto-img-unrendered" title="This pic tag was not rendered"></span></span>';
+
+describe('UNRENDERED <pic> placeholder is not an image', () => {
+  it('a placeholder takes no scene number — one real image still governs the WHOLE reply', () => {
+    // THE LIVE BUG (2026-08-09): one image + one placeholder was censused as TWO images, so scene_2 was
+    // minted and opened a beat run. No <img> carries scene_2's hash, so image-seam writes no record for
+    // it, and every beat it governs renders with NO BACKDROP — image on the first beats, blank stage after.
+    const m = stubMinter();
+    const raw = `<maintext>\n<p>b1</p>\n\n<p>b2</p>\n${img(1)}\n\n<p>b3</p>\n\n<p>b4</p>\n${placeholder()}\n</maintext>`;
+    const r = shapeMessage(raw, m);
+    expect(r.stats.scenes).toBe(1);
+    expect((r.text.match(/<background\b/g) || []).length).toBe(1);
+    expect(r.text).toContain(nameFor(m.uid, 1));
+    // Nothing may reference a scene_2 — that name is precisely what has no record to resolve to.
+    expect(r.text).not.toContain(`${m.uid}_scene_2`);
+    // The one scene must still LEAD every beat, including the ones after the placeholder.
+    const s1 = r.text.indexOf(nameFor(m.uid, 1));
+    expect(s1).toBeLessThan(r.text.indexOf('<p>b4</p>'));
+  });
+
+  it('the placeholder survives verbatim — it is protected from the <p>-wrap, just not counted', () => {
+    // The two roles are separate: PROTECT both kinds of wrap (a bare <code> gets <p>-wrapped by ST's
+    // renderer and corrupts the GUI), COUNT only the ones holding an image.
+    const m = stubMinter();
+    const raw = `<maintext>\n<p>b1</p>\n${img(1)}\n\n${placeholder()}\n</maintext>`;
+    const r = shapeMessage(raw, m);
+    expect(r.text).toContain(placeholder());
+    expect(r.text).not.toMatch(/<p>\s*<span class="auto-img-wrap"/);
+  });
+
+  it('a reply whose ONLY wrap is a placeholder gets no scene and mints no uid', () => {
+    const m = stubMinter();
+    const raw = `<maintext>\n<p>b1</p>\n\n${placeholder()}\n</maintext>`;
+    const r = shapeMessage(raw, m);
+    expect(r.stats.scenes).toBe(0);
+    expect(r.text).not.toContain('<background');
+    expect(m.calls).toBe(0); // a uid nobody writes into the text can never be recovered
+  });
+
+  it('TWO real images still bind both scenes with a placeholder sitting between them', () => {
+    // The two-image binding (v0.5 tail-clustering, hash-based pairing) is untouched — the placeholder
+    // must simply be invisible to the census, not shift the numbering of the images around it.
+    const m = stubMinter();
+    const raw = `<maintext>\n<p>b1</p>\n${img(1)}\n\n<p>b2</p>\n${placeholder()}\n\n<p>b3</p>\n${img(2)}\n</maintext>`;
+    const r = shapeMessage(raw, m);
+    expect(r.stats.scenes).toBe(2);
+    expect(r.text).toContain(nameFor(m.uid, 1));
+    expect(r.text).toContain(nameFor(m.uid, 2));
+    expect(r.text.indexOf(nameFor(m.uid, 2))).toBeLessThan(r.text.indexOf('<p>b3</p>'));
+  });
+});
+
 describe('leaked-reasoning strip (Fix §0b)', () => {
   it('strips an ORPHAN </think> (+ the CoT before it) ahead of <maintext>, keeping maintext + tail intent', () => {
     // A reasoning model emitted planning + a bare </think> (no surviving <think> open) into .mes; the real

@@ -3,7 +3,7 @@
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
   var VERSION = "0.6.18";
-  var BUILD = "ab2d7da-dirty @2026-08-07T15:37:35.316Z";
+  var BUILD = "9266867-dirty @2026-08-09T22:09:02.405Z";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -1669,6 +1669,7 @@
   var RE_BACKGROUND_TAG = /[ \t]*<background\b[^>]*\/?>(?:\s*<\/background>)?[ \t]*\r?\n?/gi;
   var RE_PIC_TAG = /<pic\b/i;
   var RE_IMG_WRAP = /<span class="(?:custom-)?auto-img-wrap"[^>]*>[\s\S]*?<\/span>\s*<\/span>/gi;
+  var RE_HAS_IMG = /<img\b/i;
   var RE_P_OPEN = /<p(?:\s[^>]*)?>/gi;
   var RE_EXISTING_UID = /<background\s+scene="(gc[0-9a-z]+-[0-9a-z]+)_scene_\d+_[0-9a-z]+"/i;
   var RE_THINK_CLOSE = /<\/think(?:ing)?>/gi;
@@ -1846,7 +1847,10 @@ ${inner.replace(/^\n+/, "")}`;
     const imgs = [];
     RE_IMG_WRAP.lastIndex = 0;
     let m;
-    while ((m = RE_IMG_WRAP.exec(inner)) !== null) imgs.push({ index: m.index, src: imgSrcOf(m[0]) });
+    while ((m = RE_IMG_WRAP.exec(inner)) !== null) {
+      if (!RE_HAS_IMG.test(m[0])) continue;
+      imgs.push({ index: m.index, src: imgSrcOf(m[0]) });
+    }
     const beatStarts = [];
     RE_P_OPEN.lastIndex = 0;
     let pm;
@@ -2638,8 +2642,11 @@ ${inner.replace(/^\n+/, "")}`;
   }
   function newestImageRegenControl() {
     const wraps = DOC.querySelectorAll('[class*="auto-img-wrap"]');
-    if (!wraps.length) return null;
-    return wraps[wraps.length - 1].querySelector('[class*="auto-img-regen"]') || null;
+    for (let i = wraps.length - 1; i >= 0; i--) {
+      const regen = wraps[i].querySelector('[class*="auto-img-regen"]');
+      if (regen) return regen;
+    }
+    return null;
   }
   function fireRegen(btn) {
     let span = regenForCurrentBg();
