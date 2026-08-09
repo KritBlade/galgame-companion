@@ -1,10 +1,13 @@
-// image-seam-core unit tests — the two DELETE predicates for galgame's shared background store. v0.1
+// image-seam-core unit tests — the seam's pure decisions: the two DELETE predicates for galgame's
+// shared background store, and the ForceImageType reconcile. v0.2
 //
 // These are the only functions in the companion that remove someone else's data, so the tests lean hard
 // on what must NEVER be deleted: another chat's records, a foreign scene name, or anything at all when
 // the caller's view of "what is alive" is empty/unreadable.
 import { describe, it, expect } from 'vitest';
-import { staleSiblingKeys, deadBackgroundKeys, pairImagesToScenes } from '../src/features/image/image-seam-core.js';
+import {
+  staleSiblingKeys, deadBackgroundKeys, pairImagesToScenes, decideForceReconcile,
+} from '../src/features/image/image-seam-core.js';
 import { sceneName, sceneUid, shortHash } from '../src/features/beat-shaper/beat-shaper-core.js';
 
 const CHAT = 'k9f3x2';       // this chat
@@ -149,5 +152,60 @@ describe('pairImagesToScenes (scene↔image binding)', () => {
     expect(pairImagesToScenes('').pairs).toEqual([]);
     expect(pairImagesToScenes(null).pairs).toEqual([]);
     expect(pairImagesToScenes(`${bg(scene1)}<p>prose only</p>`).pairs).toEqual([]);
+  });
+});
+
+// The latch is edge-driven in the live seam, and an edge-driven latch is only as correct as the last
+// edge it happened to see. This decision is the backstop that needs no edge — so the cases that matter
+// are the ones where the two sources disagree, and the ones where writing would be presumptuous.
+describe('decideForceReconcile (the ForceImageType backstop)', () => {
+  it('CORRECTS a latch left true while galgame is closed — the live 2026-08-09 bug', () => {
+    // Stuck true from a misread at seam start: every image generated since was forced to the backdrop
+    // aspect while the player was reading the normal chat.
+    const d = decideForceReconcile({ stored: [true, '強制圖片比例'], live: false });
+    expect(d.write).toBe(true);
+    expect(d.to).toBe(false);
+    expect(d.reason).toMatch(/CLOSED/);
+  });
+
+  it('CORRECTS the other direction too — galgame open, latch false', () => {
+    const d = decideForceReconcile({ stored: [false, 'label'], live: true });
+    expect(d.write).toBe(true);
+    expect(d.to).toBe(true);
+    expect(d.reason).toMatch(/OPEN/);
+  });
+
+  it('writes NOTHING when the two already agree (both directions)', () => {
+    expect(decideForceReconcile({ stored: [false, 'l'], live: false }).write).toBe(false);
+    expect(decideForceReconcile({ stored: [true, 'l'], live: true }).write).toBe(false);
+  });
+
+  it('unwraps the MVU tuple — a bare boolean is equally valid', () => {
+    // Comparing a tuple to a boolean would never be equal, so a correct latch would be rewritten on
+    // every single pass. Both shapes must read the same.
+    expect(decideForceReconcile({ stored: true, live: true }).write).toBe(false);
+    expect(decideForceReconcile({ stored: false, live: false }).write).toBe(false);
+    expect(decideForceReconcile({ stored: true, live: false })).toMatchObject({ write: true, to: false });
+  });
+
+  it('NEVER writes when the card has no such path — the platform must not create a consumer field', () => {
+    for (const stored of [undefined, null, [undefined, 'label']]) {
+      const d = decideForceReconcile({ stored, live: true });
+      expect(d.write).toBe(false);
+      expect(d.reason).toMatch(/absent/);
+    }
+  });
+
+  it('corrects a stored value that is not a boolean — an uninterpretable latch is not a latch', () => {
+    for (const stored of ['true', 1, {}, ['on', 'label']]) {
+      const d = decideForceReconcile({ stored, live: false });
+      expect(d.write).toBe(true);
+      expect(d.to).toBe(false);
+    }
+  });
+
+  it('treats a missing/garbage live flag as CLOSED rather than throwing', () => {
+    expect(decideForceReconcile({ stored: [true, 'l'] })).toMatchObject({ write: true, to: false });
+    expect(decideForceReconcile()).toMatchObject({ write: false });
   });
 });

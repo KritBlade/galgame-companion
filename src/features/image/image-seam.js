@@ -1,5 +1,5 @@
 // galgame-companion · image-seam (G4b) — feed mvu-helper's generated images into galgame's own
-// backdrop library, and flip the ForceImageType latch on immersive enter/exit. GCP §10.3 / VPP §3. v0.5
+// backdrop library, and flip the ForceImageType latch on immersive enter/exit. GCP §10.3 / VPP §3. v0.6
 //
 // PIPELINE: the narrator writes `<background scene="X">` beats; mvu-helper draws each `<pic>` and
 // stamps `<span class="auto-img-wrap"><img src="…"></span>` into the message (then emits
@@ -14,7 +14,9 @@
 
 import { DOC, topWindow, log } from '../../env.js';
 import { uidOfSceneName, currentChatKey } from '../beat-shaper/index.js';
-import { staleSiblingKeys, deadBackgroundKeys, pairImagesToScenes } from './image-seam-core.js';
+import {
+  staleSiblingKeys, deadBackgroundKeys, pairImagesToScenes, decideForceReconcile,
+} from './image-seam-core.js';
 
 // ── galgame constants (do NOT drift — re-verify on an upstream bump, GCP §10.4 §5) ──
 const DB_NAME = 'GalgameUIPluginDB';
@@ -411,6 +413,68 @@ function syncGalState() {
   setForceImageType(now); // enter → true, exit → false
 }
 
+// ── the reconcile (see image-seam-core.js decideForceReconcile for WHY) ───────
+// The edge tracker above is fast but only as correct as the last edge it saw, and it can both misread
+// the first one and miss a later one entirely. This is the backstop: read what is STORED, look at what
+// is really on screen, write only on disagreement.
+//
+// WHY IT WAITS. Reconciling the instant the seam starts would just re-read the same lie the edge
+// tracker read — galgame is still initialising, so the honest answer to "is the player immersive?" is
+// not available yet. The delay is the whole mechanism, not a hedge against slowness.
+const RECONCILE_SETTLE_MS = 5000;
+let reconcileTimer = null;
+
+// The stored latch, resolved through FORCE_PATH. `{ok: false}` for "not readable yet" (Mvu not attached,
+// no data floor) — distinct from a resolved `undefined`, which means the card genuinely has no latch.
+function readStoredForceImageType() {
+  const Mvu = topMvu();
+  if (!Mvu || typeof Mvu.getMvuData !== 'function') return { ok: false };
+  const id = latestDataFloor();
+  if (id < 0) return { ok: false };
+  try {
+    const data = Mvu.getMvuData({ type: 'message', message_id: id });
+    if (!data || !data.stat_data) return { ok: false };
+    let cursor = data.stat_data;
+    for (const segment of FORCE_PATH.split('.')) {
+      if (cursor == null || typeof cursor !== 'object') return { ok: true, value: undefined, floor: id };
+      cursor = cursor[segment];
+    }
+    return { ok: true, value: cursor, floor: id };
+  } catch (e) {
+    // Not the async-attach race (that is the !Mvu branch above) — a real throw from the MVU API.
+    log.warn('image-seam: could not read the stored ForceImageType latch — reconcile skipped:', e);
+    return { ok: false };
+  }
+}
+
+function reconcileForceImageType(why) {
+  const read = readStoredForceImageType();
+  if (!read.ok) {
+    // Expected on a cold load; the next trigger (chat load) runs it again.
+    log.image(`image-seam: ForceImageType reconcile (${why}) — state not readable yet, skipped`);
+    return;
+  }
+  const live = overlayActive();
+  const decision = decideForceReconcile({ stored: read.value, live });
+  // Resync the edge tracker either way: leaving it stale would make the NEXT edge compute from a base
+  // we have just proven wrong, which is how a missed edge turns into a permanently wrong latch.
+  galActive = live;
+  if (!decision.write) {
+    log.image(`image-seam: ForceImageType reconcile (${why}) — ${decision.reason}`);
+    return;
+  }
+  // Ungated: a drift means every image generated since the latch went wrong used the wrong aspect, and
+  // nothing else in the log says so. Names both sides so it cannot be misread as a routine flip.
+  log.warn(`image-seam: ForceImageType DRIFTED — ${decision.reason} (${why}, floor ${read.floor}). `
+    + `Correcting to ${decision.to}. Images generated since it drifted used the wrong aspect.`);
+  setForceImageType(decision.to);
+}
+
+function scheduleReconcile(why) {
+  if (reconcileTimer) topWindow.clearTimeout(reconcileTimer);
+  reconcileTimer = topWindow.setTimeout(() => { reconcileTimer = null; reconcileForceImageType(why); }, RECONCILE_SETTLE_MS);
+}
+
 // ── wiring ────────────────────────────────────────────────────────────────────
 export function startImageSeam() {
   if (typeof window.getChatMessages !== 'function' || typeof window.eventOn !== 'function') {
@@ -434,6 +498,13 @@ export function startImageSeam() {
   }
   scheduleSweep('seam start'); // the chat already loaded before we wired up
 
+  // The latch lives in a SAVE, so a chat load is when a previous session's stale value first becomes
+  // ours to correct. Bound separately from the sweep above: they share a trigger, not a purpose.
+  if (te.CHAT_CHANGED) {
+    try { window.eventOn(te.CHAT_CHANGED, () => scheduleReconcile('chat loaded')); }
+    catch (e) { log.warn('image-seam: eventOn(CHAT_CHANGED) failed — ForceImageType reconcile not bound to a chat load:', e); }
+  }
+
   // Immersive enter/exit → flip the latch. Observe the parent doc for the overlay's presence + its
   // `active` class; a cheap rAF-coalesced overlayActive() check per burst (mirrors i18n's observer).
   let scheduled = false;
@@ -447,7 +518,14 @@ export function startImageSeam() {
   } catch (e) {
     log.warn('image-seam: could not observe for immersive enter/exit:', e);
   }
-  syncGalState(); // initial: if galgame is already open on load, set the latch to match
+  // Seed the edge tracker WITHOUT writing. This used to be a syncGalState() call, and that is precisely
+  // where the stuck latch came from: galgame is mid-init here, so its overlay can still read as active,
+  // and the seam wrote `true` over a save whose player was never immersive. Seeding costs nothing if the
+  // read is wrong — the observer corrects it on the next real edge, and the reconcile below corrects it
+  // even when no edge ever arrives. The WRITE decision belongs to the reconcile, which waits for the
+  // truth instead of racing it.
+  galActive = overlayActive();
+  scheduleReconcile('seam start');
 
   log.image('image-seam active');
 }

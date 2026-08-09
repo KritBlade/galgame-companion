@@ -3,7 +3,7 @@
   // src/env.js
   var SCRIPT_NAME = "School-Companion";
   var VERSION = "0.6.18";
-  var BUILD = "9266867-dirty @2026-08-09T22:09:02.405Z";
+  var BUILD = "59c97e7-dirty @2026-08-09T22:29:40.105Z";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -2130,6 +2130,14 @@ ${inner.replace(/^\n+/, "")}`;
       return chatKeyOfSceneName(k) === chatKey;
     });
   }
+  function decideForceReconcile({ stored, live } = {}) {
+    const on = Boolean(live);
+    const value = Array.isArray(stored) ? stored[0] : stored;
+    if (value === void 0 || value === null) return { write: false, to: on, reason: "latch absent on this card" };
+    if (typeof value !== "boolean") return { write: true, to: on, reason: `stored value is not a boolean (${typeof value})` };
+    if (value === on) return { write: false, to: on, reason: "already in sync" };
+    return { write: true, to: on, reason: `stored ${value} but galgame is ${on ? "OPEN" : "CLOSED"}` };
+  }
 
   // src/features/image/image-seam.js
   var DB_NAME = "GalgameUIPluginDB";
@@ -2476,6 +2484,50 @@ ${inner.replace(/^\n+/, "")}`;
     galActive = now;
     setForceImageType(now);
   }
+  var RECONCILE_SETTLE_MS = 5e3;
+  var reconcileTimer = null;
+  function readStoredForceImageType() {
+    const Mvu = topMvu();
+    if (!Mvu || typeof Mvu.getMvuData !== "function") return { ok: false };
+    const id = latestDataFloor();
+    if (id < 0) return { ok: false };
+    try {
+      const data = Mvu.getMvuData({ type: "message", message_id: id });
+      if (!data || !data.stat_data) return { ok: false };
+      let cursor = data.stat_data;
+      for (const segment of FORCE_PATH.split(".")) {
+        if (cursor == null || typeof cursor !== "object") return { ok: true, value: void 0, floor: id };
+        cursor = cursor[segment];
+      }
+      return { ok: true, value: cursor, floor: id };
+    } catch (e) {
+      log.warn("image-seam: could not read the stored ForceImageType latch — reconcile skipped:", e);
+      return { ok: false };
+    }
+  }
+  function reconcileForceImageType(why) {
+    const read = readStoredForceImageType();
+    if (!read.ok) {
+      log.image(`image-seam: ForceImageType reconcile (${why}) — state not readable yet, skipped`);
+      return;
+    }
+    const live = overlayActive();
+    const decision = decideForceReconcile({ stored: read.value, live });
+    galActive = live;
+    if (!decision.write) {
+      log.image(`image-seam: ForceImageType reconcile (${why}) — ${decision.reason}`);
+      return;
+    }
+    log.warn(`image-seam: ForceImageType DRIFTED — ${decision.reason} (${why}, floor ${read.floor}). Correcting to ${decision.to}. Images generated since it drifted used the wrong aspect.`);
+    setForceImageType(decision.to);
+  }
+  function scheduleReconcile(why) {
+    if (reconcileTimer) topWindow.clearTimeout(reconcileTimer);
+    reconcileTimer = topWindow.setTimeout(() => {
+      reconcileTimer = null;
+      reconcileForceImageType(why);
+    }, RECONCILE_SETTLE_MS);
+  }
   function startImageSeam() {
     if (typeof window.getChatMessages !== "function" || typeof window.eventOn !== "function") {
       log.warn("image-seam: TH globals (getChatMessages/eventOn) absent — seam disabled");
@@ -2503,6 +2555,13 @@ ${inner.replace(/^\n+/, "")}`;
       }
     }
     scheduleSweep("seam start");
+    if (te.CHAT_CHANGED) {
+      try {
+        window.eventOn(te.CHAT_CHANGED, () => scheduleReconcile("chat loaded"));
+      } catch (e) {
+        log.warn("image-seam: eventOn(CHAT_CHANGED) failed — ForceImageType reconcile not bound to a chat load:", e);
+      }
+    }
     let scheduled2 = false;
     const obs = new MutationObserver(() => {
       if (scheduled2) return;
@@ -2517,7 +2576,8 @@ ${inner.replace(/^\n+/, "")}`;
     } catch (e) {
       log.warn("image-seam: could not observe for immersive enter/exit:", e);
     }
-    syncGalState();
+    galActive = overlayActive();
+    scheduleReconcile("seam start");
     log.image("image-seam active");
   }
 

@@ -1,4 +1,4 @@
-// galgame-companion · image-seam-core — PURE key-selection for the backdrop store (no DOM/IndexedDB). v0.1
+// galgame-companion · image-seam-core — PURE decisions for the image seam (no DOM/IndexedDB). v0.2
 //
 // The image-seam DELETES rows out of galgame's own global background DB, so "which keys go" is the one
 // decision in this feature that must never be wrong: over-delete and the player loses backdrops from a
@@ -124,4 +124,46 @@ export function deadBackgroundKeys(allKeys, liveSceneNames, chatKey) {
     if (LEGACY_SCENE_NAME_RE.test(k)) return true;
     return chatKeyOfSceneName(k) === chatKey;
   });
+}
+
+// ── the ForceImageType reconcile ──────────────────────────────────────────────
+// THE BUG THIS EXISTS TO FIX (live 2026-08-09). The latch was driven PURELY by edges: an observer
+// watched the overlay and flipped the latch when the immersive state CHANGED. Two ways that goes wrong,
+// and the live failure hit both at once:
+//
+//   1. THE FIRST READ CAN BE A LIE. At seam start galgame is still initialising — its overlay is in the
+//      DOM, still carries `active`, and is not yet display:none (its own init is async; the CDN fetch it
+//      waits on is right there in the same log). The seam read that transient as "the player is in
+//      immersive mode" and latched true at CHAT LOAD, before the player touched anything.
+//   2. THE CORRECTING EDGE MAY NEVER COME. The observer watches document.body for class/style changes.
+//      When the overlay went display:none because galgame's STYLESHEET landed in <head>, no attribute
+//      under body changed — so no mutation, no callback, and nothing ever re-read the truth. The latch
+//      stayed true through ~2000 log lines of play, with every generated image silently forced to the
+//      backdrop aspect, until the player manually entered and exited immersive mode.
+//
+// An edge-triggered latch is only ever as correct as the last edge it happened to see. So the seam now
+// also RECONCILES: read what is actually stored, look at what is actually on screen, and write only when
+// those two disagree. That is self-correcting in both directions and needs no edge at all.
+//
+// Pure and separate from the write because the DECISION is the part worth testing — the seam file it
+// used to live in is host-coupled (Mvu, IndexedDB, MutationObserver) and no test can open it.
+//
+// @param {*} stored  the latch as read from state: an MVU [value, label] tuple, a bare boolean, or
+//   undefined when the card has no such path.
+// @param {boolean} live  the real immersive state right now.
+// @returns {{write: boolean, to: boolean, reason: string}}
+export function decideForceReconcile({ stored, live } = {}) {
+  const on = Boolean(live);
+  // MVU stores most fields as a [value, label] tuple; a bare value is equally valid. Unwrap before
+  // comparing, or a tuple would never equal a boolean and the reconcile would rewrite it every pass.
+  const value = Array.isArray(stored) ? stored[0] : stored;
+  // Path absent — this card does not declare the latch at all. NOT ours to create: the write path
+  // already treats an unknown path as a permanent skip, and creating one here would be a platform
+  // inventing a consumer's field.
+  if (value === undefined || value === null) return { write: false, to: on, reason: 'latch absent on this card' };
+  // Present but not a boolean (hand-edited, or a shape we do not model). Correct it rather than trust
+  // it — a latch nobody can interpret is not a latch.
+  if (typeof value !== 'boolean') return { write: true, to: on, reason: `stored value is not a boolean (${typeof value})` };
+  if (value === on) return { write: false, to: on, reason: 'already in sync' };
+  return { write: true, to: on, reason: `stored ${value} but galgame is ${on ? 'OPEN' : 'CLOSED'}` };
 }
