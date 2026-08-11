@@ -389,8 +389,12 @@ export function renderUnplacedRolls(rolls) {
  * @returns {{ text: string, changed: boolean, deferred: string|null,
  *            stats: { wrapped: number, scenes: number, strippedScenes: number,
  *                     renamed: boolean, strippedBgimg: number, hidden: number,
- *                     strippedThink: number, uid: string|null, picsPending: boolean,
+ *                     strippedThink: number, strippedThinkText: string,
+ *                     uid: string|null, picsPending: boolean,
  *                     rolls: number, rollsPlaced: number, rollsUnplaced: number } }}
+ *   strippedThinkText carries the CoT §0b removed — '' when nothing was stripped. The caller is
+ *   expected to preserve it somewhere readable; this module only refuses to be the thing that
+ *   destroys it (see §0b).
  *   deferred ≠ null → text is returned UNCHANGED and the caller should retry on a later event
  *   ('maintext-unclosed'/'gametxt-unclosed' while streaming). A pending <pic> is NOT a deferral:
  *   the text is shaped and returned, with stats.picsPending marking that scene binding was the one
@@ -441,7 +445,7 @@ export function repairTruncatedEnvelope(raw) {
 export function shapeMessage(raw, mintUid) {
   const blankStats = () => ({
     wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false,
-    strippedBgimg: 0, hidden: 0, strippedThink: 0, uid: null, uidMinted: false, picsPending: false,
+    strippedBgimg: 0, hidden: 0, strippedThink: 0, strippedThinkText: '', uid: null, uidMinted: false, picsPending: false,
     rolls: 0, rollsPlaced: 0, rollsUnplaced: 0,
   });
   const stats = blankStats();
@@ -484,6 +488,13 @@ export function shapeMessage(raw, mintUid) {
   let thinkM, lastThinkEnd = -1;
   while ((thinkM = RE_THINK_CLOSE.exec(head)) !== null) lastThinkEnd = thinkM.index + thinkM[0].length;
   if (lastThinkEnd !== -1) {
+    // HAND THE TEXT BACK rather than dropping it on the floor. The strip is still right — this content
+    // must not reach the player — but it is the model's actual reasoning, and it is the ONE copy in
+    // existence: ST never captured it (its parser needs BOTH tags and this case is a close with no
+    // open), so deleting here deleted it everywhere. The caller stashes it where a human can read it.
+    // Own closes come out of the captured text; a fresh regex, because RE_THINK_CLOSE is /g and
+    // carries lastIndex state across calls.
+    stats.strippedThinkText = head.slice(0, lastThinkEnd).replace(/<\/think(?:ing)?>/gi, '').trim();
     head = head.slice(lastThinkEnd).replace(/^\s+/, '');
     stats.strippedThink = 1;
   }

@@ -1,9 +1,9 @@
-// galgame-companion v0.6.18
+// galgame-companion v0.6.21
 (() => {
   // src/env.js
-  var SCRIPT_NAME = "School-Companion";
-  var VERSION = "0.6.18";
-  var BUILD = "59c97e7-dirty @2026-08-09T22:29:40.105Z";
+  var SCRIPT_NAME = "galgame-companion";
+  var VERSION = "0.6.21";
+  var BUILD = "d691ca4-dirty @2026-08-11T13:21:56.785Z";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -1774,6 +1774,7 @@ ${closeTag}${text.slice(lastEnd)}`,
       strippedBgimg: 0,
       hidden: 0,
       strippedThink: 0,
+      strippedThinkText: "",
       uid: null,
       uidMinted: false,
       picsPending: false,
@@ -1810,6 +1811,7 @@ ${closeTag}${text.slice(lastEnd)}`,
     let thinkM, lastThinkEnd = -1;
     while ((thinkM = RE_THINK_CLOSE.exec(head)) !== null) lastThinkEnd = thinkM.index + thinkM[0].length;
     if (lastThinkEnd !== -1) {
+      stats.strippedThinkText = head.slice(0, lastThinkEnd).replace(/<\/think(?:ing)?>/gi, "").trim();
       head = head.slice(lastThinkEnd).replace(/^\s+/, "");
       stats.strippedThink = 1;
     }
@@ -1986,6 +1988,29 @@ ${inner.replace(/^\n+/, "")}`;
       return null;
     }
   }
+  function stashStrippedReasoning(id, cot) {
+    if (!cot) return;
+    try {
+      const context = topWindow.SillyTavern && topWindow.SillyTavern.getContext && topWindow.SillyTavern.getContext();
+      const message = context && Array.isArray(context.chat) ? context.chat[id] : null;
+      if (!message) return;
+      if (!message.extra || typeof message.extra !== "object") message.extra = {};
+      const already = String(message.extra.reasoning || "");
+      if (already.includes(cot)) return;
+      message.extra.reasoning = already ? `${already}
+
+${cot}` : cot;
+      if (!message.extra.reasoning_type) message.extra.reasoning_type = "parsed";
+      const swipe = message.swipe_id ?? 0;
+      if (Array.isArray(message.swipe_info) && message.swipe_info[swipe] && message.swipe_info[swipe] !== message.extra) {
+        message.swipe_info[swipe].reasoning = message.extra.reasoning;
+        if (!message.swipe_info[swipe].reasoning_type) message.swipe_info[swipe].reasoning_type = "parsed";
+      }
+      if (typeof context.updateReasoningUI === "function") context.updateReasoningUI(id);
+    } catch (e) {
+      log.warn(`beat-shaper msg=${id}: could not stash the stripped reasoning (it is still removed from the reply, just not kept):`, e);
+    }
+  }
   async function onMessageEvent(messageId) {
     const id = Number(messageId);
     if (!Number.isFinite(id) || id < 0) return;
@@ -2027,9 +2052,10 @@ ${inner.replace(/^\n+/, "")}`;
     if (!changed) return;
     inFlight.add(id);
     try {
+      stashStrippedReasoning(id, stats.strippedThinkText);
       await window.setChatMessages([{ message_id: id, message: text }], { refresh: "affected" });
       log.image(
-        `beat-shaper msg=${id}:${stats.renamed ? " gametxt→maintext" : ""} wrapped=${stats.wrapped}p scenes=${stats.scenes}${stats.scenes ? " (hoisted #1)" : ""}${stats.picsPending ? " [scene binding HELD BACK — raw <pic> still un-rendered]" : ""} strippedScenes=${stats.strippedScenes}${stats.uid ? ` uid=${stats.uid}(${stats.uidMinted ? "minted" : "kept"})` : ""}${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ""}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ""} rolls=${stats.rolls}(placed=${stats.rollsPlaced} unplaced=${stats.rollsUnplaced})`
+        `beat-shaper msg=${id}:${stats.renamed ? " gametxt→maintext" : ""} wrapped=${stats.wrapped}p scenes=${stats.scenes}${stats.scenes ? " (hoisted #1)" : ""}${stats.picsPending ? " [scene binding HELD BACK — raw <pic> still un-rendered]" : ""} strippedScenes=${stats.strippedScenes}${stats.uid ? ` uid=${stats.uid}(${stats.uidMinted ? "minted" : "kept"})` : ""}${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ""}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ""}${stats.strippedThink ? ` strippedThink=1 (${stats.strippedThinkText.length}c leaked CoT moved to extra.reasoning)` : ""} rolls=${stats.rolls}(placed=${stats.rollsPlaced} unplaced=${stats.rollsUnplaced})`
       );
       if (stats.rollsUnplaced) {
         log.warn(
@@ -3118,7 +3144,7 @@ ${inner.replace(/^\n+/, "")}`;
   // src/app/index.js
   console.log(`[${SCRIPT_NAME}] v${VERSION} · build ${BUILD}`);
   try {
-    topWindow.__schoolCompanion = Object.assign(topWindow.__schoolCompanion || {}, {
+    topWindow.__galgameCompanion = Object.assign(topWindow.__galgameCompanion || {}, {
       name: SCRIPT_NAME,
       version: VERSION,
       build: BUILD,

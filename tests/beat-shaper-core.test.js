@@ -342,6 +342,29 @@ describe('leaked-reasoning strip (Fix §0b)', () => {
   it('does not flag strippedThink on a clean message (no </think>)', () => {
     const r = shapeMessage('<maintext>\n<p>clean beat</p>\n</maintext>', mint());
     expect(r.stats.strippedThink).toBe(0);
+    expect(r.stats.strippedThinkText).toBe('');
+  });
+
+  // The strip REMOVES the CoT from the reply and HANDS IT BACK, because it is the only copy that
+  // exists — ST never parsed it (it needs both tags; this is a close with no open). Returning '' here
+  // would put us back to destroying the model's reasoning, which is what made the deletion invisible.
+  it('RETURNS the stripped CoT so the caller can keep it, with the close tags removed', () => {
+    const raw = 'Plan: 1 do this 2 that.\nLet us go.\n</think>\n\n<maintext>\n<p>narration</p>\n</maintext>';
+    const r = shapeMessage(raw, mint());
+    expect(r.stats.strippedThinkText).toContain('Plan: 1 do this 2 that.');
+    expect(r.stats.strippedThinkText).toContain('Let us go.');
+    expect(r.stats.strippedThinkText).not.toContain('</think>');   // the tag is packaging, not reasoning
+    expect(r.stats.strippedThinkText.startsWith('Plan:')).toBe(true);  // trimmed
+    expect(r.text).not.toContain('Plan:');                          // …and still gone from the reply
+  });
+
+  it('captures through the LAST close when several arrive, keeping the earlier ones out of the text', () => {
+    const raw = 'first thought\n</think>\nsecond thought\n</think>\n<maintext>\n<p>n</p>\n</maintext>';
+    const r = shapeMessage(raw, mint());
+    expect(r.stats.strippedThinkText).toContain('first thought');
+    expect(r.stats.strippedThinkText).toContain('second thought');
+    expect(r.stats.strippedThinkText).not.toContain('</think>');
+    expect(r.text.startsWith('<maintext>')).toBe(true);
   });
 });
 

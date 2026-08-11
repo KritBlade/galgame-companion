@@ -131,6 +131,45 @@ function rawMessage(id) {
   }
 }
 
+// STASH THE STRIPPED CoT WHERE A HUMAN CAN READ IT (extra.reasoning — ST's Thinking panel).
+// §0b removes the leaked chain-of-thought because the player must not read it; that stays. What
+// changed 2026-08-11 is that it is no longer DESTROYED on the way out. ST never held this text
+// (parseReasoningFromString needs both tags and this is a close with no open), so before this the
+// strip was the end of it — and a turn whose reasoning vanished looked exactly like a turn that
+// never reasoned. `parsed` is ST's own label for reasoning recovered out of message text.
+//
+// WHY NOT setChatMessages({extra}), WHICH IS HOW THIS MODULE WRITES EVERYTHING ELSE: TH's extra
+// branch guards on `data?.swipes_info` (chat_message.ts:257) while ST's field is `swipe_info` —
+// TH's own reader uses the singular (:123). So the guard is ALWAYS true on a real message and
+// :258 rebuilds swipe_info as an array of empty objects, wiping every OTHER swipe's extra (its
+// reasoning, model, image data) to write ours. An in-place merge touches one field of one slot and
+// cannot take siblings with it. Written BEFORE the text write on purpose: setChatMessages ends in
+// saveChatConditional (:173), so one save persists both.
+function stashStrippedReasoning(id, cot) {
+    if (!cot) return;
+    try {
+        const context = topWindow.SillyTavern && topWindow.SillyTavern.getContext && topWindow.SillyTavern.getContext();
+        const message = context && Array.isArray(context.chat) ? context.chat[id] : null;
+        if (!message) return;
+        if (!message.extra || typeof message.extra !== 'object') message.extra = {};
+        const already = String(message.extra.reasoning || '');
+        if (already.includes(cot)) return;                       // a re-shape must not stack duplicates
+        message.extra.reasoning = already ? `${already}\n\n${cot}` : cot;
+        // Never overwrite a type ST set itself — only claim the slot when it is empty.
+        if (!message.extra.reasoning_type) message.extra.reasoning_type = 'parsed';
+        // Keep the swipe's own copy in step, or swiping away and back reads the stale one.
+        const swipe = message.swipe_id ?? 0;
+        if (Array.isArray(message.swipe_info) && message.swipe_info[swipe] && message.swipe_info[swipe] !== message.extra) {
+            message.swipe_info[swipe].reasoning = message.extra.reasoning;
+            if (!message.swipe_info[swipe].reasoning_type) message.swipe_info[swipe].reasoning_type = 'parsed';
+        }
+        // Paint it now; without this the panel only appears after the message is next re-rendered.
+        if (typeof context.updateReasoningUI === 'function') context.updateReasoningUI(id);
+    } catch (e) {
+        log.warn(`beat-shaper msg=${id}: could not stash the stripped reasoning (it is still removed from the reply, just not kept):`, e);
+    }
+}
+
 async function onMessageEvent(messageId) {
   const id = Number(messageId);
   if (!Number.isFinite(id) || id < 0) return;
@@ -186,6 +225,7 @@ async function onMessageEvent(messageId) {
 
   inFlight.add(id);
   try {
+    stashStrippedReasoning(id, stats.strippedThinkText);
     await window.setChatMessages([{ message_id: id, message: text }], { refresh: 'affected' });
     log.image(
       `beat-shaper msg=${id}:${stats.renamed ? ' gametxt→maintext' : ''} wrapped=${stats.wrapped}p ` +
@@ -198,6 +238,12 @@ async function onMessageEvent(messageId) {
       ` strippedScenes=${stats.strippedScenes}` +
       `${stats.uid ? ` uid=${stats.uid}(${stats.uidMinted ? 'minted' : 'kept'})` : ''}` +
       `${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ''}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ''}` +
+      // strippedThink is the one stat here that REMOVES text from the reply, so it must never be
+      // silent: unlogged, a turn whose chain-of-thought vanished at generation-end looked EXACTLY
+      // like a turn that never had one, and 2026-08-11 it took a property trap on `mes` to find out
+      // who the remover was, because this line did not say. The char count is named because it is
+      // the receipt — it says the text went to extra.reasoning rather than into a hole.
+      `${stats.strippedThink ? ` strippedThink=1 (${stats.strippedThinkText.length}c leaked CoT moved to extra.reasoning)` : ''}` +
       // ALWAYS printed, including the 0 case: "rolls=0" is the difference between "this reply had no
       // check" and "the roll rendering silently failed", which a conditional suffix would blur. Both
       // halves are named because rolls=3 alone cannot tell a fully-marked reply from an unmarked one.
