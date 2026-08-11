@@ -3,12 +3,28 @@
 // extension). galgame renders its GUI into the PARENT SillyTavern document — same origin,
 // so we reach it via window.parent.document (GCP §1).
 
-export const SCRIPT_NAME = 'School-Companion';
-export const VERSION = '0.6.18';
+// The companion's ONE name, and it is the repo's: package.json, the dist bundle and the import JSON
+// all say `galgame-companion`. It read `School-Companion` until 2026-08-11, which was wrong twice
+// over — a second term for one concept, and a genre in the name of the piece that is supposed to be
+// blind to genre. This module adapts INTERFACE SHAPES; School is merely the first consumer that
+// happens to use it, and a toast titled after one genre tells a player of the next one that some
+// other product is warning them.
+export const SCRIPT_NAME = 'galgame-companion';
+
+// THE RELEASE NUMBER LIVES IN package.json, AND ONLY THERE. build.mjs reads it and rewrites this
+// placeholder in the bundled output, exactly as it does for BUILD below.
+//
+// It used to be authored here while package.json carried its own copy, which nothing read — so the
+// two drifted seven patch versions apart (0.6.12 vs 0.6.19) with no symptom, because the build was
+// stamping this one and the stale one was never consulted. Syncing them by hand would have restored
+// the same defect the moment someone bumped one and not the other: two places to edit is the bug,
+// not the gap between them. Bump package.json; this follows automatically.
+export const VERSION = '__VERSION__';
 
 // WHICH BUILD IS ACTUALLY RUNNING — not which release. build.mjs rewrites this placeholder in the
-// bundled output on EVERY build (see its stamp plugin); in source it stays the literal below, so a
-// unit test or a direct source import reads 'dev-unbuilt' rather than a lie.
+// bundled output on EVERY build (see its stamp plugin). An unbuilt import (a unit test, a direct
+// source read) sees the raw placeholder — deliberately un-prettified, so it is obvious the value is
+// unstamped rather than a plausible-looking lie.
 //
 // WHY IT EXISTS (2026-08-02): the dev loop serves dist/ off a local static server, and two different
 // builds of the SAME version are indistinguishable — a fix was in dist/ but there was no way to tell

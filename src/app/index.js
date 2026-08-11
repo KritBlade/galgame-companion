@@ -29,8 +29,11 @@ console.log(`[${SCRIPT_NAME}] v${VERSION} · build ${BUILD}`);
 // Same answer, queryable rather than scrolled-for: readable from the ST page (console or an
 // automated check) without hunting the log. Lives on the PARENT window because the companion runs
 // in its own TH iframe — `globalThis` here is that iframe, which nothing else can see.
+// Renamed off `__schoolCompanion` with SCRIPT_NAME (2026-08-11) — same reason, and no alias is left
+// behind: nothing outside this repo ever read it, and a second name for one handle is the drift being
+// removed, not a migration to soften.
 try {
-  topWindow.__schoolCompanion = Object.assign(topWindow.__schoolCompanion || {}, {
+  topWindow.__galgameCompanion = Object.assign(topWindow.__galgameCompanion || {}, {
     name: SCRIPT_NAME, version: VERSION, build: BUILD, loadedAt: new Date().toISOString(),
   });
 } catch (e) {

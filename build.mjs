@@ -36,9 +36,11 @@ function buildStamp() {
 // (npm run dev), 'build' for a one-shot (npm run build). Truncated fresh each run.
 teeToLog(isWatch ? 'dev' : 'build');
 
-// version from src/env.js (single source of truth)
-const envSrc = readFileSync(join(root, 'src', 'env.js'), 'utf8');
-const version = (envSrc.match(/VERSION = '([^']+)'/) || [])[1] || '0.0';
+// THE version — package.json is the single source, and this is the only reader. It is stamped into
+// the bundle (env.js VERSION) alongside the build stamp, so the running code and the package agree
+// by construction instead of by remembering to edit two files.
+const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+const version = pkg.version || '0.0';
 
 // esbuild's pretty-printed warnings/errors come from its Go subprocess writing straight to fd 2,
 // which bypasses the Node process.stderr.write patch dev-log.mjs uses — so with logLevel:'info'
@@ -46,6 +48,7 @@ const version = (envSrc.match(/VERSION = '([^']+)'/) || [])[1] || '0.0';
 // messages ourselves via formatMessages → console (which IS teed). color:false keeps the log
 // file free of ANSI escapes. onEnd fires on every build (one-shot AND each watch rebuild).
 const PLACEHOLDER = '__BUILD_STAMP__';
+const VERSION_PLACEHOLDER = '__VERSION__';
 const outfile = join(root, 'dist', 'galgame-companion.dist.js');
 
 const logMessages = {
@@ -67,25 +70,41 @@ const logMessages = {
       // With esbuild writing, a --watch rebuild could land its own copy AFTER this rewrite and the
       // served bundle would carry the raw placeholder — observed live on the second rebuild,
       // 2026-08-02. Writing the stamped text ourselves removes the ordering question entirely.
+      //
+      // Stamp warnings count toward the summary line below. They did not until 2026-08-11, when a
+      // deliberately broken placeholder printed a WARNING and the very next line still read
+      // "0 warning(s)" — the summary was reporting esbuild's tally while calling it the build's.
+      let stampWarnings = 0;
       let stamp = '(unstamped)';
       if (!errors.length) {
         try {
           const file = (result.outputFiles || [])[0];
           if (!file) throw new Error('esbuild produced no output file');
-          if (!file.text.includes(PLACEHOLDER)) {
-            console.warn(`[build] WARNING: ${PLACEHOLDER} not found in the bundle — env.js BUILD will read as the raw placeholder and version reporting is BROKEN. Did the placeholder in src/env.js get renamed?`);
-            mkdirSync(dirname(outfile), { recursive: true });
-            writeFileSync(outfile, file.text);
-          } else {
+          // BOTH placeholders are stamped here, and a MISSING one is always reported. A silent
+          // miss would ship a bundle whose own name for itself is the literal `__VERSION__` —
+          // visible to a player in a toast title line, and indistinguishable in the log from a
+          // version that simply never got bumped.
+          let text = file.text;
+          if (text.includes(PLACEHOLDER)) {
             stamp = buildStamp();
-            mkdirSync(dirname(outfile), { recursive: true });
-            writeFileSync(outfile, file.text.replace(PLACEHOLDER, stamp));
+            text = text.replace(PLACEHOLDER, stamp);
+          } else {
+            stampWarnings++;
+            console.warn(`[build] WARNING: ${PLACEHOLDER} not found in the bundle — env.js BUILD will read as the raw placeholder and build reporting is BROKEN. Did the placeholder in src/env.js get renamed?`);
           }
+          if (text.includes(VERSION_PLACEHOLDER)) {
+            text = text.replace(VERSION_PLACEHOLDER, version);
+          } else {
+            stampWarnings++;
+            console.warn(`[build] WARNING: ${VERSION_PLACEHOLDER} not found in the bundle — env.js VERSION will NOT carry package.json's ${version}. Did the placeholder in src/env.js get renamed?`);
+          }
+          mkdirSync(dirname(outfile), { recursive: true });
+          writeFileSync(outfile, text);
         } catch (e) {
           console.error('[build] build-stamp write FAILED — dist/ may be stale or missing:', e);
         }
       }
-      console.log(`[build] rebuilt v${version} [${stamp}] — ${errors.length} error(s), ${warnings.length} warning(s) @ ${new Date().toISOString()}`);
+      console.log(`[build] rebuilt v${version} [${stamp}] — ${errors.length} error(s), ${warnings.length + stampWarnings} warning(s) @ ${new Date().toISOString()}`);
     });
   },
 };
