@@ -52,6 +52,7 @@ export function pairImagesToScenes(rawMes) {
   const scenesByHash = new Map();   // hash → [sceneName, …]
   const images = [];                // { hash, url }
   let foreignScenes = 0;
+  let sceneCount = 0;
 
   RE_SCENE_OR_IMG.lastIndex = 0;
   let m;
@@ -59,6 +60,7 @@ export function pairImagesToScenes(rawMes) {
     if (m[1] != null) {
       const scene = m[1].trim();
       if (!SCENE_NAME_RE.test(scene)) { foreignScenes++; continue; }
+      sceneCount++;
       const hash = hashOfSceneName(scene);
       if (!scenesByHash.has(hash)) scenesByHash.set(hash, []);
       scenesByHash.get(hash).push(scene);
@@ -78,7 +80,49 @@ export function pairImagesToScenes(rawMes) {
     if (!scenes) { unmatchedImages++; continue; }
     for (const scene of scenes) pairs.push({ scene, url: img.url });
   }
-  return { pairs, unmatchedImages, foreignScenes };
+  return { pairs, unmatchedImages, foreignScenes, sceneCount, imageCount: images.length };
+}
+
+// Is the message FINISHED being assembled? Both producers must be done before an unbound image can
+// mean anything: the beat-shaper only shapes a CLOSED <maintext>/<gametxt> envelope (an open one is
+// still streaming and it defers), and mvu-helper is still replacing <pic> tags until none remain.
+// Read off the raw text so this stays pure — no events, no timers, no "wait a bit and see".
+const RE_ENVELOPE_CLOSED = /<\/(?:maintext|gametxt)>/i;
+const RE_PIC_PENDING = /<pic\b/i;
+
+/**
+ * THE LINE THAT WAS MISSING WHEN EVERY IMAGE WAS ORPHANED (live 2026-08-11).
+ *
+ * The old gate was `if (pairs.length && (unmatched || foreign))` — it only spoke once SOMETHING had
+ * bound, so it described a partial mismatch and went silent on the total one. A reply whose <pic> tag
+ * landed OUTSIDE <maintext> (after the RES blocks, in the untouched tail) gets no scene tag at all:
+ * the shaper only ever scans between the envelope tags, so it counted zero images, minted zero scenes,
+ * and this function then had zero pairs. Nothing was written, the stage rendered blank, and not one
+ * line anywhere said why — the exact failure the beat-shaper's §4 header describes for rolls.
+ *
+ * Zero pairs is AMBIGUOUS by itself, which is why the old gate existed: a message the shaper has not
+ * reached yet looks identical. So the report is withheld only while a producer is demonstrably still
+ * working (open envelope · <pic> tags left to render) — not on a guess about timing.
+ *
+ * @returns {string|null} the line to log, or null when there is nothing to say.
+ */
+export function unboundImageReport(rawMes, scan) {
+  const { pairs = [], unmatchedImages = 0, foreignScenes = 0, sceneCount = 0, imageCount = 0 } = scan || {};
+  if (pairs.length) {
+    if (!unmatchedImages && !foreignScenes) return null;
+    return `${unmatchedImages} image(s) matched no scene hash, ${foreignScenes} non-uid scene tag(s) skipped`;
+  }
+  if (!imageCount) return null;                                    // no images — nothing to bind, nothing to report
+  const text = String(rawMes || '');
+  if (!RE_ENVELOPE_CLOSED.test(text)) return null;                 // still streaming — the shaper has not run
+  if (RE_PIC_PENDING.test(text)) return null;                      // mvu-helper still rendering tags
+  return `EVERY image is unbound — ${imageCount} rendered image(s), ${sceneCount} scene tag(s)`
+    + (foreignScenes ? `, ${foreignScenes} foreign` : '')
+    + '. galgame will show NO backdrop for this message. '
+    + (sceneCount === 0
+      ? 'No scene tags exist at all, so the beat-shaper saw no image INSIDE <maintext> — the most '
+        + 'likely cause is a <pic> tag emitted outside the envelope (in the tail, after the engine blocks).'
+      : 'Scene tags exist but none carries an image hash — the shaper and the rendered <img> src have drifted.');
 }
 
 /**

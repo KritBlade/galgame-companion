@@ -159,6 +159,10 @@ const RE_BACKGROUND_TAG = /[ \t]*<background\b[^>]*\/?>(?:\s*<\/background>)?[ \
 // So: a stalled image now costs backdrops, never the GUI. That is the whole point of the split — the
 // rename is what SCOPES galgame's parser, and it must never be hostage to an image backend.
 const RE_PIC_TAG = /<pic\b/i;
+// A WHOLE unrendered <pic …> tag, for the tail rescue (§0a) — RE_PIC_TAG only answers "is one present?".
+// Self-closing or not; mvu-helper's own scanner is equally `[^>]*>`-shaped, so a prompt containing a
+// literal '>' would already have defeated the renderer long before it reached us.
+const RE_PIC_TAG_FULL = /[ \t]*<pic\b[^>]*>[ \t]*\r?\n?/gi;
 // An image-machinery block from mvu-helper imagegen, fixed structure:
 // <span class="auto-img-wrap" data-rawtag="…"><img …><span class="auto-img-regen" …></span></span>
 // The outer span contains exactly ONE nested span → match through the second </span>.
@@ -446,7 +450,7 @@ export function shapeMessage(raw, mintUid) {
   const blankStats = () => ({
     wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false,
     strippedBgimg: 0, hidden: 0, strippedThink: 0, strippedThinkText: '', uid: null, uidMinted: false, picsPending: false,
-    rolls: 0, rollsPlaced: 0, rollsUnplaced: 0,
+    rolls: 0, rollsPlaced: 0, rollsUnplaced: 0, imagesRehomed: 0,
   });
   const stats = blankStats();
   const unchanged = (deferred = null) => ({
@@ -476,8 +480,40 @@ export function shapeMessage(raw, mintUid) {
   const innerEnd = closeMatch.index;
   if (innerEnd < innerStart) return unchanged(); // malformed (close before open) — leave alone
   let head = text0.slice(0, innerStart);
-  const tail = text0.slice(innerEnd);
+  let tail = text0.slice(innerEnd);
   let inner = text0.slice(innerStart, innerEnd);
+
+  // 0a) TAIL RESCUE — image machinery the narrator left OUTSIDE the envelope.
+  //
+  // This is §4's bug, image half (live 2026-08-11). Everything below operates on `inner`; the tail is
+  // untouched by design. So a <pic> emitted after </maintext> — past <combat_log>, <UpdateVariable>,
+  // the RES blocks — is invisible to the census at §3: zero images found, zero scenes minted, and
+  // image-seam then has no scene whose hash matches the rendered <img>. Nothing is written to the
+  // background store and the stage renders BLANK, for a generated image that exists and loads fine.
+  // The imagegen contract already forbids the placement ("none bunched/trailing"), and the narrator
+  // does it anyway — the same way it stopped emitting <roll/> markers, which is why §4 exists.
+  //
+  // Moving them in COSTS the anchor: an image is meant to sit beside the beat it depicts, and one
+  // rescued from the tail can only be appended after the last beat. §3's starved-tail rule then hands
+  // it the final beats. A backdrop on the wrong beat beats no backdrop at all, and the alternative —
+  // leaving it where the narrator put it — is the silent blank we are here to end.
+  //
+  // BOTH FORMS MOVE. A rendered wrap is bound directly by §3. A raw <pic> is moved so mvu-helper's
+  // next pass renders it INSIDE the envelope, where the following shape binds it normally — rescuing
+  // only the rendered form would leave the pending case to fail exactly as before.
+  // Idempotent by construction: after one move the tail holds no image machinery, so re-shapes no-op.
+  {
+    const rescued = [];
+    const lift = (re) => {
+      tail = tail.replace(re, (block) => { rescued.push(block.trim()); return ''; });
+    };
+    lift(RE_IMG_WRAP);
+    lift(RE_PIC_TAG_FULL);
+    if (rescued.length) {
+      inner = `${inner.replace(/\s+$/, '')}\n\n${rescued.join('\n\n')}\n`;
+      stats.imagesRehomed = rescued.length;
+    }
+  }
 
   // 0b) Strip a leaked reasoning block from the head. A </think> before <maintext> — matched OR ORPHAN (a
   //     reasoning model can emit the close with no surviving <think> open, so galgame's own matched-tag

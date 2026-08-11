@@ -6,7 +6,7 @@
 // the caller's view of "what is alive" is empty/unreadable.
 import { describe, it, expect } from 'vitest';
 import {
-  staleSiblingKeys, deadBackgroundKeys, pairImagesToScenes, decideForceReconcile,
+  staleSiblingKeys, deadBackgroundKeys, pairImagesToScenes, unboundImageReport, decideForceReconcile,
 } from '../src/features/image/image-seam-core.js';
 import { sceneName, sceneUid, shortHash } from '../src/features/beat-shaper/beat-shaper-core.js';
 
@@ -207,5 +207,64 @@ describe('decideForceReconcile (the ForceImageType backstop)', () => {
   it('treats a missing/garbage live flag as CLOSED rather than throwing', () => {
     expect(decideForceReconcile({ stored: [true, 'l'] })).toMatchObject({ write: true, to: false });
     expect(decideForceReconcile()).toMatchObject({ write: false });
+  });
+});
+
+// ── unboundImageReport — the line that was missing when EVERY image was orphaned ──────────────
+// Live 2026-08-11: a <pic> emitted OUTSIDE <maintext> (after the RES blocks) got no scene tag, so
+// pairs was empty — and the old `pairs.length && …` gate then said nothing at all. The stage rendered
+// blank with no console line anywhere naming a cause. Zero pairs is ambiguous on its own, so these
+// tests pin BOTH directions: it must speak on the finished-and-orphaned case, and stay quiet while a
+// producer is demonstrably still working.
+describe('unboundImageReport — a fully orphaned message must not fail silently', () => {
+  const IMG = (src) => `<span class="auto-img-wrap"><img src="${src}"></span></span>`;
+  const scan = (raw) => unboundImageReport(raw, pairImagesToScenes(raw));
+
+  it('THE LIVE CASE: image in the TAIL, no scene tags, envelope closed ⇒ reports and names the cause', () => {
+    const raw = `<maintext>\n<p>prose</p>\n</maintext>\n<RES_Variable>[]</RES_Variable>\n${IMG('/a.png')}`;
+    const r = scan(raw);
+    expect(r).toMatch(/EVERY image is unbound/);
+    expect(r).toMatch(/1 rendered image\(s\), 0 scene tag\(s\)/);
+    expect(r).toMatch(/NO backdrop/);
+    expect(r).toMatch(/outside the envelope/);      // points at the actual defect, not just "unbound"
+  });
+
+  it('stays silent while the envelope is still open — the shaper has not run yet', () => {
+    expect(scan(`<maintext>\n<p>prose</p>\n${IMG('/a.png')}`)).toBe(null);
+  });
+
+  it('stays silent while mvu-helper still owes a render — a raw <pic> is left', () => {
+    const raw = `<maintext>\n<p>p</p>\n${IMG('/a.png')}\n<pic char="X" prompt="y">\n</maintext>`;
+    expect(scan(raw)).toBe(null);
+  });
+
+  it('says nothing when there are no images at all — a text reply is not a defect', () => {
+    expect(scan('<maintext>\n<p>prose only</p>\n</maintext>')).toBe(null);
+  });
+
+  const reportUid = sceneUid(CHAT, 'rpt001');
+
+  it('a correctly bound image reports nothing', () => {
+    const src = '/user/images/x.png';
+    const raw = `<maintext>\n<background scene="${sceneName(reportUid, 1, shortHash(src))}">\n<p>p</p>\n${IMG(src)}\n</maintext>`;
+    expect(scan(raw)).toBe(null);
+  });
+
+  it('the PARTIAL mismatch keeps its old wording (some bound, some not)', () => {
+    const src = '/bound.png';
+    const raw = `<maintext>\n<background scene="${sceneName(reportUid, 1, shortHash(src))}">\n<p>p</p>\n`
+      + `${IMG(src)}\n${IMG('/orphan.png')}\n</maintext>`;
+    const r = scan(raw);
+    expect(r).toMatch(/1 image\(s\) matched no scene hash/);
+    expect(r).not.toMatch(/EVERY image is unbound/);
+  });
+
+  it('scene tags present but none carrying an image hash names DRIFT, not bad placement', () => {
+    const raw = `<maintext>\n<background scene="${sceneName(reportUid, 1, shortHash('/gone.png'))}">\n<p>p</p>\n`
+      + `${IMG('/different.png')}\n</maintext>`;
+    const r = scan(raw);
+    expect(r).toMatch(/EVERY image is unbound/);
+    expect(r).toMatch(/drifted/);
+    expect(r).not.toMatch(/outside the envelope/);
   });
 });

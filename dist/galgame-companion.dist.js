@@ -1,9 +1,9 @@
-// galgame-companion v0.6.21
+// galgame-companion v0.6.22
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.6.21";
-  var BUILD = "d691ca4-dirty @2026-08-11T13:21:56.785Z";
+  var VERSION = "0.6.22";
+  var BUILD = "b47eac3-dirty @2026-08-11T21:05:24.851Z";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -1668,6 +1668,7 @@
   var RE_GC_HIDDEN = /<!--gc:hidden\n([\s\S]*?)\n-->/g;
   var RE_BACKGROUND_TAG = /[ \t]*<background\b[^>]*\/?>(?:\s*<\/background>)?[ \t]*\r?\n?/gi;
   var RE_PIC_TAG = /<pic\b/i;
+  var RE_PIC_TAG_FULL = /[ \t]*<pic\b[^>]*>[ \t]*\r?\n?/gi;
   var RE_IMG_WRAP = /<span class="(?:custom-)?auto-img-wrap"[^>]*>[\s\S]*?<\/span>\s*<\/span>/gi;
   var RE_HAS_IMG = /<img\b/i;
   var RE_P_OPEN = /<p(?:\s[^>]*)?>/gi;
@@ -1780,7 +1781,8 @@ ${closeTag}${text.slice(lastEnd)}`,
       picsPending: false,
       rolls: 0,
       rollsPlaced: 0,
-      rollsUnplaced: 0
+      rollsUnplaced: 0,
+      imagesRehomed: 0
     });
     const stats = blankStats();
     const unchanged = (deferred = null) => ({
@@ -1805,8 +1807,26 @@ ${closeTag}${text.slice(lastEnd)}`,
     const innerEnd = closeMatch.index;
     if (innerEnd < innerStart) return unchanged();
     let head = text0.slice(0, innerStart);
-    const tail = text0.slice(innerEnd);
+    let tail = text0.slice(innerEnd);
     let inner = text0.slice(innerStart, innerEnd);
+    {
+      const rescued = [];
+      const lift = (re) => {
+        tail = tail.replace(re, (block) => {
+          rescued.push(block.trim());
+          return "";
+        });
+      };
+      lift(RE_IMG_WRAP);
+      lift(RE_PIC_TAG_FULL);
+      if (rescued.length) {
+        inner = `${inner.replace(/\s+$/, "")}
+
+${rescued.join("\n\n")}
+`;
+        stats.imagesRehomed = rescued.length;
+      }
+    }
     RE_THINK_CLOSE.lastIndex = 0;
     let thinkM, lastThinkEnd = -1;
     while ((thinkM = RE_THINK_CLOSE.exec(head)) !== null) lastThinkEnd = thinkM.index + thinkM[0].length;
@@ -2055,8 +2075,13 @@ ${cot}` : cot;
       stashStrippedReasoning(id, stats.strippedThinkText);
       await window.setChatMessages([{ message_id: id, message: text }], { refresh: "affected" });
       log.image(
-        `beat-shaper msg=${id}:${stats.renamed ? " gametxt→maintext" : ""} wrapped=${stats.wrapped}p scenes=${stats.scenes}${stats.scenes ? " (hoisted #1)" : ""}${stats.picsPending ? " [scene binding HELD BACK — raw <pic> still un-rendered]" : ""} strippedScenes=${stats.strippedScenes}${stats.uid ? ` uid=${stats.uid}(${stats.uidMinted ? "minted" : "kept"})` : ""}${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ""}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ""}${stats.strippedThink ? ` strippedThink=1 (${stats.strippedThinkText.length}c leaked CoT moved to extra.reasoning)` : ""} rolls=${stats.rolls}(placed=${stats.rollsPlaced} unplaced=${stats.rollsUnplaced})`
+        `beat-shaper msg=${id}:${stats.renamed ? " gametxt→maintext" : ""} wrapped=${stats.wrapped}p scenes=${stats.scenes}${stats.scenes ? " (hoisted #1)" : ""}${stats.picsPending ? " [scene binding HELD BACK — raw <pic> still un-rendered]" : ""} strippedScenes=${stats.strippedScenes}${stats.uid ? ` uid=${stats.uid}(${stats.uidMinted ? "minted" : "kept"})` : ""}${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ""}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ""}${stats.strippedThink ? ` strippedThink=1 (${stats.strippedThinkText.length}c leaked CoT moved to extra.reasoning)` : ""} rolls=${stats.rolls}(placed=${stats.rollsPlaced} unplaced=${stats.rollsUnplaced})${stats.imagesRehomed ? ` imagesRehomed=${stats.imagesRehomed} (were OUTSIDE <maintext>)` : ""}`
       );
+      if (stats.imagesRehomed) {
+        log.warn(
+          `beat-shaper msg=${id}: ${stats.imagesRehomed} <pic>/image block(s) were emitted OUTSIDE <maintext> (in the tail, past the engine blocks) and were moved back in so they bind to a beat at all. Un-rescued they would produce NO backdrop. Fix the narrator prompt: each <pic> belongs under the sentence it depicts, inside the envelope — never bunched or trailing.`
+        );
+      }
       if (stats.rollsUnplaced) {
         log.warn(
           `beat-shaper msg=${id}: ${stats.rollsUnplaced} of ${stats.rolls} roll(s) had no <roll/> marker in <gametxt> — shown as a beat at the TOP instead of at the moment they resolved. The narrator should emit one <roll/> per <combat_log> line, in the same order.`
@@ -2112,6 +2137,7 @@ ${cot}` : cot;
     const scenesByHash = /* @__PURE__ */ new Map();
     const images = [];
     let foreignScenes = 0;
+    let sceneCount = 0;
     RE_SCENE_OR_IMG.lastIndex = 0;
     let m;
     while ((m = RE_SCENE_OR_IMG.exec(String(rawMes || ""))) !== null) {
@@ -2121,6 +2147,7 @@ ${cot}` : cot;
           foreignScenes++;
           continue;
         }
+        sceneCount++;
         const hash = hashOfSceneName(scene);
         if (!scenesByHash.has(hash)) scenesByHash.set(hash, []);
         scenesByHash.get(hash).push(scene);
@@ -2139,7 +2166,21 @@ ${cot}` : cot;
       }
       for (const scene of scenes) pairs.push({ scene, url: img.url });
     }
-    return { pairs, unmatchedImages, foreignScenes };
+    return { pairs, unmatchedImages, foreignScenes, sceneCount, imageCount: images.length };
+  }
+  var RE_ENVELOPE_CLOSED = /<\/(?:maintext|gametxt)>/i;
+  var RE_PIC_PENDING = /<pic\b/i;
+  function unboundImageReport(rawMes, scan) {
+    const { pairs = [], unmatchedImages = 0, foreignScenes = 0, sceneCount = 0, imageCount = 0 } = scan || {};
+    if (pairs.length) {
+      if (!unmatchedImages && !foreignScenes) return null;
+      return `${unmatchedImages} image(s) matched no scene hash, ${foreignScenes} non-uid scene tag(s) skipped`;
+    }
+    if (!imageCount) return null;
+    const text = String(rawMes || "");
+    if (!RE_ENVELOPE_CLOSED.test(text)) return null;
+    if (RE_PIC_PENDING.test(text)) return null;
+    return `EVERY image is unbound — ${imageCount} rendered image(s), ${sceneCount} scene tag(s)` + (foreignScenes ? `, ${foreignScenes} foreign` : "") + ". galgame will show NO backdrop for this message. " + (sceneCount === 0 ? "No scene tags exist at all, so the beat-shaper saw no image INSIDE <maintext> — the most likely cause is a <pic> tag emitted outside the envelope (in the tail, after the engine blocks)." : "Scene tags exist but none carries an image hash — the shaper and the rendered <img> src have drifted.");
   }
   function staleSiblingKeys(allKeys, uid, keep) {
     if (!uid || !keep || keep.size === 0) return [];
@@ -2284,12 +2325,10 @@ ${cot}` : cot;
   async function processMessage(id) {
     const raw = rawMessage2(id);
     if (!raw) return;
-    const { pairs, unmatchedImages, foreignScenes } = pairImagesToScenes(raw);
-    if (pairs.length && (unmatchedImages || foreignScenes)) {
-      log.image(
-        `image-seam: message ${id} — ${unmatchedImages} image(s) matched no scene hash, ${foreignScenes} non-uid scene tag(s) skipped`
-      );
-    }
+    const scan = pairImagesToScenes(raw);
+    const { pairs } = scan;
+    const report = unboundImageReport(raw, scan);
+    if (report) log.image(`image-seam: message ${id} — ${report}`);
     if (!pairs.length) return;
     let ok = 0;
     for (const { scene, url } of pairs) {

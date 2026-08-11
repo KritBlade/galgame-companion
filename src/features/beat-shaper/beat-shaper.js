@@ -247,8 +247,23 @@ async function onMessageEvent(messageId) {
       // ALWAYS printed, including the 0 case: "rolls=0" is the difference between "this reply had no
       // check" and "the roll rendering silently failed", which a conditional suffix would blur. Both
       // halves are named because rolls=3 alone cannot tell a fully-marked reply from an unmarked one.
-      ` rolls=${stats.rolls}(placed=${stats.rollsPlaced} unplaced=${stats.rollsUnplaced})`,
+      ` rolls=${stats.rolls}(placed=${stats.rollsPlaced} unplaced=${stats.rollsUnplaced})` +
+      // Only when it fired, because it is an EVENT rather than a census: the tail rescue MOVED the
+      // narrator's markup (core §0a). Silent, `scenes=1` would look like an ordinary bind and hide the
+      // fact that the image is anchored to the wrong beat — and that the reply broke its contract.
+      `${stats.imagesRehomed ? ` imagesRehomed=${stats.imagesRehomed} (were OUTSIDE <maintext>)` : ''}`,
     );
+    // A CARD-PROMPT defect, same class as the missing <roll/> markers below: the image is recovered and
+    // the stage is no longer blank, but it lands after the last beat instead of beside the beat it
+    // depicts. Warn so the placement is fixable rather than permanently papered over here.
+    if (stats.imagesRehomed) {
+      log.warn(
+        `beat-shaper msg=${id}: ${stats.imagesRehomed} <pic>/image block(s) were emitted OUTSIDE <maintext> ` +
+        '(in the tail, past the engine blocks) and were moved back in so they bind to a beat at all. ' +
+        'Un-rescued they would produce NO backdrop. Fix the narrator prompt: each <pic> belongs under the ' +
+        'sentence it depicts, inside the envelope — never bunched or trailing.',
+      );
+    }
     // A short/missing marker set is a CARD-PROMPT defect, not a companion one: the roll still shows,
     // but at the top instead of its moment. Warn so it is fixable, and name the count so it is obvious
     // whether the narrator skipped one marker or all of them.

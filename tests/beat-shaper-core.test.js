@@ -601,3 +601,73 @@ describe('repairTruncatedEnvelope (§4b)', () => {
     expect(shaped.text).toContain('Then she left.');
   });
 });
+
+// ── §0a TAIL RESCUE — image machinery emitted OUTSIDE <maintext> ────────────────────────────
+// Live 2026-08-11. Everything the shaper does operates on `inner`; the tail is untouched by design.
+// A <pic> emitted after </maintext> (past <combat_log>, <UpdateVariable>, the RES blocks) was therefore
+// invisible to the §3 census: zero images, zero scenes, and image-seam then had no scene whose hash
+// matched the rendered <img>. Nothing reached the background store and the stage rendered BLANK — for a
+// generated image that existed and loaded fine. Same envelope bug §4 fixed for rolls, image half.
+describe('§0a tail rescue — a <pic> outside the envelope still gets a backdrop', () => {
+  const TAIL = '<combat_log>\n[Flirt] on X — DC 5, RawDie 9 +2 = 11 → Success\n</combat_log>\n'
+    + '<RES_Variable>\n[]\n</RES_Variable>';
+
+  it('THE LIVE CASE: a RENDERED wrap in the tail is moved in and bound to a scene', () => {
+    const m = mint();
+    const raw = `<maintext>\n<p>b1</p>\n</maintext>\n${TAIL}\n${img(1)}`;
+    const r = shapeMessage(raw, m);
+    expect(r.changed).toBe(true);
+    expect(r.stats.imagesRehomed).toBe(1);
+    expect(r.stats.scenes).toBe(1);                       // was 0 — the whole defect
+    expect(r.text).toContain(nameFor(m.uid, 1));
+    // and it now lives INSIDE the envelope, which is the only reason §3 could see it
+    const inner = r.text.slice(r.text.indexOf('<maintext>'), r.text.indexOf('</maintext>'));
+    expect(inner).toContain(imgSrc(1));
+  });
+
+  it('a RAW <pic> in the tail is moved in too, and held back until mvu-helper renders it', () => {
+    const m = mint();
+    const raw = `<maintext>\n<p>b1</p>\n</maintext>\n${TAIL}\n<pic char="Mitsuki" prompt="x">`;
+    const r = shapeMessage(raw, m);
+    expect(r.stats.imagesRehomed).toBe(1);
+    // Rescuing ONLY the rendered form would leave this case failing exactly as before.
+    const inner = r.text.slice(r.text.indexOf('<maintext>'), r.text.indexOf('</maintext>'));
+    expect(inner).toContain('<pic char="Mitsuki"');
+    expect(r.stats.picsPending).toBe(true);               // §3b: bind on the next pass, not from a partial set
+    expect(r.stats.scenes).toBe(0);
+    expect(m.calls).toBe(0);                              // and no uid burned on a retry
+  });
+
+  it('IDEMPOTENT — re-shaping the rescued text moves nothing more and keeps the same scene', () => {
+    const m1 = mint();
+    const first = shapeMessage(`<maintext>\n<p>b1</p>\n</maintext>\n${TAIL}\n${img(1)}`, m1);
+    const m2 = stubMinter(m1.uid);
+    const second = shapeMessage(first.text, m2);
+    expect(second.stats.imagesRehomed).toBe(0);
+    expect(second.text).toContain(nameFor(m1.uid, 1));
+    expect(m2.calls).toBe(0);                             // identity recovered, not re-minted
+  });
+
+  it('an image ALREADY inside the envelope is left exactly where the narrator put it', () => {
+    const m = mint();
+    const r = shapeMessage(`<maintext>\n<p>b1</p>\n${img(1)}\n<p>b2</p>\n</maintext>\n${TAIL}`, m);
+    expect(r.stats.imagesRehomed).toBe(0);
+    expect(r.stats.scenes).toBe(1);
+  });
+
+  it('the engine blocks it stepped over are preserved verbatim — the tail is not collateral', () => {
+    const m = mint();
+    const r = shapeMessage(`<maintext>\n<p>b1</p>\n</maintext>\n${TAIL}\n${img(1)}`, m);
+    expect(r.text).toContain('<RES_Variable>');
+    expect(r.text).toContain('<combat_log>');
+    expect(r.text).not.toContain('<combat_log>\n</combat_log>');   // contents intact, not emptied
+  });
+
+  it('several tail images keep their order, so scene numbers follow the narrator\'s', () => {
+    const m = mint();
+    const r = shapeMessage(`<maintext>\n<p>b1</p>\n<p>b2</p>\n</maintext>\n${TAIL}\n${img(1)}\n${img(2)}`, m);
+    expect(r.stats.imagesRehomed).toBe(2);
+    expect(r.stats.scenes).toBe(2);
+    expect(r.text.indexOf(nameFor(m.uid, 1))).toBeLessThan(r.text.indexOf(nameFor(m.uid, 2)));
+  });
+});

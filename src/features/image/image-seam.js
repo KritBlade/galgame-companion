@@ -15,7 +15,7 @@
 import { DOC, topWindow, log } from '../../env.js';
 import { uidOfSceneName, currentChatKey } from '../beat-shaper/index.js';
 import {
-  staleSiblingKeys, deadBackgroundKeys, pairImagesToScenes, decideForceReconcile,
+  staleSiblingKeys, deadBackgroundKeys, pairImagesToScenes, unboundImageReport, decideForceReconcile,
 } from './image-seam-core.js';
 
 // ── galgame constants (do NOT drift — re-verify on an upstream bump, GCP §10.4 §5) ──
@@ -139,17 +139,16 @@ async function pruneSceneSiblings(uid, keep) {
 async function processMessage(id) {
   const raw = rawMessage(id);
   if (!raw) return;
-  const { pairs, unmatchedImages, foreignScenes } = pairImagesToScenes(raw);
-  // Both counts are EXPECTED mid-flight (a message the beat-shaper has not shaped yet has foreign
+  const scan = pairImagesToScenes(raw);
+  const { pairs } = scan;
+  // Unmatched counts are EXPECTED mid-flight (a message the beat-shaper has not shaped yet has foreign
   // or no scene names, and its images match nothing) — the shaper's re-render fires
-  // CHARACTER_MESSAGE_RENDERED and this scan repeats. They are only worth surfacing once the
-  // message HAS bound scenes, where a leftover means a real mismatch between the two modules.
-  if (pairs.length && (unmatchedImages || foreignScenes)) {
-    log.image(
-      `image-seam: message ${id} — ${unmatchedImages} image(s) matched no scene hash` +
-        `, ${foreignScenes} non-uid scene tag(s) skipped`,
-    );
-  }
+  // CHARACTER_MESSAGE_RENDERED and this scan repeats. unboundImageReport() owns which of those is worth
+  // saying out loud; it withholds only while a producer is demonstrably still working, so the TOTAL
+  // orphan case (every image unbound, stage blank) now reports instead of falling through the old
+  // `pairs.length &&` gate in silence.
+  const report = unboundImageReport(raw, scan);
+  if (report) log.image(`image-seam: message ${id} — ${report}`);
   if (!pairs.length) return; // transient (pre-shape / no images) — write nothing AND prune nothing
   let ok = 0;
   for (const { scene, url } of pairs) {
