@@ -393,7 +393,7 @@ describe('gametxt→maintext bridge + engine display-noise', () => {
   });
   it('strips <bgimg> prompt blocks (would display via ST renderer p-wrap)', () => {
     const raw =
-      '<gametxt>\n<background scene="教室" /><bgimg>high school classroom, morning light</bgimg>\n<p>beat</p>\n</gametxt>';
+      '<gametxt>\n<background scene="教室" /><bgimg>private academy classroom, morning light</bgimg>\n<p>beat</p>\n</gametxt>';
     const r = shapeMessage(raw, mint());
     expect(r.stats.strippedBgimg).toBe(1);
     expect(r.text).not.toContain('<bgimg>');
