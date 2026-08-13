@@ -1,4 +1,4 @@
-// galgame-companion · style — small CSS overrides injected into the parent document. v0.3
+// galgame-companion · style — small CSS overrides injected into the parent document. v0.4
 // Only cosmetic nudges that a dictionary swap can't express. Keep tiny; anything galgame
 // renames simply stops matching (graceful).
 
@@ -68,6 +68,36 @@ const CSS = `
    the buttons at the seeded scale. Tuned for the default scale; at a much larger dialogue-box scale
    the top-right pills still show location/time. Can't edit galgame (CDN-imported untouched). */
 #gal-global-overlay .gal-dialog-layer { width: calc(100% - 88px) !important; }
+
+/* Background Manager patch (background-manager.js) — select mode + the recency sort's affordances.
+   Everything is scoped under galgame's backgrounds pane and keyed on OUR classes, so with select
+   mode off the panel renders exactly as galgame drew it. */
+.companion-bg-selectbar {
+  display: none; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 0 0 14px; padding: 8px 12px; border-radius: 8px;
+  background: rgba(13, 110, 253, 0.08); border: 1px solid rgba(13, 110, 253, 0.35);
+}
+.companion-bg-selecting .companion-bg-selectbar { display: flex; }
+.companion-bg-selected-count { font-weight: 700; margin-right: auto; }
+.companion-bg-selectbar .companion-bg-danger { background: #dc3545; color: #fff; border-color: #dc3545; }
+
+/* The checkbox is a pseudo-element on galgame's own card — no node is injected into its markup, so
+   there is nothing to clean up when select mode is switched off. .gal-bg-card is already
+   position:relative (it anchors galgame's own hover actions the same way). */
+.companion-bg-selecting .gal-bg-card::after {
+  content: ''; position: absolute; top: 8px; left: 8px; z-index: 4;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9); border: 2px solid rgba(0, 0, 0, 0.35);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+.companion-bg-selecting .gal-bg-card.companion-bg-picked::after {
+  content: '\\2713'; color: #fff; font-size: 14px; font-weight: 700; line-height: 20px; text-align: center;
+  background: #0d6efd; border-color: #0d6efd;
+}
+.companion-bg-selecting .gal-bg-card.companion-bg-picked { outline: 3px solid #0d6efd; outline-offset: -3px; }
+/* Select mode swallows clicks inside the grid (capture phase), so galgame's per-card delete/transfer
+   buttons could not fire even if they were reachable. Hide them rather than leave dead controls up. */
+.companion-bg-selecting .gal-bg-actions { display: none !important; }
 
 /* Overlay anti-collapse (galgame upstream structural quirk, proven live 2026-07-16):
    galgame appends #gal-global-overlay as a flex child of ST's #chat (display:flex;

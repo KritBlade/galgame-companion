@@ -5,7 +5,7 @@ rides on the untouched galgame plugin as a third independent entry in TH's scrip
 (alongside galgame + [MVU](https://github.com/MagicalAstrogy/MagVarUpdate)). Zero upstream coupling:
 galgame keeps auto-updating; anything this script can't find it silently skips.
 
-Four capabilities:
+Five capabilities:
 
 1. **i18n overlay** — translates galgame's Chinese GUI via a MutationObserver + exact-match
    dictionary (only explicit hits are replaced; new upstream strings just stay Chinese).
@@ -18,6 +18,11 @@ Four capabilities:
    images into galgame's own background library (`saveBackground`, keyed by the
    nearest-preceding `<background scene>`), and flips `Preferences.ForceImageType` on
    immersive enter/exit so every image matches the user's chosen aspect.
+5. **Background Manager patch** — the seam fills galgame's library with unique machine-minted scene
+   names, which makes its alphabetical grid unbrowsable; this sorts the cards newest-first by each
+   record's `lastModified` and adds a select mode (checkboxes, select-all, one confirm, one
+   transaction) so culling a batch isn't one dialog and one re-render per image. DOM-level over
+   galgame's own markup — its card nodes are moved, never rebuilt, so its handlers stay bound.
 
 ## Install (Tavern Helper script library)
 
@@ -69,9 +74,15 @@ the IndexedDB schema. After each `git pull` of the galgame clone, run this loop:
    (skip story text / ST presets / TH's own UI / TTS voice names), then flip `HARVEST` back to `false`.
 2. **Spot-check the two anchor selectors** the companion hooks: `.gal-bottom-toolbar` (button injection)
    and `#gal-global-overlay` (immersive-mode detection). If renamed upstream, update and re-test.
-3. **Verify the image-seam DB contract** — object store `backgrounds` in `GalgameUIPluginDB` and the
-   record shape (`{id, sceneName, imageUrl, packId, …}`). Bump of galgame's `DB_VERSION` = re-verify
-   `image-seam.js` still writes a compatible record.
+3. **Verify the background-library DB contract** — object store `backgrounds` in `GalgameUIPluginDB`
+   and the record shape (`{id, sceneName, imageUrl, packId, lastModified, …}`), all named once in
+   `src/features/image/background-store.js`. Bump of galgame's `DB_VERSION` = re-verify `image-seam.js`
+   still writes a compatible record, and that `lastModified` is still what the Background Manager
+   patch can sort on.
+4. **Spot-check the Background Manager pane selectors** — `.gal-tab-pane[data-pane="backgrounds"]`,
+   `.gal-bg-grid`, `.gal-bg-card[data-scene]`, `.gal-pane-header/-stat/-actions`
+   (`src/features/image/background-manager.js`). A rename degrades to "the patch does not apply":
+   the grid falls back to galgame's alphabetical order and the Select button is missing.
 
 ## Design docs
 

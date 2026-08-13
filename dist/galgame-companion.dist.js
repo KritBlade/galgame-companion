@@ -1,9 +1,9 @@
-// galgame-companion v0.6.22
+// galgame-companion v0.7.0
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.6.22";
-  var BUILD = "b47eac3-dirty @2026-08-11T21:05:24.851Z";
+  var VERSION = "0.7.0";
+  var BUILD = "b3da9b5-dirty @2026-08-13T20:22:30.866Z";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -271,6 +271,36 @@
    the buttons at the seeded scale. Tuned for the default scale; at a much larger dialogue-box scale
    the top-right pills still show location/time. Can't edit galgame (CDN-imported untouched). */
 #gal-global-overlay .gal-dialog-layer { width: calc(100% - 88px) !important; }
+
+/* Background Manager patch (background-manager.js) — select mode + the recency sort's affordances.
+   Everything is scoped under galgame's backgrounds pane and keyed on OUR classes, so with select
+   mode off the panel renders exactly as galgame drew it. */
+.companion-bg-selectbar {
+  display: none; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 0 0 14px; padding: 8px 12px; border-radius: 8px;
+  background: rgba(13, 110, 253, 0.08); border: 1px solid rgba(13, 110, 253, 0.35);
+}
+.companion-bg-selecting .companion-bg-selectbar { display: flex; }
+.companion-bg-selected-count { font-weight: 700; margin-right: auto; }
+.companion-bg-selectbar .companion-bg-danger { background: #dc3545; color: #fff; border-color: #dc3545; }
+
+/* The checkbox is a pseudo-element on galgame's own card — no node is injected into its markup, so
+   there is nothing to clean up when select mode is switched off. .gal-bg-card is already
+   position:relative (it anchors galgame's own hover actions the same way). */
+.companion-bg-selecting .gal-bg-card::after {
+  content: ''; position: absolute; top: 8px; left: 8px; z-index: 4;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9); border: 2px solid rgba(0, 0, 0, 0.35);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+.companion-bg-selecting .gal-bg-card.companion-bg-picked::after {
+  content: '\\2713'; color: #fff; font-size: 14px; font-weight: 700; line-height: 20px; text-align: center;
+  background: #0d6efd; border-color: #0d6efd;
+}
+.companion-bg-selecting .gal-bg-card.companion-bg-picked { outline: 3px solid #0d6efd; outline-offset: -3px; }
+/* Select mode swallows clicks inside the grid (capture phase), so galgame's per-card delete/transfer
+   buttons could not fire even if they were reachable. Hide them rather than leave dead controls up. */
+.companion-bg-selecting .gal-bg-actions { display: none !important; }
 
 /* Overlay anti-collapse (galgame upstream structural quirk, proven live 2026-07-16):
    galgame appends #gal-global-overlay as a flex child of ST's #chat (display:flex;
@@ -2206,9 +2236,83 @@ ${cot}` : cot;
     return { write: true, to: on, reason: `stored ${value} but galgame is ${on ? "OPEN" : "CLOSED"}` };
   }
 
-  // src/features/image/image-seam.js
+  // src/features/image/background-store.js
   var DB_NAME = "GalgameUIPluginDB";
   var STORE = "backgrounds";
+  function openBackgroundDb() {
+    return new Promise((resolve, reject) => {
+      let req;
+      try {
+        req = topWindow.indexedDB.open(DB_NAME);
+      } catch (e) {
+        reject(e);
+        return;
+      }
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+      req.onblocked = () => log.warn("background-store: IndexedDB open blocked (another tab upgrading?)");
+    });
+  }
+  async function withLibrary(why, body) {
+    let db;
+    try {
+      db = await openBackgroundDb();
+    } catch (e) {
+      log.warn(`background-store: ${why} — could not open ${DB_NAME}:`, e);
+      return null;
+    }
+    try {
+      if (!db.objectStoreNames.contains(STORE)) {
+        log.error(`background-store: '${STORE}' store missing in ${DB_NAME} — galgame schema drift; ${why} aborted`);
+        return null;
+      }
+      return await body(db);
+    } catch (e) {
+      log.warn(`background-store: ${why} failed:`, e);
+      return null;
+    } finally {
+      try {
+        db.close();
+      } catch (e) {
+      }
+    }
+  }
+  function readAllBackgroundKeys(why = "key read") {
+    return withLibrary(`${why} · key read`, (db) => new Promise((resolve, reject) => {
+      const r = db.transaction([STORE], "readonly").objectStore(STORE).getAllKeys();
+      r.onsuccess = () => resolve(r.result || []);
+      r.onerror = () => reject(r.error);
+    }));
+  }
+  function readBackgroundStamps(why = "timestamp read") {
+    return withLibrary(`${why} · timestamp read`, (db) => new Promise((resolve, reject) => {
+      const r = db.transaction([STORE], "readonly").objectStore(STORE).getAll();
+      r.onsuccess = () => {
+        const stamps = /* @__PURE__ */ new Map();
+        for (const rec of r.result || []) {
+          if (!rec || typeof rec.id !== "string") continue;
+          const at = Date.parse(rec.lastModified);
+          if (Number.isFinite(at)) stamps.set(rec.id, at);
+        }
+        resolve(stamps);
+      };
+      r.onerror = () => reject(r.error);
+    }));
+  }
+  function deleteBackgroundKeys(keys, why = "delete") {
+    const list = (Array.isArray(keys) ? keys : []).filter((k) => typeof k === "string" && k);
+    if (!list.length) return Promise.resolve([]);
+    return withLibrary(`${why} · delete of ${list.length} background(s)`, (db) => new Promise((resolve, reject) => {
+      const tx = db.transaction([STORE], "readwrite");
+      const store = tx.objectStore(STORE);
+      tx.oncomplete = () => resolve(list);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("transaction aborted"));
+      for (const k of list) store.delete(k);
+    }));
+  }
+
+  // src/features/image/image-seam.js
   var CURRENT_PACK_LS = "galgame-ui-plugin_current_pack";
   var DEFAULT_PACK_ID = "pack_default";
   var OVERLAY_ID = "gal-global-overlay";
@@ -2222,31 +2326,17 @@ ${cot}` : cot;
       return DEFAULT_PACK_ID;
     }
   }
-  function openDb() {
-    return new Promise((resolve, reject) => {
-      let req;
-      try {
-        req = topWindow.indexedDB.open(DB_NAME);
-      } catch (e) {
-        reject(e);
-        return;
-      }
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-      req.onblocked = () => log.warn("image-seam: IndexedDB open blocked (another tab upgrading?)");
-    });
-  }
   async function writeBackground(sceneName2, imageUrl) {
     let db;
     try {
-      db = await openDb();
+      db = await openBackgroundDb();
     } catch (e) {
       log.error("image-seam: could not open galgame DB — write skipped:", e);
       return false;
     }
     try {
       if (!db.objectStoreNames.contains(STORE)) {
-        log.error(`image-seam: '${STORE}' store missing in ${DB_NAME} — galgame schema drift; aborting write`);
+        log.error(`image-seam: '${STORE}' store missing — galgame schema drift; aborting write`);
         return false;
       }
       await new Promise((resolve, reject) => {
@@ -2287,40 +2377,13 @@ ${cot}` : cot;
     }
   }
   async function pruneSceneSiblings(uid, keep) {
-    let db;
-    try {
-      db = await openDb();
-    } catch (e) {
-      log.warn(`image-seam: prune open failed (uid ${uid}):`, e);
-      return 0;
-    }
-    try {
-      if (!db.objectStoreNames.contains(STORE)) return 0;
-      const keys = await new Promise((resolve, reject) => {
-        const tx = db.transaction([STORE], "readonly");
-        const r = tx.objectStore(STORE).getAllKeys();
-        r.onsuccess = () => resolve(r.result || []);
-        r.onerror = () => reject(r.error);
-      });
-      const stale = staleSiblingKeys(keys, uid, keep);
-      if (!stale.length) return 0;
-      await new Promise((resolve, reject) => {
-        const tx = db.transaction([STORE], "readwrite");
-        const store = tx.objectStore(STORE);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-        for (const k of stale) store.delete(k);
-      });
-      return stale.length;
-    } catch (e) {
-      log.warn(`image-seam: pruneSceneSiblings(${uid}) failed:`, e);
-      return 0;
-    } finally {
-      try {
-        db.close();
-      } catch (e) {
-      }
-    }
+    const why = `image-seam sibling prune (uid ${uid})`;
+    const keys = await readAllBackgroundKeys(why);
+    if (!keys) return 0;
+    const stale = staleSiblingKeys(keys, uid, keep);
+    if (!stale.length) return 0;
+    const deleted = await deleteBackgroundKeys(stale, why);
+    return deleted ? deleted.length : 0;
   }
   async function processMessage(id) {
     const raw = rawMessage2(id);
@@ -2399,40 +2462,12 @@ ${cot}` : cot;
     }
     const live = liveSceneNames();
     if (!live) return 0;
-    let db;
-    try {
-      db = await openDb();
-    } catch (e) {
-      log.warn("image-seam: orphan sweep open failed:", e);
-      return 0;
-    }
-    try {
-      if (!db.objectStoreNames.contains(STORE)) return 0;
-      const keys = await new Promise((resolve, reject) => {
-        const tx = db.transaction([STORE], "readonly");
-        const r = tx.objectStore(STORE).getAllKeys();
-        r.onsuccess = () => resolve(r.result || []);
-        r.onerror = () => reject(r.error);
-      });
-      const dead = deadBackgroundKeys(keys, live, chatKey);
-      if (!dead.length) return 0;
-      await new Promise((resolve, reject) => {
-        const tx = db.transaction([STORE], "readwrite");
-        const store = tx.objectStore(STORE);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-        for (const k of dead) store.delete(k);
-      });
-      return dead.length;
-    } catch (e) {
-      log.warn("image-seam: orphan sweep failed:", e);
-      return 0;
-    } finally {
-      try {
-        db.close();
-      } catch (e) {
-      }
-    }
+    const keys = await readAllBackgroundKeys("image-seam orphan sweep");
+    if (!keys) return 0;
+    const dead = deadBackgroundKeys(keys, live, chatKey);
+    if (!dead.length) return 0;
+    const deleted = await deleteBackgroundKeys(dead, "image-seam orphan sweep");
+    return deleted ? deleted.length : 0;
   }
   var SWEEP_DEBOUNCE_MS = 2e3;
   var sweepTimer = null;
@@ -2824,6 +2859,219 @@ ${cot}` : cot;
     log.image("image-regen active");
   }
 
+  // src/features/image/background-manager-core.js
+  function sortSceneNamesByRecency(sceneNames, stamps) {
+    const names = Array.isArray(sceneNames) ? sceneNames : [];
+    const stampOf = (name) => {
+      const at = stamps && typeof stamps.get === "function" ? stamps.get(name) : void 0;
+      return Number.isFinite(at) ? at : null;
+    };
+    return names.map((name, position) => ({ name, position, at: stampOf(name) })).sort((a, b) => {
+      if (a.at === null && b.at === null) return a.position - b.position;
+      if (a.at === null) return 1;
+      if (b.at === null) return -1;
+      if (a.at !== b.at) return b.at - a.at;
+      return a.position - b.position;
+    }).map((entry) => entry.name);
+  }
+  function restatedCount(text, count) {
+    const line = String(text == null ? "" : text);
+    if (!Number.isFinite(count) || count < 0) return line;
+    if (!/\d/.test(line)) return line;
+    return line.replace(/\d+/, String(count));
+  }
+
+  // src/features/image/background-manager.js
+  var PANE_SEL = '.gal-tab-pane[data-pane="backgrounds"]';
+  var GRID_SEL = ".gal-bg-grid";
+  var CARD_SEL = ".gal-bg-card";
+  var HEADER_SEL = ".gal-pane-header";
+  var ACTIONS_SEL = ".gal-pane-actions";
+  var STAT_SEL = ".gal-pane-stat";
+  var GAL_BTN_CLASS = "gal-action-btn gal-pane-btn";
+  var READY_CLASS = "companion-bg-ready";
+  var SELECTING_CLASS = "companion-bg-selecting";
+  var PICKED_CLASS = "companion-bg-picked";
+  var TOGGLE_CLASS = "companion-bg-select-toggle";
+  var BAR_CLASS = "companion-bg-selectbar";
+  var COUNT_CLASS = "companion-bg-selected-count";
+  function cardsIn(pane) {
+    return Array.from(pane.querySelectorAll(CARD_SEL));
+  }
+  function pickedIn(pane) {
+    return cardsIn(pane).filter((card) => card.classList.contains(PICKED_CLASS));
+  }
+  function sceneOf(card) {
+    return card.getAttribute("data-scene") || "";
+  }
+  async function sortByRecency(pane) {
+    const grid = pane.querySelector(GRID_SEL);
+    if (!grid) return;
+    const stamps = await readBackgroundStamps("Background Manager recency sort");
+    if (!stamps) {
+      log.warn("background-manager: the library timestamps could not be read — the panel keeps galgame's alphabetical order");
+      return;
+    }
+    const cardByScene = /* @__PURE__ */ new Map();
+    for (const card of cardsIn(pane)) cardByScene.set(sceneOf(card), card);
+    const order = sortSceneNamesByRecency(Array.from(cardByScene.keys()), stamps);
+    const ordered = DOC.createDocumentFragment();
+    let dated = 0;
+    for (const scene of order) {
+      const card = cardByScene.get(scene);
+      if (!card) continue;
+      const at = stamps.get(scene);
+      if (Number.isFinite(at)) {
+        card.title = new Date(at).toLocaleString();
+        dated++;
+      }
+      ordered.appendChild(card);
+    }
+    grid.appendChild(ordered);
+    log.image(`background-manager: ${order.length} background(s) sorted newest-first (${dated} carried a timestamp)`);
+  }
+  function refreshSelectedCount(pane) {
+    const label = pane.querySelector("." + COUNT_CLASS);
+    if (label) label.textContent = `${pickedIn(pane).length} selected`;
+  }
+  function setSelecting(pane, on) {
+    pane.classList.toggle(SELECTING_CLASS, on);
+    if (!on) for (const card of pickedIn(pane)) card.classList.remove(PICKED_CLASS);
+    const toggle = pane.querySelector("." + TOGGLE_CLASS);
+    if (toggle) {
+      const text = toggle.querySelector("span");
+      if (text) text.textContent = on ? "Exit select" : "Select";
+    }
+    refreshSelectedCount(pane);
+  }
+  function restateHeader(pane) {
+    const stat = pane.querySelector(STAT_SEL);
+    if (!stat) return;
+    stat.textContent = restatedCount(stat.textContent, cardsIn(pane).length);
+  }
+  async function deleteSelected(pane) {
+    const picked = pickedIn(pane);
+    if (!picked.length) return;
+    const scenes = picked.map(sceneOf).filter(Boolean);
+    if (scenes.length !== picked.length) {
+      log.warn(`background-manager: ${picked.length - scenes.length} selected card(s) carry no scene name — batch delete refused`);
+      warnToast("Some selected backgrounds have no scene name; nothing was deleted.");
+      return;
+    }
+    const ok = topWindow.confirm(
+      `Delete ${scenes.length} background${scenes.length === 1 ? "" : "s"}? This cannot be undone.`
+    );
+    if (!ok) return;
+    const deleted = await deleteBackgroundKeys(scenes, "Background Manager batch delete");
+    if (!deleted) {
+      warnToast(`Could not delete ${scenes.length} background(s) — galgame's image library did not accept the change.`);
+      return;
+    }
+    const gone = new Set(deleted);
+    for (const card of picked) if (gone.has(sceneOf(card))) card.remove();
+    restateHeader(pane);
+    setSelecting(pane, false);
+    log.image(`background-manager: deleted ${deleted.length} background(s) from the library`);
+  }
+  function buildSelectBar(pane) {
+    const bar = DOC.createElement("div");
+    bar.className = BAR_CLASS;
+    const count = DOC.createElement("span");
+    count.className = COUNT_CLASS;
+    count.textContent = "0 selected";
+    bar.appendChild(count);
+    const button = (label, action, extra) => {
+      const el = DOC.createElement("button");
+      el.type = "button";
+      el.className = GAL_BTN_CLASS + (extra ? " " + extra : "");
+      el.dataset.companionAction = action;
+      el.textContent = label;
+      bar.appendChild(el);
+      return el;
+    };
+    button("Select all", "all");
+    button("Clear", "none");
+    button("Delete selected", "delete", "companion-bg-danger");
+    button("Done", "done");
+    bar.addEventListener("click", (event) => {
+      const pressed = event.target.closest("[data-companion-action]");
+      if (!pressed) return;
+      event.stopPropagation();
+      switch (pressed.dataset.companionAction) {
+        case "all":
+          for (const card of cardsIn(pane)) card.classList.add(PICKED_CLASS);
+          refreshSelectedCount(pane);
+          break;
+        case "none":
+          for (const card of pickedIn(pane)) card.classList.remove(PICKED_CLASS);
+          refreshSelectedCount(pane);
+          break;
+        case "delete":
+          deleteSelected(pane).catch((e) => log.warn("background-manager: batch delete rejected:", e));
+          break;
+        case "done":
+          setSelecting(pane, false);
+          break;
+        default:
+          break;
+      }
+    });
+    return bar;
+  }
+  function bindCardPicking(pane) {
+    const grid = pane.querySelector(GRID_SEL);
+    if (!grid) return;
+    grid.addEventListener("click", (event) => {
+      if (!pane.classList.contains(SELECTING_CLASS)) return;
+      const card = event.target.closest(CARD_SEL);
+      if (!card || !grid.contains(card)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      card.classList.toggle(PICKED_CLASS);
+      refreshSelectedCount(pane);
+    }, true);
+  }
+  function patchPane(pane) {
+    if (pane.classList.contains(READY_CLASS)) return;
+    pane.classList.add(READY_CLASS);
+    const actions = pane.querySelector(HEADER_SEL + " " + ACTIONS_SEL);
+    if (actions) {
+      const toggle = DOC.createElement("button");
+      toggle.type = "button";
+      toggle.className = `${GAL_BTN_CLASS} ${TOGGLE_CLASS}`;
+      toggle.innerHTML = '<i class="fa-solid fa-square-check"></i> <span>Select</span>';
+      toggle.addEventListener("click", (event) => {
+        event.stopPropagation();
+        setSelecting(pane, !pane.classList.contains(SELECTING_CLASS));
+      });
+      actions.insertBefore(toggle, actions.firstChild);
+      const header = pane.querySelector(HEADER_SEL);
+      if (header && header.parentNode) header.parentNode.insertBefore(buildSelectBar(pane), header.nextSibling);
+    } else {
+      log.warn(`background-manager: no "${ACTIONS_SEL}" in the backgrounds pane — select mode not injected (galgame markup drift?)`);
+    }
+    bindCardPicking(pane);
+    sortByRecency(pane).catch((e) => log.warn("background-manager: recency sort rejected:", e));
+  }
+  function startBackgroundManager() {
+    if (!DOC || !DOC.body) return setTimeout(startBackgroundManager, 200);
+    let scheduled2 = false;
+    const patchAll = () => {
+      for (const pane of DOC.querySelectorAll(`${PANE_SEL}:not(.${READY_CLASS})`)) patchPane(pane);
+    };
+    const observer2 = new MutationObserver(() => {
+      if (scheduled2) return;
+      scheduled2 = true;
+      requestAnimationFrame(() => {
+        scheduled2 = false;
+        patchAll();
+      });
+    });
+    observer2.observe(DOC.body, { childList: true, subtree: true });
+    patchAll();
+    log.image("background-manager active");
+  }
+
   // src/features/galgame-bridge/choices.js
   var INJECT_KEY = "galgame-companion-choices";
   var OPTION_SHEET_KEY = "sheet_gal_companion_options";
@@ -3206,5 +3454,6 @@ ${cot}` : cot;
   startNextBlock();
   startImageViewer();
   startImageRegen();
+  startBackgroundManager();
   log.info(`v${VERSION} ready`);
 })();

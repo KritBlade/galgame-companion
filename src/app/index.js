@@ -1,5 +1,5 @@
 // ============================================================
-// galgame-companion — School v3's HUD layer over bigmalove/galgame. v0.2
+// galgame-companion — School v3's HUD layer over bigmalove/galgame. v0.3
 // ------------------------------------------------------------
 // A Tavern-Helper script (SAME runtime as galgame — NOT an ST extension). Third
 // independent entry in TH's script library alongside galgame + mvu; reaches galgame's
@@ -16,7 +16,7 @@ import { injectStyle } from './style.js';
 import { startI18n } from '../features/i18n/index.js';
 import { startToolbar } from '../features/menu/index.js';
 import { startFullscreenGuard, startGeneratingGuard } from '../features/galgame-quirks/index.js';
-import { startImageSeam, startImageViewer, startImageRegen } from '../features/image/index.js';
+import { startImageSeam, startImageViewer, startImageRegen, startBackgroundManager } from '../features/image/index.js';
 import { startBeatShaper } from '../features/beat-shaper/index.js';
 import { startChoices, startLocationTimeBridge, startNextBlock } from '../features/galgame-bridge/index.js';
 
@@ -63,6 +63,7 @@ startChoices();            // A2 all-genre: inject a <choices> format instructio
 startNextBlock();          // surface the engine's manual Next-Block advance (PendingState.BlockDone) top-right, driving the real stat-menu checkbox
 startImageViewer();        // top-right button → near-full-viewport lightbox of galgame's current backdrop image
 startImageRegen();         // top-right button (under 🖼) → click mvu-helper's regen control for the current backdrop
+startBackgroundManager();  // galgame's Background Manager pane: sort newest-first + bulk select/delete (our unique scene names made its A-Z order useless)
 // G3: StatusMenu bridge wires into menu-modal.js
 // G4b: image-seam writer (saveBackground keyed by nearest-preceding <background scene>)
 //      + Preferences.ForceImageType flip on immersive enter/exit

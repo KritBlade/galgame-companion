@@ -1,5 +1,5 @@
 // galgame-companion · image-seam (G4b) — feed mvu-helper's generated images into galgame's own
-// backdrop library, and flip the ForceImageType latch on immersive enter/exit. GCP §10.3 / VPP §3. v0.6
+// backdrop library, and flip the ForceImageType latch on immersive enter/exit. GCP §10.3 / VPP §3. v0.7
 //
 // PIPELINE: the narrator writes `<background scene="X">` beats; mvu-helper draws each `<pic>` and
 // stamps `<span class="auto-img-wrap"><img src="…"></span>` into the message (then emits
@@ -17,10 +17,13 @@ import { uidOfSceneName, currentChatKey } from '../beat-shaper/index.js';
 import {
   staleSiblingKeys, deadBackgroundKeys, pairImagesToScenes, unboundImageReport, decideForceReconcile,
 } from './image-seam-core.js';
+import {
+  STORE, openBackgroundDb, readAllBackgroundKeys, deleteBackgroundKeys,
+} from './background-store.js';
 
 // ── galgame constants (do NOT drift — re-verify on an upstream bump, GCP §10.4 §5) ──
-const DB_NAME = 'GalgameUIPluginDB';
-const STORE = 'backgrounds';
+// WHICH database, and how it is opened/read/deleted from, now lives in background-store.js — the
+// Background Manager patch needs the same library, and one name for one store is the point.
 const CURRENT_PACK_LS = 'galgame-ui-plugin_current_pack';
 const DEFAULT_PACK_ID = 'pack_default';
 const OVERLAY_ID = 'gal-global-overlay';
@@ -35,26 +38,14 @@ function currentPackId() {
   catch (e) { log.warn('image-seam: could not read current pack id (default):', e); return DEFAULT_PACK_ID; }
 }
 
-// Open galgame's DB WITHOUT a version arg — NEVER trigger an upgrade (upstream owns the schema;
-// opening with our own version would corrupt/downgrade theirs). GCP §10.3 fragility guard.
-function openDb() {
-  return new Promise((resolve, reject) => {
-    let req;
-    try { req = topWindow.indexedDB.open(DB_NAME); } catch (e) { reject(e); return; }
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-    req.onblocked = () => log.warn('image-seam: IndexedDB open blocked (another tab upgrading?)');
-  });
-}
-
 // Upsert one scene→url background, mirroring galgame's saveBackground() record shape exactly.
 async function writeBackground(sceneName, imageUrl) {
   let db;
-  try { db = await openDb(); }
+  try { db = await openBackgroundDb(); }
   catch (e) { log.error('image-seam: could not open galgame DB — write skipped:', e); return false; }
   try {
     if (!db.objectStoreNames.contains(STORE)) {
-      log.error(`image-seam: '${STORE}' store missing in ${DB_NAME} — galgame schema drift; aborting write`);
+      log.error(`image-seam: '${STORE}' store missing — galgame schema drift; aborting write`);
       return false;
     }
     await new Promise((resolve, reject) => {
@@ -107,33 +98,16 @@ function rawMessage(id) {
 // live 2026-07-28). The caller guarantees keep is non-empty (we skip the prune entirely on a transient
 // empty pass, so we can't wipe good backdrops mid-stream).
 async function pruneSceneSiblings(uid, keep) {
-  let db;
-  try { db = await openDb(); }
-  catch (e) { log.warn(`image-seam: prune open failed (uid ${uid}):`, e); return 0; }
-  try {
-    if (!db.objectStoreNames.contains(STORE)) return 0;
-    const keys = await new Promise((resolve, reject) => {
-      const tx = db.transaction([STORE], 'readonly');
-      const r = tx.objectStore(STORE).getAllKeys();
-      r.onsuccess = () => resolve(r.result || []);
-      r.onerror = () => reject(r.error);
-    });
-    const stale = staleSiblingKeys(keys, uid, keep);
-    if (!stale.length) return 0;
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction([STORE], 'readwrite');
-      const store = tx.objectStore(STORE);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-      for (const k of stale) store.delete(k);
-    });
-    return stale.length;
-  } catch (e) {
-    log.warn(`image-seam: pruneSceneSiblings(${uid}) failed:`, e);
-    return 0;
-  } finally {
-    try { db.close(); } catch (e) { /* EXPECTED: closing an already-closing db is harmless */ }
-  }
+  const why = `image-seam sibling prune (uid ${uid})`;
+  const keys = await readAllBackgroundKeys(why);
+  // null = the library could not be read (background-store logged why). NOT the same as "it holds
+  // nothing": staleSiblingKeys over an empty list deletes nothing either way, but the distinction is
+  // the reason this returns early instead of pretending it swept a library it never saw.
+  if (!keys) return 0;
+  const stale = staleSiblingKeys(keys, uid, keep);
+  if (!stale.length) return 0;
+  const deleted = await deleteBackgroundKeys(stale, why);
+  return deleted ? deleted.length : 0;
 }
 
 async function processMessage(id) {
@@ -251,33 +225,12 @@ async function sweepOrphanBackgrounds() {
   }
   const live = liveSceneNames();
   if (!live) return 0; // transient/empty read — see liveSceneNames()
-  let db;
-  try { db = await openDb(); }
-  catch (e) { log.warn('image-seam: orphan sweep open failed:', e); return 0; }
-  try {
-    if (!db.objectStoreNames.contains(STORE)) return 0;
-    const keys = await new Promise((resolve, reject) => {
-      const tx = db.transaction([STORE], 'readonly');
-      const r = tx.objectStore(STORE).getAllKeys();
-      r.onsuccess = () => resolve(r.result || []);
-      r.onerror = () => reject(r.error);
-    });
-    const dead = deadBackgroundKeys(keys, live, chatKey);
-    if (!dead.length) return 0;
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction([STORE], 'readwrite');
-      const store = tx.objectStore(STORE);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-      for (const k of dead) store.delete(k);
-    });
-    return dead.length;
-  } catch (e) {
-    log.warn('image-seam: orphan sweep failed:', e);
-    return 0;
-  } finally {
-    try { db.close(); } catch (e) { /* EXPECTED: closing an already-closing db is harmless */ }
-  }
+  const keys = await readAllBackgroundKeys('image-seam orphan sweep');
+  if (!keys) return 0; // library unreadable — background-store logged why; sweeping blind is not an option
+  const dead = deadBackgroundKeys(keys, live, chatKey);
+  if (!dead.length) return 0;
+  const deleted = await deleteBackgroundKeys(dead, 'image-seam orphan sweep');
+  return deleted ? deleted.length : 0;
 }
 
 // Debounced so a multi-message delete (or a chat switch that fires several events) sweeps once, and so
