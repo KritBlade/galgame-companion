@@ -15,9 +15,18 @@ const root = dirname(fileURLToPath(import.meta.url));
 const isWatch = process.argv.includes('--watch');
 
 // Per-BUILD identity, stamped into the bundle so the running code can name itself (env.js BUILD).
-// git sha + a dirty flag + the build time: the sha says which commit, `-dirty` says "plus
-// uncommitted edits" (the normal dev-loop state), and the time separates two builds of the same
-// dirty tree — which is exactly the case that was indistinguishable before.
+// git sha + a dirty flag: the sha says which commit, `-dirty` says "plus uncommitted edits".
+//
+// DELIBERATELY NO TIMESTAMP (2026-08-14). It used to carry `@<ISO time>`, to "separate two builds of
+// the same dirty tree" — but that reasoning does not survive contact with dist/ being COMMITTED:
+//   • if two builds of a dirty tree genuinely differ, the BUNDLE differs and the stamp is redundant;
+//   • if they do not differ, we want the output byte-identical — and the timestamp made it differ
+//     anyway, so every rebuild showed dist/ as modified with no change in it.
+// The only case the timestamp distinguished was therefore the case where there was nothing to
+// distinguish, while the noise it created is what teaches people to ignore the stamp — including the
+// `-dirty` half, which is the part that actually matters. Live proof: `e6fd873-dirty` shipped to
+// jsdelivr unnoticed, because a one-line stamp diff on every build is not worth reading.
+// The stamp now changes IF AND ONLY IF the commit or the clean/dirty state changed.
 function buildStamp() {
   let sha = 'nogit';
   let dirty = '';
@@ -29,7 +38,7 @@ function buildStamp() {
   } catch (e) {
     console.warn('[build] could not read git for the build stamp (using "nogit"):', e.message);
   }
-  return `${sha}${dirty} @${new Date().toISOString()}`;
+  return `${sha}${dirty}`;
 }
 
 // Tee build output (incl. esbuild's own warnings) to logs/ — 'dev' for the watch loop
