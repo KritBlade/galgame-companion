@@ -3,7 +3,7 @@
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
   var VERSION = "0.7.1";
-  var BUILD = "e6fd873-dirty @2026-08-13T20:42:36.475Z";
+  var BUILD = "6451932";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
