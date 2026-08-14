@@ -21,7 +21,7 @@
 
 import { topWindow, log, warnToast } from '../../env.js';
 import { shapeMessage, sceneUid, shortHash, repairTruncatedEnvelope } from './beat-shaper-core.js';
-import { isSillyTavernBusy } from '../galgame-quirks/index.js';
+import { isTurnBusy } from '../galgame-quirks/index.js';
 
 const inFlight = new Set(); // message ids currently being shaped (re-entrancy guard)
 const deferralLogged = new Set(); // one deferral log per floor per reason — not one per event
@@ -181,9 +181,9 @@ async function onMessageEvent(messageId) {
   if (raw === null) return;
 
   // Tell the player BEFORE any repair — the repair fixes the display, never the lost turn, and a
-  // repaired message looks healthy afterwards. Only once ST is idle: mid-stream every reply is
-  // legitimately "incomplete".
-  if (!isSillyTavernBusy()) {
+  // repaired message looks healthy afterwards. Only once the TURN is finished: mid-stream every reply
+  // is legitimately "incomplete", and so is one whose POST pass has not written its block yet.
+  if (!isTurnBusy()) {
     const reason = incompleteReplyReason(raw, id);
     if (reason) toastIncompleteReply(id, reason);
     else incompleteToasted.forEach((k) => { if (k.startsWith(`${id}:`)) incompleteToasted.delete(k); });
@@ -191,15 +191,17 @@ async function onMessageEvent(messageId) {
 
   let { text, changed, deferred, stats } = shapeMessage(raw, mintUidForCurrentChat);
 
-  // §4b: an unclosed envelope means "still streaming" ONLY while something is actually generating.
-  // Once ST is idle it means TRUNCATED — the closing tag is never coming, so deferring forever
-  // leaves galgame parsing raw text (which blocked the whole GUI once — see repairTruncatedEnvelope).
+  // §4b: an unclosed envelope means "still streaming" ONLY while something is actually working —
+  // ST's own generation, or mvu-helper's PRE/POST pass around it (isTurnBusy covers both, and POST is
+  // the last writer of the message). Once the turn is finished it means TRUNCATED — the closing tag is
+  // never coming, so deferring forever leaves galgame parsing raw text (which blocked the whole GUI
+  // once — see repairTruncatedEnvelope).
   // Repair, then re-shape the repaired text so this turn still gets its normal treatment.
-  if ((deferred === 'maintext-unclosed' || deferred === 'gametxt-unclosed') && !isSillyTavernBusy()) {
+  if ((deferred === 'maintext-unclosed' || deferred === 'gametxt-unclosed') && !isTurnBusy()) {
     const repair = repairTruncatedEnvelope(raw);
     if (repair) {
       log.warn(
-        `beat-shaper msg=${id}: reply is TRUNCATED — no ${repair.closeTag} and ST is idle, so it is never coming. ` +
+        `beat-shaper msg=${id}: reply is TRUNCATED — no ${repair.closeTag} and the turn is finished, so it is never coming. ` +
         `Inserted ${repair.closeTag} after the last complete </p>; ${repair.droppedChars} char(s) of partial output now sit ` +
         'OUTSIDE the envelope (kept, not deleted). The turn likely emitted no <UpdateVariable>, so RES resolved nothing — ' +
         'check the narrator\'s max response tokens.',

@@ -1,9 +1,9 @@
-// galgame-companion v0.7.1
+// galgame-companion v0.8.0
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.7.1";
-  var BUILD = "6451932";
+  var VERSION = "0.8.0";
+  var BUILD = "3dc4549-dirty";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -1467,15 +1467,21 @@
     log.info("fullscreen-guard active");
   }
 
-  // src/features/galgame-quirks/generating-guard.js
+  // src/features/galgame-quirks/generating-indicator.js
   var INDICATOR_ID = "gal-generating-indicator";
+  var OVERLAY_SEL = "#gal-global-overlay";
   var POLL_MS = 750;
+  var TURN_PHASE_EVENT = "mvu_helper_turn_phase";
+  var PHASE_MAX_MS = 3e5;
   var generating = false;
-  function isSillyTavernBusy() {
-    return stBusy();
+  var phaseOpenAt = 0;
+  var phaseOverranReported = false;
+  var indicatorShown = null;
+  var watchedIndicator = null;
+  function isTurnBusy() {
+    return generating || mvuPhaseOpen() || stFlagsBusy();
   }
-  function stBusy() {
-    if (generating) return true;
+  function stFlagsBusy() {
     try {
       if (topWindow.is_send_press) return true;
       const ctx = topWindow.SillyTavern && topWindow.SillyTavern.getContext && topWindow.SillyTavern.getContext();
@@ -1484,46 +1490,95 @@
     }
     return false;
   }
-  function clearIfStuck() {
-    const el = DOC.getElementById(INDICATOR_ID);
-    if (!el || !el.classList.contains("active")) return;
-    if (stBusy()) return;
-    el.classList.remove("active");
-    log.info("generating-guard: cleared a stuck Generating indicator (ST idle, no generation)");
+  function mvuPhaseOpen() {
+    if (!phaseOpenAt) return false;
+    const openFor = Date.now() - phaseOpenAt;
+    if (openFor <= PHASE_MAX_MS) return true;
+    if (!phaseOverranReported) {
+      phaseOverranReported = true;
+      log.warn(
+        `generating-indicator: mvu-helper has held a turn phase open for ${Math.round(openFor / 1e3)}s without closing it (its own per-call timeout is far shorter). Treating the turn as finished so the Generating popup does not hang — but the unclosed phase is a defect on the mvu-helper side, not here.`
+      );
+    }
+    return false;
   }
-  function startGeneratingGuard() {
+  function overlayPresent() {
+    const overlay = DOC.querySelector(OVERLAY_SEL);
+    return Boolean(overlay && overlay.classList.contains("active"));
+  }
+  var classObserver = null;
+  function watchIndicator(el) {
+    if (el === watchedIndicator) return;
+    if (classObserver) classObserver.disconnect();
+    watchedIndicator = el;
+    if (!el) return;
+    try {
+      classObserver = new MutationObserver(() => reconcile());
+      classObserver.observe(el, { attributes: true, attributeFilter: ["class"] });
+    } catch (e) {
+      classObserver = null;
+      watchedIndicator = null;
+      log.warn("generating-indicator: could not watch the popup for foreign class writes — galgame hiding it mid-POST will now blink until the next poll:", e);
+    }
+  }
+  function reconcile() {
+    const el = DOC.getElementById(INDICATOR_ID);
+    watchIndicator(el);
+    if (!el) return;
+    const busy = isTurnBusy();
+    const isShown = el.classList.contains("active");
+    if (busy && !overlayPresent()) return;
+    if (busy === isShown) return;
+    el.classList.toggle("active", busy);
+    if (indicatorShown !== busy) {
+      indicatorShown = busy;
+      log.info(`generating-indicator: ${busy ? "shown (turn in flight)" : "hidden (turn finished)"}`);
+    }
+  }
+  function startGeneratingIndicator() {
     const te = window.tavern_events || {};
     const on = typeof window.eventOn === "function" ? window.eventOn : null;
-    if (on) {
+    if (!on) {
+      log.warn("generating-indicator: TH eventOn absent — no PRE/POST or generation signal; relying on ST live flags only");
+    } else {
+      try {
+        on(TURN_PHASE_EVENT, (payload) => {
+          const busy = Boolean(payload && payload.busy);
+          phaseOpenAt = busy ? Date.now() : 0;
+          if (busy) phaseOverranReported = false;
+          log.info(`generating-indicator: mvu-helper turn phase ${busy ? "OPEN" : "closed"} (${payload && payload.phase || "?"})`);
+          reconcile();
+        });
+      } catch (e) {
+        log.warn(`generating-indicator: bind ${TURN_PHASE_EVENT} failed — the PRE/POST half of the turn will be invisible:`, e);
+      }
       if (te.GENERATION_STARTED) {
         try {
-          on(te.GENERATION_STARTED, (type, option, dry_run) => {
-            if (dry_run) return;
+          on(te.GENERATION_STARTED, (type, option, dryRun) => {
+            if (dryRun) return;
             if (type === "quiet" && !(option && option.quietToLoud)) return;
             generating = true;
+            reconcile();
           });
         } catch (e) {
-          log.warn("generating-guard: bind GENERATION_STARTED failed:", e);
+          log.warn("generating-indicator: bind GENERATION_STARTED failed:", e);
         }
       }
       for (const ev of [te.GENERATION_ENDED, te.GENERATION_STOPPED]) {
-        if (ev) {
-          try {
-            on(ev, () => {
-              generating = false;
-              clearIfStuck();
-            });
-          } catch (e) {
-            log.warn("generating-guard: bind end/stop failed:", e);
-          }
+        if (!ev) continue;
+        try {
+          on(ev, () => {
+            generating = false;
+            reconcile();
+          });
+        } catch (e) {
+          log.warn("generating-indicator: bind end/stop failed:", e);
         }
       }
-    } else {
-      log.warn("generating-guard: TH eventOn absent — relying on ST live flags only");
     }
-    (topWindow.setInterval || setInterval)(clearIfStuck, POLL_MS);
-    clearIfStuck();
-    log.info("generating-guard active");
+    (topWindow.setInterval || setInterval)(reconcile, POLL_MS);
+    reconcile();
+    log.info("generating-indicator active");
   }
 
   // src/features/menu/menu-modal.js
@@ -1627,7 +1682,7 @@
 
   // src/features/menu/toolbar.js
   var ACTION = "school-stats";
-  var OVERLAY_SEL = "#gal-global-overlay";
+  var OVERLAY_SEL2 = "#gal-global-overlay";
   var MOBILE_MENU_SEL = "#gal-global-overlay #gal-mobile-menu";
   var CORNER_CLASS = "school-corner-btn";
   var CORNER_BTN_HTML = `<button class="gal-footer-btn ${CORNER_CLASS}" data-action="${ACTION}" title="School Menu"><i class="fa-solid fa-users"></i> <span class="gal-btn-text">MENU</span></button>`;
@@ -1639,7 +1694,7 @@
     return true;
   }
   function injectAll() {
-    const a = injectInto(OVERLAY_SEL, `.${CORNER_CLASS}`, CORNER_BTN_HTML);
+    const a = injectInto(OVERLAY_SEL2, `.${CORNER_CLASS}`, CORNER_BTN_HTML);
     const b = injectInto(MOBILE_MENU_SEL, `[data-action="${ACTION}"]`, MOBILE_BTN_HTML);
     if (a || b) log.info(`button injected (corner=${a}, mobile=${b})`);
   }
@@ -2083,7 +2138,7 @@ ${cot}` : cot;
     if (!topWindow.galgame) return;
     const raw = rawMessage(id);
     if (raw === null) return;
-    if (!isSillyTavernBusy()) {
+    if (!isTurnBusy()) {
       const reason = incompleteReplyReason(raw, id);
       if (reason) toastIncompleteReply(id, reason);
       else incompleteToasted.forEach((k) => {
@@ -2091,11 +2146,11 @@ ${cot}` : cot;
       });
     }
     let { text, changed, deferred, stats } = shapeMessage(raw, mintUidForCurrentChat);
-    if ((deferred === "maintext-unclosed" || deferred === "gametxt-unclosed") && !isSillyTavernBusy()) {
+    if ((deferred === "maintext-unclosed" || deferred === "gametxt-unclosed") && !isTurnBusy()) {
       const repair = repairTruncatedEnvelope(raw);
       if (repair) {
         log.warn(
-          `beat-shaper msg=${id}: reply is TRUNCATED — no ${repair.closeTag} and ST is idle, so it is never coming. Inserted ${repair.closeTag} after the last complete </p>; ${repair.droppedChars} char(s) of partial output now sit OUTSIDE the envelope (kept, not deleted). The turn likely emitted no <UpdateVariable>, so RES resolved nothing — check the narrator's max response tokens.`
+          `beat-shaper msg=${id}: reply is TRUNCATED — no ${repair.closeTag} and the turn is finished, so it is never coming. Inserted ${repair.closeTag} after the last complete </p>; ${repair.droppedChars} char(s) of partial output now sit OUTSIDE the envelope (kept, not deleted). The turn likely emitted no <UpdateVariable>, so RES resolved nothing — check the narrator's max response tokens.`
         );
         ({ text, changed, deferred, stats } = shapeMessage(repair.text, mintUidForCurrentChat));
         changed = true;
@@ -2697,7 +2752,7 @@ ${cot}` : cot;
   }
 
   // src/features/image/image-viewer.js
-  var OVERLAY_SEL2 = "#gal-global-overlay";
+  var OVERLAY_SEL3 = "#gal-global-overlay";
   var BTN_CLASS = "school-imgview-btn";
   var MODAL_ID2 = "school-imgview-modal";
   var Z_INDEX2 = 2147483e3;
@@ -2705,7 +2760,7 @@ ${cot}` : cot;
     return currentFullscreenEl() || DOC.body;
   }
   function currentBgUrl() {
-    const ov = DOC.querySelector(OVERLAY_SEL2);
+    const ov = DOC.querySelector(OVERLAY_SEL3);
     if (!ov) return null;
     for (const sel of [".gal-bg-front", ".gal-bg-base"]) {
       const el = ov.querySelector(sel);
@@ -2766,7 +2821,7 @@ ${cot}` : cot;
     log.image("image-viewer: opened (" + (url ? "showing current backdrop" : "no image") + ")");
   }
   function injectButton() {
-    const overlay = DOC.querySelector(OVERLAY_SEL2);
+    const overlay = DOC.querySelector(OVERLAY_SEL3);
     if (!overlay || overlay.querySelector("." + BTN_CLASS)) return false;
     const btn = DOC.createElement("button");
     btn.type = "button";
@@ -2798,7 +2853,7 @@ ${cot}` : cot;
   }
 
   // src/features/image/image-regen.js
-  var OVERLAY_SEL3 = "#gal-global-overlay";
+  var OVERLAY_SEL4 = "#gal-global-overlay";
   var BTN_CLASS2 = "school-imgregen-btn";
   function basename(u) {
     return (u || "").split("/").pop().split("?")[0];
@@ -2843,7 +2898,7 @@ ${cot}` : cot;
     return true;
   }
   function injectButton2() {
-    const overlay = DOC.querySelector(OVERLAY_SEL3);
+    const overlay = DOC.querySelector(OVERLAY_SEL4);
     if (!overlay || overlay.querySelector("." + BTN_CLASS2)) return false;
     const btn = DOC.createElement("button");
     btn.type = "button";
@@ -3362,7 +3417,7 @@ ${cot}` : cot;
   var WRAP_CLASS = "school-nextblock";
   var CB_CLASS = "school-nextblock-cb";
   var BIND_PATH = "PendingState.BlockDone";
-  var OVERLAY_SEL4 = "#gal-global-overlay";
+  var OVERLAY_SEL5 = "#gal-global-overlay";
   var HTML = `<label class="${WRAP_CLASS}" title="Advance one time block — uncheck to cancel (until you send a message)"><span class="school-nextblock-label">Next</span><input type="checkbox" class="${CB_CLASS}" aria-label="Advance one time block; uncheck to cancel" /></label>`;
   function findRealCb() {
     const doc = topWindow && topWindow.document || DOC;
@@ -3407,7 +3462,7 @@ ${cot}` : cot;
     return want;
   }
   function injectInto2() {
-    const overlay = DOC.querySelector(OVERLAY_SEL4);
+    const overlay = DOC.querySelector(OVERLAY_SEL5);
     if (!overlay || overlay.querySelector(`.${WRAP_CLASS}`)) return false;
     overlay.insertAdjacentHTML("beforeend", HTML);
     const chip = overlay.querySelector(`.${WRAP_CLASS}`);
@@ -3463,7 +3518,7 @@ ${cot}` : cot;
   startFullscreenGuard();
   startBeatShaper();
   startImageSeam();
-  startGeneratingGuard();
+  startGeneratingIndicator();
   startLocationTimeBridge();
   startChoices();
   startNextBlock();
