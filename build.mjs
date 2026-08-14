@@ -33,8 +33,15 @@ function buildStamp() {
   try {
     const r = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: root, encoding: 'utf8' });
     if (r.status === 0) sha = r.stdout.trim();
+    // `-dirty` must mean "uncommitted SOURCE", so dist/ is excluded from the check. Building writes
+    // dist/, which dirties the tree, which the NEXT build would report as dirty — the stamp measuring
+    // its own output. That is why a clean-tree build was unreachable: `npm run build` guaranteed the
+    // condition it was reporting on.
     const s = spawnSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' });
-    if (s.status === 0 && s.stdout.trim()) dirty = '-dirty';
+    const sourceChanges = s.status === 0
+      ? s.stdout.split('\n').map((l) => l.trim()).filter(Boolean).filter((l) => !/\sdist\//.test(l))
+      : [];
+    if (sourceChanges.length) dirty = '-dirty';
   } catch (e) {
     console.warn('[build] could not read git for the build stamp (using "nogit"):', e.message);
   }
