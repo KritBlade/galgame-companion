@@ -1,7 +1,10 @@
-// galgame-companion · i18n dictionary — exact-match 中文→EN + pattern rules. v0.2
+// galgame-companion · i18n dictionary — exact-match 中文→EN + pattern rules. v0.3
 // ⚠️ Seeded from the prototype harvest against an OLDER galgame UI. Phase G1 refreshes
 // this file: run harvest mode live against v2.1, machine-translate, paste the long tail
 // here (GCP §2, §9-G1). Keyed by the exact RENDERED on-screen text, never source literals.
+// Later galgame releases add their strings in a dated/versioned block at the end rather than
+// scattering them into the topic sections — so "what did this upstream bump bring in" stays
+// answerable from the file alone. Newest block: v2.2.
 
 export const DICT = {
   // --- common actions / buttons ---
@@ -669,6 +672,22 @@ export const DICT = {
   'AI自动套用立绘已关闭': 'AI auto-apply sprites disabled',
   'AI自动套用立绘已开启，COT已更新': 'AI auto-apply sprites enabled, COT updated',
   'AI自动套用立绘已关闭，COT已更新': 'AI auto-apply sprites disabled, COT updated',
+
+  // --- galgame v2.2 (upstream 0500e81): avoid-dialog background fill + depth-of-field focus ---
+  // The label rows split their parenthetical into a separate <small>, so each half is its own text
+  // node and needs its own key — one entry for "景深聚焦 (非说话者失焦)" would never match anything.
+  '完全显示（避开对话框）': 'Show whole (clear of the dialogue box)',
+  '「完全显示」下背景图/CG 只占对话框上方区域，绝不被遮挡；下方留白用同图模糊铺底。': 'Under "show whole", the background/CG occupies only the area above the dialogue box and is never covered; the strip below is filled with a blurred copy of the same image.',
+  // Setup-wizard twin of the same setting (its hint names all three modes in one line).
+  '背景图与屏幕比例不一致时，填满裁剪或完整显示留边；「完全显示」则让图片避开对话框，下方留白用同图模糊铺底。': "When the background's aspect differs from the screen: fill-and-crop, or show it whole with letterboxing; \"show whole\" instead keeps the image clear of the dialogue box and fills the strip below with a blurred copy of it.",
+  '景深聚焦': 'Depth-of-field focus',
+  '(非说话者失焦)': '(Non-speakers go out of focus)',
+  '失焦模糊强度': 'Out-of-focus blur strength',
+  '(非说话者)': '(Non-speakers)',
+  // The settings panel's AI自动套用立绘 toggle gained a hint line. The setup wizard's near-identical
+  // twin (剧情出现新…) is already in the wizard block above — one string, one entry, and the two
+  // differ by their opening clause, so neither can stand in for the other.
+  '新主要角色/重要配角登场时，AI 自动从内置图包挑选气质匹配的立绘模板套用。': 'When a new main/supporting character appears, the AI auto-picks a matching sprite template from the built-in pack.',
 };
 
 // Pattern rules for interpolated strings — applied only when a text node is NOT an
