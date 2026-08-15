@@ -1,9 +1,9 @@
-// galgame-companion v0.8.0
+// galgame-companion v0.8.1
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.8.0";
-  var BUILD = "3dc4549-dirty";
+  var VERSION = "0.8.1";
+  var BUILD = "78dccb4-dirty";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -3150,15 +3150,19 @@ ${cot}` : cot;
   var COL_VALUE = "选项值";
   var MAX_CHOICES = 6;
   var CHOICES_INSTRUCTION = [
-    "At the very END of your reply, AFTER the closing tag of your narration (e.g. </maintext> or </gametxt>),",
-    "output a player-choice block. Offer 3 to 5 distinct next actions — pick the count that fits the scene",
-    "(more when the moment genuinely branches, fewer when it does not):",
+    "Also append ONE player-choice block as the very last block of your reply, outside the narration",
+    "tags (after </maintext> / </gametxt>):",
     '<choices><c v="first-person action text">Verb-first action label</c>...</choices>',
     "- `v` = what the player does or says, in first person — sent verbatim as the player's next input.",
     "- Each label is an ACTION the player takes: START WITH A VERB and convey tone + target,",
     '  e.g. "Tease Mitsuki about her blush", "Coolly brush off Mana", "Pull Aoi aside to apologize".',
     "  NEVER a bare line of dialogue and never a lone verb — always verb + who/what + how.",
-    "Write nothing after </choices>. Omit the block ONLY if the scene genuinely allows no meaningful choice."
+    "Offer 3 to 5 distinct actions — more when the moment genuinely branches, fewer when it does not.",
+    "This rule positions ONLY the choice block and relocates NOTHING else: every other block keeps the",
+    "exact position its own instructions give it. A block that belongs BEFORE the narration (thoughts,",
+    "plans, state) still goes BEFORE the opening narration tag — never moved to the end; a block that",
+    "belongs after the narration stays there. Never move or drop another block because of this rule.",
+    "Omit the choice block ONLY if the scene genuinely allows no meaningful choice."
   ].join("\n");
   var RE_CHOICES = /<choices>([\s\S]*?)<\/choices>/i;
   var RE_C = /<c\b([^>]*)>([\s\S]*?)<\/c>/gi;

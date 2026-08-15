@@ -1,4 +1,4 @@
-// galgame-companion · choices — card-agnostic story-choice provider. v0.3
+// galgame-companion · choices — card-agnostic story-choice provider. v0.4
 // v0.3 — BUTTON-ONLY: the choice panel NEVER auto-pops. galgame's checkAndRenderOptions auto-shows the panel when
 //   options are new AND the reader is on the last segment (or a panel was already open) — which fires over UNREAD
 //   narration on short / few-segment replies (v3-fixed, regressed in v4). We can't patch galgame's internal
@@ -43,16 +43,36 @@ const MAX_CHOICES = 6;                                   // galgame renders what
 
 // The injected instruction — card-agnostic, no genre assumptions (the model already knows the story).
 // `v` = the first-person action galgame sends verbatim as "<user>{v}。"; inner text = the button label.
+//
+// "LAST, after every other block" — NOT "the reply ends here" (live suppression, 2026-08-15). The
+// original wording was "at the very END of your reply … Write nothing after </choices>", and the model
+// obeyed it at the expense of everyone else: a preset that mandates its own trailing block (a World
+// State <details> summary) simply stopped emitting it whenever galgame mode was on, because our
+// depth-0 inject outranked the preset's instruction. This inject may order its OWN block; it has no
+// business truncating the reply.
+//
+// SECOND ITERATION, SAME LESSON (2026-08-15): the first rewrite said other blocks may sit "at the
+// START of your reply or after the narration" — naming both placements but leaving the model to pick,
+// and depth-0 recency pulled a preset's head-of-reply INTERNAL THOUGHTS block down to just before the
+// choices. Any positional phrase in this inject about OTHER blocks becomes an order. So the rule now
+// positions ONLY the choice block, and the one thing said about everything else is a counter-order:
+// keep the exact position your own instructions gave you — head blocks stay at the head. (galgame's
+// own COT example opens the reply at <maintext>, which already pressures head blocks toward the tail;
+// this line is the counterweight, and it is the part that keeps working when that COT changes.)
 const CHOICES_INSTRUCTION = [
-  'At the very END of your reply, AFTER the closing tag of your narration (e.g. </maintext> or </gametxt>),',
-  'output a player-choice block. Offer 3 to 5 distinct next actions — pick the count that fits the scene',
-  '(more when the moment genuinely branches, fewer when it does not):',
+  'Also append ONE player-choice block as the very last block of your reply, outside the narration',
+  'tags (after </maintext> / </gametxt>):',
   '<choices><c v="first-person action text">Verb-first action label</c>...</choices>',
   '- `v` = what the player does or says, in first person — sent verbatim as the player\'s next input.',
   '- Each label is an ACTION the player takes: START WITH A VERB and convey tone + target,',
   '  e.g. "Tease Mitsuki about her blush", "Coolly brush off Mana", "Pull Aoi aside to apologize".',
   '  NEVER a bare line of dialogue and never a lone verb — always verb + who/what + how.',
-  'Write nothing after </choices>. Omit the block ONLY if the scene genuinely allows no meaningful choice.',
+  'Offer 3 to 5 distinct actions — more when the moment genuinely branches, fewer when it does not.',
+  'This rule positions ONLY the choice block and relocates NOTHING else: every other block keeps the',
+  'exact position its own instructions give it. A block that belongs BEFORE the narration (thoughts,',
+  'plans, state) still goes BEFORE the opening narration tag — never moved to the end; a block that',
+  'belongs after the narration stays there. Never move or drop another block because of this rule.',
+  'Omit the choice block ONLY if the scene genuinely allows no meaningful choice.',
 ].join('\n');
 
 const RE_CHOICES = /<choices>([\s\S]*?)<\/choices>/i;
