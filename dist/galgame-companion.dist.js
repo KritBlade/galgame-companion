@@ -1,9 +1,9 @@
-// galgame-companion v0.8.1
+// galgame-companion v0.8.2
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.8.1";
-  var BUILD = "5fb11ce";
+  var VERSION = "0.8.2";
+  var BUILD = "8011535-dirty";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -3294,16 +3294,53 @@ ${cot}` : cot;
     log.info("choices active (inject + 选项表 shim reader)");
   }
 
+  // src/features/galgame-bridge/location-time-core.js
+  function displayValue(path, val, statData, renderLabel, onError) {
+    const raw = String(val == null ? "" : val).trim();
+    if (!raw || typeof renderLabel !== "function") return raw;
+    try {
+      const shown = renderLabel(path, raw, statData);
+      return shown == null || String(shown) === "" ? raw : String(shown);
+    } catch (e) {
+      if (typeof onError === "function") onError('i18nLabel("' + path + '") threw — showing the raw value', e);
+      return raw;
+    }
+  }
+  function mvuVal(x) {
+    return Array.isArray(x) ? x[0] : x;
+  }
+  function pillStrings(statData, renderLabel, onError) {
+    const W = statData && statData.World;
+    if (!W) return null;
+    const location = displayValue("World.Location", mvuVal(W.Location), statData, renderLabel, onError);
+    const weekday = displayValue("World.Weekday", mvuVal(W.Weekday), statData, renderLabel, onError);
+    const weather = displayValue("World.Weather", mvuVal(W.Weather), statData, renderLabel, onError);
+    const date = String(mvuVal(W.Date) == null ? "" : mvuVal(W.Date)).trim();
+    const time = String(mvuVal(W.Time) == null ? "" : mvuVal(W.Time)).trim();
+    const parts = [];
+    if (date) parts.push(weekday ? `${date} (${weekday})` : date);
+    if (time) parts.push(time);
+    let timeStr = parts.join(" ");
+    if (weather) timeStr += (timeStr ? " · " : "") + weather;
+    return { location, time: timeStr };
+  }
+
   // src/features/galgame-bridge/location-time-bridge.js
   var FLOOR_LOOKBACK3 = 8;
   var SHEET_UID = "sheet_global_data";
   var SHEET_NAME = "全局数据表";
   var COL_LOCATION = "当前详细地点";
   var COL_TIME = "当前时间";
-  function mvuVal(x) {
-    return Array.isArray(x) ? x[0] : x;
+  function engineLabeler() {
+    try {
+      const engine = topWindow.LogicEngine;
+      return engine && typeof engine.i18nLabel === "function" ? (p, v, sd) => engine.i18nLabel(p, v, sd) : null;
+    } catch (e) {
+      log.warn("location-time-bridge: reading LogicEngine threw — pills fall back to raw stored values:", e);
+      return null;
+    }
   }
-  function latestWorld() {
+  function latestStatData() {
     const gv = typeof window.getVariables === "function" ? window.getVariables : null;
     let last = -1;
     try {
@@ -3338,24 +3375,14 @@ ${cot}` : cot;
         } catch (e) {
         }
       }
-      if (sd && sd.World) return sd.World;
+      if (sd && sd.World) return sd;
     }
     return null;
   }
   function pills() {
-    const W = latestWorld();
-    if (!W) return null;
-    const location = String(mvuVal(W.Location) || "").trim();
-    const date = String(mvuVal(W.Date) || "").trim();
-    const time = String(mvuVal(W.Time) || "").trim();
-    const weekday = String(mvuVal(W.Weekday) || "").trim();
-    const weather = String(mvuVal(W.Weather) || "").trim();
-    const parts = [];
-    if (date) parts.push(weekday ? `${date} (${weekday})` : date);
-    if (time) parts.push(time);
-    let timeStr = parts.join(" ");
-    if (weather) timeStr += (timeStr ? " · " : "") + weather;
-    return { location, time: timeStr };
+    const sd = latestStatData();
+    if (!sd) return null;
+    return pillStrings(sd, engineLabeler(), (msg, e) => log.warn("location-time-bridge: " + msg, e));
   }
   function refreshLocationTimePills() {
     try {

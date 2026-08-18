@@ -1,4 +1,4 @@
-// galgame-companion · location-time-bridge — feed galgame's top-right location/time pills from MVU. v0.2
+// galgame-companion · location-time-bridge — feed galgame's top-right location/time pills from MVU. v0.3
 //
 // WHY: galgame's status pills (地点 / 时间) take their TEXT from
 // AutoCardUpdaterAPI.exportTableAsJson() — updateLocationTimeDisplay() reads the "全局数据表" sheet's
@@ -13,6 +13,7 @@
 
 import { topWindow, log } from '../../env.js';
 import { getOptionSheet } from './choices.js';
+import { pillStrings } from './location-time-core.js';
 
 const FLOOR_LOOKBACK = 8;              // newest floor with stat_data (MVU carries it forward)
 const SHEET_UID = 'sheet_global_data'; // galgame matches this uid (or name 全局数据表) in getGlobalLocationAndTime
@@ -20,11 +21,24 @@ const SHEET_NAME = '全局数据表';
 const COL_LOCATION = '当前详细地点';   // → galgame detailedLocation
 const COL_TIME = '当前时间';           // → galgame currentTime
 
-// MVU stores each field as [value, label]; take the value (bare values pass through unchanged).
-function mvuVal(x) { return Array.isArray(x) ? x[0] : x; }
+// THE ENGINE'S OWN LABELER, or null when no engine is hosted. This is the ONLY genre-aware thing the
+// bridge touches, and it touches it by INTERFACE: an engine that renders values exposes i18nLabel, and
+// whatever it knows about weather words or venue names stays entirely on its side. Host-coupled
+// (topWindow), which is why it lives here and the formatting rules live in location-time-core.js.
+function engineLabeler() {
+  try {
+    const engine = topWindow.LogicEngine;
+    return (engine && typeof engine.i18nLabel === 'function') ? (p, v, sd) => engine.i18nLabel(p, v, sd) : null;
+  } catch (e) {
+    log.warn('location-time-bridge: reading LogicEngine threw — pills fall back to raw stored values:', e);
+    return null;
+  }
+}
 
-// stat_data.World from the newest floor that has it (mirrors image-seam's floor resolution).
-function latestWorld() {
+// stat_data.World from the newest floor that has it (mirrors image-seam's floor resolution). Returns the
+// WHOLE stat_data, not just .World: rendering a value needs the game's own settings (its language, its
+// registries), and only the game knows which parts of its state those are — so we hand it all of it.
+function latestStatData() {
   const gv = typeof window.getVariables === 'function' ? window.getVariables : null;
   let last = -1;
   try { const n = Number(window.getLastMessageId ? window.getLastMessageId() : NaN); if (Number.isFinite(n) && n >= 0) last = n; } catch (e) { /* fall through */ }
@@ -38,26 +52,17 @@ function latestWorld() {
     if (!sd) { // fallback: top-window Mvu (getVariables can be momentarily absent early)
       try { const Mvu = topWindow.Mvu; if (Mvu && Mvu.getMvuData) { const d = Mvu.getMvuData({ type: 'message', message_id: id }); sd = d && d.stat_data; } } catch (e) { /* keep scanning */ }
     }
-    if (sd && sd.World) return sd.World;
+    if (sd && sd.World) return sd;
   }
   return null;
 }
 
-// Pill strings from World: location, and "date (weekday) time · weather".
+// Pill strings — the RULES are location-time-core's; this half only supplies the host bits (which floor
+// to read, which engine is hosting, where a failure gets logged).
 function pills() {
-  const W = latestWorld();
-  if (!W) return null;
-  const location = String(mvuVal(W.Location) || '').trim();
-  const date = String(mvuVal(W.Date) || '').trim();
-  const time = String(mvuVal(W.Time) || '').trim();
-  const weekday = String(mvuVal(W.Weekday) || '').trim();
-  const weather = String(mvuVal(W.Weather) || '').trim();
-  const parts = [];
-  if (date) parts.push(weekday ? `${date} (${weekday})` : date);
-  if (time) parts.push(time);
-  let timeStr = parts.join(' ');
-  if (weather) timeStr += (timeStr ? ' · ' : '') + weather;
-  return { location, time: timeStr };
+  const sd = latestStatData();
+  if (!sd) return null;
+  return pillStrings(sd, engineLabeler(), (msg, e) => log.warn('location-time-bridge: ' + msg, e));
 }
 
 // Push the pills NOW from the freshest World — for state changes galgame doesn't repaint on (a manual Next-Block
