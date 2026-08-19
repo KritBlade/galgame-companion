@@ -12,6 +12,7 @@
 // GUARD: install ONLY if nothing else owns AutoCardUpdaterAPI — never clobber a real AutoCardUpdater.
 
 import { topWindow, log } from '../../env.js';
+import { activeGenre } from '../../genre/index.js';
 import { getOptionSheet } from './choices.js';
 import { pillStrings } from './location-time-core.js';
 
@@ -58,11 +59,13 @@ function latestStatData() {
 }
 
 // Pill strings — the RULES are location-time-core's; this half only supplies the host bits (which floor
-// to read, which engine is hosting, where a failure gets logged).
+// to read, which engine is hosting, WHICH GENRE'S clock fields to prefer, where a failure gets logged).
+// The genre is read per call, not captured: installing or switching a pack must take effect without a
+// reload of this companion.
 function pills() {
   const sd = latestStatData();
   if (!sd) return null;
-  return pillStrings(sd, engineLabeler(), (msg, e) => log.warn('location-time-bridge: ' + msg, e));
+  return pillStrings(sd, engineLabeler(), (msg, e) => log.warn('location-time-bridge: ' + msg, e), activeGenre());
 }
 
 // Push the pills NOW from the freshest World — for state changes galgame doesn't repaint on (a manual Next-Block

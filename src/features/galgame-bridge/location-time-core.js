@@ -1,4 +1,4 @@
-// galgame-companion · location-time-core — the pill STRINGS, as a pure decision. v0.3
+// galgame-companion · location-time-core — the pill STRINGS, as a pure decision. v0.4
 //
 // WHY THIS FILE EXISTS: location-time-bridge.js reaches topWindow and writes DOM, so nothing in it can
 // be opened by a test. The formatting rules below are the part that can actually be WRONG in a way a
@@ -40,11 +40,12 @@ export function mvuVal(x) { return Array.isArray(x) ? x[0] : x; }
 /**
  * The two pill strings: `location`, and `time` as "date (weekday) time · weather".
  *
- * EVERY World field routes through the labeler, Date and Time included. A game with unconventional
- * clock semantics (an extended 25:00 late-night hour, an in-world calendar) owns their display
- * translation — the labeler is the game's own voice, so asking it is the blind move, and no labeler
- * or no opinion means the raw stored value shows, exactly as before. What this module still refuses
- * to hold is any clock knowledge of its OWN: it never inspects or reformats what comes back.
+ * EVERY World field routes through the labeler, clock included. A game with unconventional clock
+ * semantics (an extended 25:00 late-night hour, an in-world calendar) owns its display translation —
+ * the labeler is the game's own voice, so asking is the blind move, and no labeler or no opinion
+ * means the raw stored value shows. This module holds no clock knowledge of its OWN: it never
+ * inspects or reformats what comes back, and it does not know WHICH World fields carry the clock —
+ * the caller passes a genre profile for that (see src/genre/).
  *
  * Every segment is conditional: a game that never sets Weather, or a save mid-migration with no
  * Weekday, gets a shorter pill rather than a stray "()" or a leading "·".
@@ -52,25 +53,36 @@ export function mvuVal(x) { return Array.isArray(x) ? x[0] : x; }
  * @param {object} statData full stat_data (must carry .World)
  * @param {?function} renderLabel injected engine labeler (see displayValue)
  * @param {?function} onError injected reporter (see displayValue)
+ * @param {?object} genre genre profile: {clockDate, clockWeekday, clockTime} field-name candidates,
+ *        first non-empty wins. Omitted → the plain Date/Weekday/Time a bare World carries.
  * @returns {{location: string, time: string}|null} null when there is no World to read
  */
-export function pillStrings(statData, renderLabel, onError) {
+// Default candidates for a game that ships no profile — the plain fields every World is assumed to
+// carry. Named here rather than inlined so the "no genre passed" path is one obvious object.
+const PLAIN_CLOCK = { clockDate: ['Date'], clockWeekday: ['Weekday'], clockTime: ['Time'] };
+
+export function pillStrings(statData, renderLabel, onError, genre) {
   const W = statData && statData.World;
   if (!W) return null;
+  const clock = genre || PLAIN_CLOCK;
   const location = displayValue('World.Location', mvuVal(W.Location), statData, renderLabel, onError);
-  // WALL CLOCK FIRST. A game may publish World.Wall* — a DISPLAY clock, distinct from World.Date/Time,
-  // which some games use as a CURSOR pointing at where the story resumes rather than where the prose just
-  // ended. Preferring the display clock when it exists is a generic convention, not knowledge of any one
-  // game: no Wall* fields (or empty ones) and this reads exactly what it always did.
-  const wallOr = (wallKey, key) => {
-    const w = mvuVal(W[wallKey]);
-    const useWall = w != null && String(w).trim() !== '';
-    return displayValue('World.' + (useWall ? wallKey : key), useWall ? w : mvuVal(W[key]), statData, renderLabel, onError);
+  // The genre profile lists candidate field names per slot, in preference order; the first non-empty
+  // one wins and is rendered UNDER ITS OWN PATH, so the engine's labeler sees the field it actually
+  // answered for. A game whose profile names only the plain field behaves exactly as before.
+  const fromCandidates = (names) => {
+    const list = Array.isArray(names) && names.length ? names : ['Date'];
+    for (const key of list) {
+      const v = mvuVal(W[key]);
+      if (v != null && String(v).trim() !== '') {
+        return displayValue('World.' + key, v, statData, renderLabel, onError);
+      }
+    }
+    return '';
   };
-  const weekday = wallOr('WallWeekday', 'Weekday');
+  const weekday = fromCandidates(clock.clockWeekday);
   const weather = displayValue('World.Weather', mvuVal(W.Weather), statData, renderLabel, onError);
-  const date = wallOr('WallDate', 'Date');
-  const time = wallOr('WallTime', 'Time');
+  const date = fromCandidates(clock.clockDate);
+  const time = fromCandidates(clock.clockTime);
   const parts = [];
   if (date) parts.push(weekday ? `${date} (${weekday})` : date);
   if (time) parts.push(time);

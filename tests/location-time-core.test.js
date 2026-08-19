@@ -8,6 +8,7 @@
 // every failure mode still yields a pill.
 import { describe, it, expect } from 'vitest';
 import { displayValue, mvuVal, pillStrings } from '../src/features/galgame-bridge/location-time-core.js';
+import { SCHOOL, MAIN } from '../src/genre/genre-profile-core.js';
 
 // A stand-in engine. Deliberately NOT School's table — it maps nonsense words, so a test passing here
 // proves the value came back THROUGH the labeler rather than from any knowledge baked into the module.
@@ -108,23 +109,36 @@ describe('pillStrings — the assembled pills', () => {
     const p = pillStrings(world({
       Date: ['2026-04-09', 'Date'], Time: ['07:30', 'Time'], Weekday: ['Thu', 'Weekday'],
       WallDate: ['2026-04-08', 'WD'], WallWeekday: ['Wed', 'WW'], WallTime: ['23:40', 'WT'],
-    }), labeler);
+    }), labeler, undefined, SCHOOL);
     expect(p.time).toBe('2026-04-08 (週三) 23:40 · 晴朗');
   });
   it('renders wall values through the labeler too, by their own path', () => {
     const seen = [];
     pillStrings(world({ WallDate: ['2026-04-08', 'WD'], WallWeekday: ['Wed', 'WW'], WallTime: ['23:40', 'WT'] }),
-      (path, val) => { seen.push(path); return val; });
+      (path, val) => { seen.push(path); return val; }, undefined, SCHOOL);
     expect(seen).toContain('World.WallDate');
     expect(seen).toContain('World.WallTime');
     expect(seen).not.toContain('World.Date');
   });
   it('falls back to the cursor when the wall clock is absent (a game that publishes none)', () => {
-    expect(pillStrings(world(), labeler).time).toBe('2026-04-08 (週三) 07:45 · 晴朗');
+    expect(pillStrings(world(), labeler, undefined, SCHOOL).time).toBe('2026-04-08 (週三) 07:45 · 晴朗');
   });
   it('falls back per-field when a wall value is empty', () => {
-    const p = pillStrings(world({ WallDate: ['', 'WD'], WallWeekday: ['', 'WW'], WallTime: ['23:40', 'WT'] }), labeler);
+    const p = pillStrings(world({ WallDate: ['', 'WD'], WallWeekday: ['', 'WW'], WallTime: ['23:40', 'WT'] }), labeler, undefined, SCHOOL);
     expect(p.time).toBe('2026-04-08 (週三) 23:40 · 晴朗');
+  });
+
+  // THE BLINDNESS GUARD (2026-08-19): with the default profile this module must not reach for a field
+  // only one game publishes, even when that field is sitting right there in stat_data.
+  it('the MAIN profile ignores a wall clock it was never told about', () => {
+    const p = pillStrings(world({
+      WallDate: ['1999-01-01', 'WD'], WallWeekday: ['Fri', 'WW'], WallTime: ['03:00', 'WT'],
+    }), labeler, undefined, MAIN);
+    expect(p.time).toBe('2026-04-08 (週三) 07:45 · 晴朗');
+  });
+  it('no profile at all behaves as MAIN', () => {
+    const p = pillStrings(world({ WallTime: ['03:00', 'WT'] }), labeler);
+    expect(p.time).toContain('07:45');
   });
 
   it('returns null when there is no World at all (caller keeps polling)', () => {

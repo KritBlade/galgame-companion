@@ -19,6 +19,7 @@ import { startFullscreenGuard, startGeneratingIndicator } from '../features/galg
 import { startImageSeam, startImageViewer, startImageRegen, startBackgroundManager } from '../features/image/index.js';
 import { startBeatShaper } from '../features/beat-shaper/index.js';
 import { startChoices, startLocationTimeBridge, startNextBlock } from '../features/galgame-bridge/index.js';
+import { logActiveGenre } from '../genre/index.js';
 
 // WHICH BUILD IS RUNNING — deliberately UNGATED (not log.info, which needs DEBUG). This is the
 // first question every troubleshooting session asks, and gating it behind a flag means the one line
@@ -60,7 +61,7 @@ startImageSeam();       // G4b: mvu-helper images → galgame backdrop DB (uid-s
 startGeneratingIndicator(); // own galgame's "Generating" popup: up from mvu-helper's PRE pass, down when its POST pass ends (ST's own gen covers the middle)
 startLocationTimeBridge(); // feed galgame's location/time pills from stat_data.World (AutoCardUpdaterAPI shim; MVU cards have none)
 startChoices();            // A2 all-genre: inject a <choices> format instruction + feed galgame's Story-choices UI via the same shim's 选项表 sheet
-startNextBlock();          // surface the engine's manual Next-Block advance (PendingState.BlockDone) top-right, driving the real stat-menu checkbox
+startNextBlock();          // surface the game's manual advance flag top-right (genre profile's bindPath), driving its own stat-menu checkbox; genres without one render nothing
 startImageViewer();        // top-right button → near-full-viewport lightbox of galgame's current backdrop image
 startImageRegen();         // top-right button (under 🖼) → click mvu-helper's regen control for the current backdrop
 startBackgroundManager();  // galgame's Background Manager pane: sort newest-first + bulk select/delete (our unique scene names made its A-Z order useless)
@@ -68,4 +69,5 @@ startBackgroundManager();  // galgame's Background Manager pane: sort newest-fir
 // G4b: image-seam writer (saveBackground keyed by nearest-preceding <background scene>)
 //      + Preferences.ForceImageType flip on immersive enter/exit
 
+logActiveGenre();          // say which genre profile is live — the fastest answer to 'why is that control missing'
 log.info(`v${VERSION} ready`);

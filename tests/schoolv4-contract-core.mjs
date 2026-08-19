@@ -21,14 +21,18 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { schoolv4Dir } from './schoolv4-card-path.mjs';
-import { BIND_PATH } from '../src/features/galgame-bridge/next-block.js';
+import { SCHOOL } from '../src/genre/genre-profile-core.js';
 import { FORCE_PATH } from '../src/features/image/image-seam.js';
 
 // Fields location-time-bridge reads off stat_data.World for galgame's pills. Declared rather than
 // imported: they are destructured inline (W.Location, W.Date…), not named by a constant.
 // Wall* is the game's published DISPLAY clock; the pills prefer it over Date/Time (which some games
 // use as a resume CURSOR). Pinned here so the card cannot drop it without this check saying so.
-const WORLD_PILL_FIELDS = ['Location', 'Date', 'Time', 'Weekday', 'Weather', 'WallDate', 'WallWeekday', 'WallTime'];
+// Derived from the SCHOOL genre profile, never re-typed here: the profile is what the shipping code
+// reads, so a field renamed there must fail this check rather than silently pass an outdated copy.
+// Location/Weather are destructured inline by the pills (no constant to import), so they stay literal.
+const WORLD_PILL_FIELDS = ['Location', 'Weather',
+    ...new Set([...SCHOOL.clockDate, ...SCHOOL.clockWeekday, ...SCHOOL.clockTime])];
 
 // value at a dot-path, or undefined. MVU stores #tuple fields as [value, label]; presence is what we
 // check, so no unwrapping is needed.
@@ -54,7 +58,7 @@ export function runContractCheck() {
 
     // 1. Every path we drive must EXIST in the card's shipped seed.
     const paths = [
-        [BIND_PATH, 'next-block.js BIND_PATH', 'the Next-Block chip drives this checkbox; an absent path means the chip is dead'],
+        [SCHOOL.advanceControl.bindPath, 'genre/school advanceControl.bindPath', 'the Next-Block chip drives this checkbox; an absent path means the chip is dead'],
         [FORCE_PATH, 'image-seam.js FORCE_PATH', 'Mvu.setMvuVariable returns false on an unknown path and the seam then gives up permanently'],
         ...WORLD_PILL_FIELDS.map((f) => ['World.' + f, 'location-time-bridge.js pills', "galgame's location/time pills read this"]),
     ];
@@ -65,14 +69,14 @@ export function runContractCheck() {
         }
     }
 
-    // 2. THE SHARPER ONE. next-block does not read BIND_PATH from stat_data; it finds the stat-menu's
-    //    checkbox by exactly `input[data-bind-checked="<BIND_PATH>"]` and clicks it. A path can be
+    // 2. THE SHARPER ONE. next-block does not read SCHOOL.advanceControl.bindPath from stat_data; it finds the stat-menu's
+    //    checkbox by exactly `input[data-bind-checked="<SCHOOL.advanceControl.bindPath>"]` and clicks it. A path can be
     //    present in the seed and still not be RENDERED as a checkbox — which fails the same way, so
     //    assert against the built card, the artifact that actually ships.
     const card = JSON.parse(readFileSync(cardPath, 'utf8'));
     const menus = ((card.data && card.data.extensions && card.data.extensions.regex_scripts) || [])
         .filter((rs) => typeof rs.replaceString === 'string' && rs.replaceString.includes('VARIABLE_UPDATE_ENDED'));
-    const selector = `data-bind-checked="${BIND_PATH}"`;
+    const selector = `data-bind-checked="${SCHOOL.advanceControl.bindPath}"`;
     checked.push(selector + '  (next-block.js findRealCb selector, vs the BUILT card)');
     if (!menus.length) {
         failures.push('no stat-menu regex script found in the built card — has the card layout changed?');

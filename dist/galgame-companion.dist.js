@@ -3,7 +3,7 @@
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
   var VERSION = "0.8.2";
-  var BUILD = "e5f2265";
+  var BUILD = "1028a8e-dirty";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -224,7 +224,7 @@
    mirrors galgame's top-right pills. Keyed on our own class → cannot touch galgame's layout. */
 #gal-global-overlay .school-corner-btn { position: absolute; top: 12px; left: 14px; z-index: 30; }
 
-/* Next-Block control (next-block.js) — the engine's manual time-block advance (PendingState.BlockDone),
+/* Manual advance control (next-block.js) — the game's own advance flag, named by the genre profile,
    surfaced on the overlay under the fullscreen button so it works with the stat-menu hidden. Ticking
    OUR checkbox drives the real (hidden) stat-menu checkbox. Small dark chip to read over the artwork. */
 #gal-global-overlay .school-nextblock {
@@ -1408,8 +1408,8 @@
     return bridged;
   }
   function mountStatusMenu(bodyEl) {
-    const html = loadMenuHtml();
-    if (!html) {
+    const html2 = loadMenuHtml();
+    if (!html2) {
       bodyEl.textContent = "This card has no StatusMenu.";
       return null;
     }
@@ -1423,7 +1423,7 @@
     log.info(`status-menu: bridged [${bridged.join(", ")}]`);
     try {
       iw.document.open();
-      iw.document.write(html);
+      iw.document.write(html2);
       iw.document.close();
     } catch (e) {
       log.error("status-menu: writing menu HTML failed:", e);
@@ -1687,10 +1687,10 @@
   var CORNER_CLASS = "school-corner-btn";
   var CORNER_BTN_HTML = `<button class="gal-footer-btn ${CORNER_CLASS}" data-action="${ACTION}" title="School Menu"><i class="fa-solid fa-users"></i> <span class="gal-btn-text">MENU</span></button>`;
   var MOBILE_BTN_HTML = `<button class="gal-menu-btn" data-action="${ACTION}"><i class="fa-solid fa-users"></i> Menu</button>`;
-  function injectInto(containerSel, existsSel, html) {
+  function injectInto(containerSel, existsSel, html2) {
     const c = DOC.querySelector(containerSel);
     if (!c || c.querySelector(existsSel)) return false;
-    c.insertAdjacentHTML("beforeend", html);
+    c.insertAdjacentHTML("beforeend", html2);
     return true;
   }
   function injectAll() {
@@ -3294,6 +3294,52 @@ ${cot}` : cot;
     log.info("choices active (inject + 选项表 shim reader)");
   }
 
+  // src/genre/genre-profile-core.js
+  var MAIN = Object.freeze({
+    name: "main",
+    clockDate: Object.freeze(["Date"]),
+    clockWeekday: Object.freeze(["Weekday"]),
+    clockTime: Object.freeze(["Time"]),
+    advanceControl: null
+  });
+  var SCHOOL = Object.freeze({
+    name: "school",
+    clockDate: Object.freeze(["WallDate", "Date"]),
+    clockWeekday: Object.freeze(["WallWeekday", "Weekday"]),
+    clockTime: Object.freeze(["WallTime", "Time"]),
+    advanceControl: Object.freeze({
+      bindPath: "PendingState.BlockDone",
+      label: "Next",
+      title: "Advance one time block — uncheck to cancel (until you send a message)"
+    })
+  });
+  var PROFILES = Object.freeze({ main: MAIN, school: SCHOOL });
+  function profileFor(engineName2) {
+    const key = String(engineName2 == null ? "" : engineName2).trim().toLowerCase();
+    return PROFILES[key] || MAIN;
+  }
+
+  // src/genre/index.js
+  function engineName() {
+    try {
+      const helper = topWindow.MvuHelper;
+      if (!helper || typeof helper.engineInfo !== "function") return null;
+      const info = helper.engineInfo();
+      return info && info.name || null;
+    } catch (e) {
+      log.warn("genre: reading MvuHelper.engineInfo() threw — falling back to the main profile:", e);
+      return null;
+    }
+  }
+  function activeGenre() {
+    return profileFor(engineName());
+  }
+  function logActiveGenre() {
+    const name = engineName();
+    const profile = profileFor(name);
+    log.info(`genre: engine ${name ? `"${name}"` : "(none)"} → profile "${profile.name}"` + (profile === MAIN && name ? " (no profile for that engine — using the default)" : ""));
+  }
+
   // src/features/galgame-bridge/location-time-core.js
   function displayValue(path, val, statData, renderLabel, onError) {
     const raw = String(val == null ? "" : val).trim();
@@ -3309,19 +3355,26 @@ ${cot}` : cot;
   function mvuVal(x) {
     return Array.isArray(x) ? x[0] : x;
   }
-  function pillStrings(statData, renderLabel, onError) {
+  var PLAIN_CLOCK = { clockDate: ["Date"], clockWeekday: ["Weekday"], clockTime: ["Time"] };
+  function pillStrings(statData, renderLabel, onError, genre) {
     const W = statData && statData.World;
     if (!W) return null;
+    const clock = genre || PLAIN_CLOCK;
     const location = displayValue("World.Location", mvuVal(W.Location), statData, renderLabel, onError);
-    const wallOr = (wallKey, key) => {
-      const w = mvuVal(W[wallKey]);
-      const useWall = w != null && String(w).trim() !== "";
-      return displayValue("World." + (useWall ? wallKey : key), useWall ? w : mvuVal(W[key]), statData, renderLabel, onError);
+    const fromCandidates = (names) => {
+      const list = Array.isArray(names) && names.length ? names : ["Date"];
+      for (const key of list) {
+        const v = mvuVal(W[key]);
+        if (v != null && String(v).trim() !== "") {
+          return displayValue("World." + key, v, statData, renderLabel, onError);
+        }
+      }
+      return "";
     };
-    const weekday = wallOr("WallWeekday", "Weekday");
+    const weekday = fromCandidates(clock.clockWeekday);
     const weather = displayValue("World.Weather", mvuVal(W.Weather), statData, renderLabel, onError);
-    const date = wallOr("WallDate", "Date");
-    const time = wallOr("WallTime", "Time");
+    const date = fromCandidates(clock.clockDate);
+    const time = fromCandidates(clock.clockTime);
     const parts = [];
     if (date) parts.push(weekday ? `${date} (${weekday})` : date);
     if (time) parts.push(time);
@@ -3387,7 +3440,7 @@ ${cot}` : cot;
   function pills() {
     const sd = latestStatData();
     if (!sd) return null;
-    return pillStrings(sd, engineLabeler(), (msg, e) => log.warn("location-time-bridge: " + msg, e));
+    return pillStrings(sd, engineLabeler(), (msg, e) => log.warn("location-time-bridge: " + msg, e), activeGenre());
   }
   function refreshLocationTimePills() {
     try {
@@ -3452,10 +3505,20 @@ ${cot}` : cot;
   // src/features/galgame-bridge/next-block.js
   var WRAP_CLASS = "school-nextblock";
   var CB_CLASS = "school-nextblock-cb";
-  var BIND_PATH = "PendingState.BlockDone";
+  function bindPath() {
+    const control = activeGenre().advanceControl;
+    return control && control.bindPath || null;
+  }
   var OVERLAY_SEL5 = "#gal-global-overlay";
-  var HTML = `<label class="${WRAP_CLASS}" title="Advance one time block — uncheck to cancel (until you send a message)"><span class="school-nextblock-label">Next</span><input type="checkbox" class="${CB_CLASS}" aria-label="Advance one time block; uncheck to cancel" /></label>`;
+  function html() {
+    const control = activeGenre().advanceControl || {};
+    const label = control.label || "Next";
+    const title = control.title || "Advance to the next segment — uncheck to cancel (until you send a message)";
+    return `<label class="${WRAP_CLASS}" title="${title}"><span class="school-nextblock-label">${label}</span><input type="checkbox" class="${CB_CLASS}" aria-label="${title}" /></label>`;
+  }
   function findRealCb() {
+    const path = bindPath();
+    if (!path) return null;
     const doc = topWindow && topWindow.document || DOC;
     const frames = [...doc.querySelectorAll('iframe[id^="TH-message--"]')].map((f) => {
       const m = /^TH-message--(\d+)--/.exec(f.id);
@@ -3463,7 +3526,7 @@ ${cot}` : cot;
     }).filter((x) => x.n >= 0).sort((a, b) => b.n - a.n);
     for (const { f } of frames) {
       try {
-        const cb = f.contentDocument && f.contentDocument.querySelector(`input[type="checkbox"][data-bind-checked="${BIND_PATH}"]`);
+        const cb = f.contentDocument && f.contentDocument.querySelector(`input[type="checkbox"][data-bind-checked="${path}"]`);
         if (cb) return cb;
       } catch (e) {
       }
@@ -3486,21 +3549,21 @@ ${cot}` : cot;
   function setFlag(want) {
     const cb = findRealCb();
     if (!cb) {
-      log.warn(`next-block: real ${BIND_PATH} checkbox not found — cannot set the flag`);
+      log.warn(`next-block: real ${bindPath() || "(no advance control for this genre)"} checkbox not found — cannot set the flag`);
       return false;
     }
     if (cb.checked !== want) {
       cb.checked = !want;
       cb.click();
     }
-    log.info("next-block: BlockDone flag " + (want ? "SET (will advance at reply-end; Window A previews it)" : "cleared"));
+    log.info(`next-block: ${bindPath()} flag ` + (want ? "SET (will advance at reply-end; the engine previews it)" : "cleared"));
     nudgePills();
     return want;
   }
   function injectInto2() {
     const overlay = DOC.querySelector(OVERLAY_SEL5);
     if (!overlay || overlay.querySelector(`.${WRAP_CLASS}`)) return false;
-    overlay.insertAdjacentHTML("beforeend", HTML);
+    overlay.insertAdjacentHTML("beforeend", html());
     const chip = overlay.querySelector(`.${WRAP_CLASS}`);
     if (chip) chip.addEventListener("click", (e) => e.stopPropagation());
     const cb = chip && chip.querySelector(`.${CB_CLASS}`);
@@ -3509,6 +3572,10 @@ ${cot}` : cot;
   }
   function startNextBlock() {
     if (!DOC || !DOC.body) return setTimeout(startNextBlock, 200);
+    if (!bindPath()) {
+      log.info("next-block: this genre declares no manual advance — control not rendered");
+      return;
+    }
     DOC.addEventListener("change", (e) => {
       const cb = e.target && e.target.classList && e.target.classList.contains(CB_CLASS) ? e.target : null;
       if (!cb) return;
@@ -3531,7 +3598,7 @@ ${cot}` : cot;
     });
     observer2.observe(DOC.body, { childList: true, subtree: true });
     injectInto2();
-    log.info("next-block active (flag model)");
+    log.info(`next-block active (flag model, ${bindPath()})`);
   }
 
   // src/app/index.js
@@ -3561,5 +3628,6 @@ ${cot}` : cot;
   startImageViewer();
   startImageRegen();
   startBackgroundManager();
+  logActiveGenre();
   log.info(`v${VERSION} ready`);
 })();
