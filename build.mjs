@@ -55,8 +55,21 @@ teeToLog(isWatch ? 'dev' : 'build');
 // THE version — package.json is the single source, and this is the only reader. It is stamped into
 // the bundle (env.js VERSION) alongside the build stamp, so the running code and the package agree
 // by construction instead of by remembering to edit two files.
-const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-const version = pkg.version || '0.0';
+//
+// READ FRESH ON EVERY REBUILD, exactly like buildStamp() — never cached at process start. This is
+// the version-half of the 2026-08-02 stamp lesson, learned separately (2026-08-19): it used to be a
+// top-level `const`, so a --watch process outlived a version bump and stamped its startup version
+// onto every later rebuild — a `git pull` that moved package.json to 0.8.2 woke the watcher, which
+// rebuilt the NEW source labeled 0.8.1 with a CURRENT sha. A regression label on correct code, and
+// dist/ showed dirty with nothing really changed.
+function currentVersion() {
+  try {
+    return JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version || '0.0';
+  } catch (e) {
+    console.warn('[build] could not read package.json for the version (using "0.0"):', e.message);
+    return '0.0';
+  }
+}
 
 // esbuild's pretty-printed warnings/errors come from its Go subprocess writing straight to fd 2,
 // which bypasses the Node process.stderr.write patch dev-log.mjs uses — so with logLevel:'info'
@@ -65,6 +78,7 @@ const version = pkg.version || '0.0';
 // file free of ANSI escapes. onEnd fires on every build (one-shot AND each watch rebuild).
 const PLACEHOLDER = '__BUILD_STAMP__';
 const VERSION_PLACEHOLDER = '__VERSION__';
+const VERSION_RE = /__VERSION__/g;
 const outfile = join(root, 'dist', 'galgame-companion.dist.js');
 
 const logMessages = {
@@ -92,6 +106,7 @@ const logMessages = {
       // "0 warning(s)" — the summary was reporting esbuild's tally while calling it the build's.
       let stampWarnings = 0;
       let stamp = '(unstamped)';
+      const version = currentVersion(); // per-rebuild, same discipline as buildStamp()
       if (!errors.length) {
         try {
           const file = (result.outputFiles || [])[0];
@@ -108,11 +123,15 @@ const logMessages = {
             stampWarnings++;
             console.warn(`[build] WARNING: ${PLACEHOLDER} not found in the bundle — env.js BUILD will read as the raw placeholder and build reporting is BROKEN. Did the placeholder in src/env.js get renamed?`);
           }
-          if (text.includes(VERSION_PLACEHOLDER)) {
-            text = text.replace(VERSION_PLACEHOLDER, version);
+          // The banner carries the placeholder too (it must not freeze a startup version the way
+          // the old template literal did), so this is a replaceAll and "found at least twice" is
+          // the healthy state: banner + env.js. Fewer than two means one of them lost it.
+          if ((text.match(VERSION_RE) || []).length >= 2) {
+            text = text.replaceAll(VERSION_PLACEHOLDER, version);
           } else {
             stampWarnings++;
-            console.warn(`[build] WARNING: ${VERSION_PLACEHOLDER} not found in the bundle — env.js VERSION will NOT carry package.json's ${version}. Did the placeholder in src/env.js get renamed?`);
+            console.warn(`[build] WARNING: ${VERSION_PLACEHOLDER} found fewer than twice in the bundle (banner + env.js expected) — the missing site will NOT carry package.json's ${version}. Did a placeholder get renamed?`);
+            text = text.replaceAll(VERSION_PLACEHOLDER, version); // stamp whatever is left anyway
           }
           mkdirSync(dirname(outfile), { recursive: true });
           writeFileSync(outfile, text);
@@ -131,9 +150,10 @@ const options = {
   format: 'iife',
   charset: 'utf8',
   target: 'es2020',
-  // No build time in the banner: it would be frozen at context-creation time in --watch mode. The
-  // authoritative, per-rebuild stamp is written by the onEnd plugin above (env.js BUILD).
-  banner: { js: `// galgame-companion v${version}` },
+  // No build time OR version literal in the banner: both would be frozen at context-creation time
+  // in --watch mode (the version literally was, until 2026-08-19 — see currentVersion()). The onEnd
+  // plugin stamps this placeholder per rebuild, alongside env.js BUILD.
+  banner: { js: `// galgame-companion v${VERSION_PLACEHOLDER}` },
   outfile,
   // The stamp plugin writes dist/ itself — see its onEnd. Never flip this back to true without
   // removing that write, or the two racing writers put an unstamped bundle on disk.
@@ -145,8 +165,8 @@ const options = {
 if (isWatch) {
   const ctx = await esbuild.context(options);
   await ctx.watch();
-  console.log(`[build] watching (v${version})…`);
+  console.log(`[build] watching (v${currentVersion()})…`);
 } else {
   await esbuild.build(options);
-  console.log(`[build] done (v${version})`);
+  console.log(`[build] done (v${currentVersion()})`);
 }
