@@ -15,6 +15,7 @@ const LABELS = {
   'World.Weather': { Clear: '晴朗', Rain: '雨天' },
   'World.Location': { School_Classroom: '一年一班', School_Rooftop: '頂樓' },
   'World.Weekday': { Wed: '週三' },
+  'World.WallWeekday': { Wed: '週三' },   // the wall clock asks under its OWN path, so the stub answers it too
 };
 const labeler = (path, val) => (LABELS[path] && LABELS[path][val]) || val;
 
@@ -98,6 +99,32 @@ describe('pillStrings — the assembled pills', () => {
     expect(pillStrings(world({ Date: ['', 'Date'] }), labeler).time).toBe('07:45 · 晴朗');
     const bare = pillStrings({ World: {} }, labeler);
     expect(bare).toEqual({ location: '', time: '' });
+  });
+
+  // WALL CLOCK (2026-08-19). School publishes World.Wall* as its DISPLAY clock because World.Date/Time
+  // are a CURSOR — where the story resumes, which after a day-ending reply is tomorrow morning, not the
+  // scene just read. Preferring Wall* when present is a generic convention; absent or empty, nothing changes.
+  it('prefers the published wall clock over the cursor', () => {
+    const p = pillStrings(world({
+      Date: ['2026-04-09', 'Date'], Time: ['07:30', 'Time'], Weekday: ['Thu', 'Weekday'],
+      WallDate: ['2026-04-08', 'WD'], WallWeekday: ['Wed', 'WW'], WallTime: ['23:40', 'WT'],
+    }), labeler);
+    expect(p.time).toBe('2026-04-08 (週三) 23:40 · 晴朗');
+  });
+  it('renders wall values through the labeler too, by their own path', () => {
+    const seen = [];
+    pillStrings(world({ WallDate: ['2026-04-08', 'WD'], WallWeekday: ['Wed', 'WW'], WallTime: ['23:40', 'WT'] }),
+      (path, val) => { seen.push(path); return val; });
+    expect(seen).toContain('World.WallDate');
+    expect(seen).toContain('World.WallTime');
+    expect(seen).not.toContain('World.Date');
+  });
+  it('falls back to the cursor when the wall clock is absent (a game that publishes none)', () => {
+    expect(pillStrings(world(), labeler).time).toBe('2026-04-08 (週三) 07:45 · 晴朗');
+  });
+  it('falls back per-field when a wall value is empty', () => {
+    const p = pillStrings(world({ WallDate: ['', 'WD'], WallWeekday: ['', 'WW'], WallTime: ['23:40', 'WT'] }), labeler);
+    expect(p.time).toBe('2026-04-08 (週三) 23:40 · 晴朗');
   });
 
   it('returns null when there is no World at all (caller keeps polling)', () => {

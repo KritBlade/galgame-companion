@@ -1,4 +1,4 @@
-// galgame-companion · location-time-core — the pill STRINGS, as a pure decision. v0.2
+// galgame-companion · location-time-core — the pill STRINGS, as a pure decision. v0.3
 //
 // WHY THIS FILE EXISTS: location-time-bridge.js reaches topWindow and writes DOM, so nothing in it can
 // be opened by a test. The formatting rules below are the part that can actually be WRONG in a way a
@@ -58,10 +58,19 @@ export function pillStrings(statData, renderLabel, onError) {
   const W = statData && statData.World;
   if (!W) return null;
   const location = displayValue('World.Location', mvuVal(W.Location), statData, renderLabel, onError);
-  const weekday = displayValue('World.Weekday', mvuVal(W.Weekday), statData, renderLabel, onError);
+  // WALL CLOCK FIRST. A game may publish World.Wall* — a DISPLAY clock, distinct from World.Date/Time,
+  // which some games use as a CURSOR pointing at where the story resumes rather than where the prose just
+  // ended. Preferring the display clock when it exists is a generic convention, not knowledge of any one
+  // game: no Wall* fields (or empty ones) and this reads exactly what it always did.
+  const wallOr = (wallKey, key) => {
+    const w = mvuVal(W[wallKey]);
+    const useWall = w != null && String(w).trim() !== '';
+    return displayValue('World.' + (useWall ? wallKey : key), useWall ? w : mvuVal(W[key]), statData, renderLabel, onError);
+  };
+  const weekday = wallOr('WallWeekday', 'Weekday');
   const weather = displayValue('World.Weather', mvuVal(W.Weather), statData, renderLabel, onError);
-  const date = displayValue('World.Date', mvuVal(W.Date), statData, renderLabel, onError);
-  const time = displayValue('World.Time', mvuVal(W.Time), statData, renderLabel, onError);
+  const date = wallOr('WallDate', 'Date');
+  const time = wallOr('WallTime', 'Time');
   const parts = [];
   if (date) parts.push(weekday ? `${date} (${weekday})` : date);
   if (time) parts.push(time);

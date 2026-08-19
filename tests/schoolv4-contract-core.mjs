@@ -26,7 +26,9 @@ import { FORCE_PATH } from '../src/features/image/image-seam.js';
 
 // Fields location-time-bridge reads off stat_data.World for galgame's pills. Declared rather than
 // imported: they are destructured inline (W.Location, W.Date…), not named by a constant.
-const WORLD_PILL_FIELDS = ['Location', 'Date', 'Time', 'Weekday', 'Weather'];
+// Wall* is the game's published DISPLAY clock; the pills prefer it over Date/Time (which some games
+// use as a resume CURSOR). Pinned here so the card cannot drop it without this check saying so.
+const WORLD_PILL_FIELDS = ['Location', 'Date', 'Time', 'Weekday', 'Weather', 'WallDate', 'WallWeekday', 'WallTime'];
 
 // value at a dot-path, or undefined. MVU stores #tuple fields as [value, label]; presence is what we
 // check, so no unwrapping is needed.

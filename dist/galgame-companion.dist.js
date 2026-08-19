@@ -3,7 +3,7 @@
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
   var VERSION = "0.8.2";
-  var BUILD = "99c7763";
+  var BUILD = "143cc43-dirty";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -3313,10 +3313,15 @@ ${cot}` : cot;
     const W = statData && statData.World;
     if (!W) return null;
     const location = displayValue("World.Location", mvuVal(W.Location), statData, renderLabel, onError);
-    const weekday = displayValue("World.Weekday", mvuVal(W.Weekday), statData, renderLabel, onError);
+    const wallOr = (wallKey, key) => {
+      const w = mvuVal(W[wallKey]);
+      const useWall = w != null && String(w).trim() !== "";
+      return displayValue("World." + (useWall ? wallKey : key), useWall ? w : mvuVal(W[key]), statData, renderLabel, onError);
+    };
+    const weekday = wallOr("WallWeekday", "Weekday");
     const weather = displayValue("World.Weather", mvuVal(W.Weather), statData, renderLabel, onError);
-    const date = displayValue("World.Date", mvuVal(W.Date), statData, renderLabel, onError);
-    const time = displayValue("World.Time", mvuVal(W.Time), statData, renderLabel, onError);
+    const date = wallOr("WallDate", "Date");
+    const time = wallOr("WallTime", "Time");
     const parts = [];
     if (date) parts.push(weekday ? `${date} (${weekday})` : date);
     if (time) parts.push(time);
