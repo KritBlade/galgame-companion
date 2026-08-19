@@ -26,14 +26,62 @@ const COL_TIME = '当前时间';           // → galgame currentTime
 // bridge touches, and it touches it by INTERFACE: an engine that renders values exposes i18nLabel, and
 // whatever it knows about weather words or venue names stays entirely on its side. Host-coupled
 // (topWindow), which is why it lives here and the formatting rules live in location-time-core.js.
+//
+// ⚠ THE ENGINE'S LABELER IS ASYNC AND THIS CALLER CANNOT BE. mvu-helper hosts the engine in a WORKER,
+// so `LogicEngine.i18nLabel(...)` is a postMessage round-trip and returns a PROMISE — while galgame
+// calls our exportTableAsJson() synchronously and renders whatever it gets back. Calling it directly
+// therefore stringified the promise and every pill read "[object Promise]" (live 2026-08-19; broken
+// since the pills first started asking the engine). Making the chain async is not available: the
+// consumer is galgame's own code, and handing a third party a Promise where it expects an object is a
+// worse bug than the one being fixed.
+//
+// So labels are CACHED, and the cache is what the synchronous caller reads. A miss renders the raw
+// value — the honest, pre-i18n behaviour — and starts the round-trip; the answer lands in the cache
+// and the NEXT render (galgame polls this constantly) shows the localized word. Values are stable
+// enum keys, so a warm cache stays correct; the key includes the language so switching it re-resolves
+// rather than serving another locale's word.
+const labelCache = new Map();
+const labelPending = new Set();
+
 function engineLabeler() {
-  try {
-    const engine = topWindow.LogicEngine;
-    return (engine && typeof engine.i18nLabel === 'function') ? (p, v, sd) => engine.i18nLabel(p, v, sd) : null;
-  } catch (e) {
+  let engine = null;
+  try { engine = topWindow.LogicEngine; }
+  catch (e) {
     log.warn('location-time-bridge: reading LogicEngine threw — pills fall back to raw stored values:', e);
     return null;
   }
+  if (!engine || typeof engine.i18nLabel !== 'function') return null;
+
+  return (path, value, statData) => {
+    let lang = '';
+    try { const L = statData && statData.Preferences && statData.Preferences.Lang; lang = String((Array.isArray(L) ? L[0] : L) || ''); }
+    catch (e) { /* EXPECTED: a save with no Preferences — the cache key just loses its language half */ }
+    const key = lang + '|' + path + '|' + value;
+    if (labelCache.has(key)) return labelCache.get(key);
+
+    let result;
+    try { result = engine.i18nLabel(path, value, statData); }
+    catch (e) {
+      log.warn('location-time-bridge: i18nLabel("' + path + '") threw — showing the raw value:', e);
+      labelCache.set(key, value);            // don't retry a thrower every render
+      return value;
+    }
+
+    // A SYNCHRONOUS engine (baked, or a future non-Worker host) still works untouched.
+    if (!result || typeof result.then !== 'function') {
+      labelCache.set(key, result == null || result === '' ? value : String(result));
+      return labelCache.get(key);
+    }
+    // Worker: resolve in the background, render raw meanwhile. One flight per key.
+    if (!labelPending.has(key)) {
+      labelPending.add(key);
+      Promise.resolve(result).then(
+        (v) => { labelCache.set(key, v == null || v === '' ? value : String(v)); },
+        (e) => { labelCache.set(key, value); log.warn('location-time-bridge: i18nLabel("' + path + '") rejected — keeping the raw value:', e); },
+      ).finally(() => { labelPending.delete(key); refreshLocationTimePills(); });
+    }
+    return value;
+  };
 }
 
 // stat_data.World from the newest floor that has it (mirrors image-seam's floor resolution). Returns the

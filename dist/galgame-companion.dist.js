@@ -3,7 +3,7 @@
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
   var VERSION = "0.8.2";
-  var BUILD = "2018d6c";
+  var BUILD = "1536543-dirty";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -3346,6 +3346,10 @@ ${cot}` : cot;
     if (!raw || typeof renderLabel !== "function") return raw;
     try {
       const shown = renderLabel(path, raw, statData);
+      if (shown && typeof shown.then === "function") {
+        if (typeof onError === "function") onError('i18nLabel("' + path + '") returned a Promise — a label must be synchronous here; showing the raw value', new Error("async labeler"));
+        return raw;
+      }
       return shown == null || String(shown) === "" ? raw : String(shown);
     } catch (e) {
       if (typeof onError === "function") onError('i18nLabel("' + path + '") threw — showing the raw value', e);
@@ -3389,14 +3393,55 @@ ${cot}` : cot;
   var SHEET_NAME = "全局数据表";
   var COL_LOCATION = "当前详细地点";
   var COL_TIME = "当前时间";
+  var labelCache = /* @__PURE__ */ new Map();
+  var labelPending = /* @__PURE__ */ new Set();
   function engineLabeler() {
+    let engine = null;
     try {
-      const engine = topWindow.LogicEngine;
-      return engine && typeof engine.i18nLabel === "function" ? (p, v, sd) => engine.i18nLabel(p, v, sd) : null;
+      engine = topWindow.LogicEngine;
     } catch (e) {
       log.warn("location-time-bridge: reading LogicEngine threw — pills fall back to raw stored values:", e);
       return null;
     }
+    if (!engine || typeof engine.i18nLabel !== "function") return null;
+    return (path, value, statData) => {
+      let lang = "";
+      try {
+        const L = statData && statData.Preferences && statData.Preferences.Lang;
+        lang = String((Array.isArray(L) ? L[0] : L) || "");
+      } catch (e) {
+      }
+      const key = lang + "|" + path + "|" + value;
+      if (labelCache.has(key)) return labelCache.get(key);
+      let result;
+      try {
+        result = engine.i18nLabel(path, value, statData);
+      } catch (e) {
+        log.warn('location-time-bridge: i18nLabel("' + path + '") threw — showing the raw value:', e);
+        labelCache.set(key, value);
+        return value;
+      }
+      if (!result || typeof result.then !== "function") {
+        labelCache.set(key, result == null || result === "" ? value : String(result));
+        return labelCache.get(key);
+      }
+      if (!labelPending.has(key)) {
+        labelPending.add(key);
+        Promise.resolve(result).then(
+          (v) => {
+            labelCache.set(key, v == null || v === "" ? value : String(v));
+          },
+          (e) => {
+            labelCache.set(key, value);
+            log.warn('location-time-bridge: i18nLabel("' + path + '") rejected — keeping the raw value:', e);
+          }
+        ).finally(() => {
+          labelPending.delete(key);
+          refreshLocationTimePills();
+        });
+      }
+      return value;
+    };
   }
   function latestStatData() {
     const gv = typeof window.getVariables === "function" ? window.getVariables : null;

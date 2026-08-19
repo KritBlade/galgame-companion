@@ -41,6 +41,19 @@ describe('displayValue — renders by ASKING, never by knowing', () => {
   it('keeps the raw value when the engine returns empty rather than erroring', () => {
     expect(displayValue('World.Weather', 'Clear', {}, () => '')).toBe('Clear');
   });
+  // THE LIVE BUG (2026-08-19): mvu-helper hosts the engine in a Worker, so i18nLabel returns a Promise.
+  // String()-ing one put the literal "[object Promise]" in every pill.
+  it('never renders a Promise — an async labeler counts as no opinion', () => {
+    const seen = [];
+    const out = displayValue('World.Weather', 'Clear', {}, () => Promise.resolve('晴朗'), (m, e) => seen.push([m, e]));
+    expect(out).toBe('Clear');
+    expect(out).not.toContain('Promise');
+    expect(seen[0][0]).toContain('Promise');
+  });
+  it('a thenable-ish object is refused too (not only real Promises)', () => {
+    expect(displayValue('World.Weather', 'Clear', {}, () => ({ then: () => {} }))).toBe('Clear');
+  });
+
   it('survives a THROWING engine and reports it — never swallows', () => {
     const seen = [];
     const out = displayValue('World.Weather', 'Clear', {}, () => { throw new Error('boom'); }, (m, e) => seen.push([m, e.message]));

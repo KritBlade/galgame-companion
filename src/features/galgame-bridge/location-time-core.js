@@ -1,4 +1,4 @@
-// galgame-companion · location-time-core — the pill STRINGS, as a pure decision. v0.4
+// galgame-companion · location-time-core — the pill STRINGS, as a pure decision. v0.5
 //
 // WHY THIS FILE EXISTS: location-time-bridge.js reaches topWindow and writes DOM, so nothing in it can
 // be opened by a test. The formatting rules below are the part that can actually be WRONG in a way a
@@ -27,6 +27,16 @@ export function displayValue(path, val, statData, renderLabel, onError) {
   if (!raw || typeof renderLabel !== 'function') return raw;
   try {
     const shown = renderLabel(path, raw, statData);
+    // A THENABLE IS NOT AN ANSWER. An engine hosted in a Worker returns a Promise, and String()-ing one
+    // renders the literal text "[object Promise]" into the player's pill — which is exactly what shipped
+    // (live 2026-08-19). A labeler that cannot answer synchronously counts as having no opinion, so the
+    // raw value shows; resolving it is the CALLER's job (location-time-bridge caches across the Worker
+    // boundary and re-renders). Guarded here as well as there because this is the function that decides
+    // what a player sees, and "unrenderable object" must never be one of the options.
+    if (shown && typeof shown.then === 'function') {
+      if (typeof onError === 'function') onError('i18nLabel("' + path + '") returned a Promise — a label must be synchronous here; showing the raw value', new Error('async labeler'));
+      return raw;
+    }
     return (shown == null || String(shown) === '') ? raw : String(shown);
   } catch (e) {
     if (typeof onError === 'function') onError('i18nLabel("' + path + '") threw — showing the raw value', e);
