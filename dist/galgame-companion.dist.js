@@ -3,7 +3,7 @@
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
   var VERSION = "0.8.2";
-  var BUILD = "0fad8c6";
+  var BUILD = "ec722bd";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -1408,8 +1408,8 @@
     return bridged;
   }
   function mountStatusMenu(bodyEl) {
-    const html2 = loadMenuHtml();
-    if (!html2) {
+    const html = loadMenuHtml();
+    if (!html) {
       bodyEl.textContent = "This card has no StatusMenu.";
       return null;
     }
@@ -1423,7 +1423,7 @@
     log.info(`status-menu: bridged [${bridged.join(", ")}]`);
     try {
       iw.document.open();
-      iw.document.write(html2);
+      iw.document.write(html);
       iw.document.close();
     } catch (e) {
       log.error("status-menu: writing menu HTML failed:", e);
@@ -1687,10 +1687,10 @@
   var CORNER_CLASS = "school-corner-btn";
   var CORNER_BTN_HTML = `<button class="gal-footer-btn ${CORNER_CLASS}" data-action="${ACTION}" title="School Menu"><i class="fa-solid fa-users"></i> <span class="gal-btn-text">MENU</span></button>`;
   var MOBILE_BTN_HTML = `<button class="gal-menu-btn" data-action="${ACTION}"><i class="fa-solid fa-users"></i> Menu</button>`;
-  function injectInto(containerSel, existsSel, html2) {
+  function injectInto(containerSel, existsSel, html) {
     const c = DOC.querySelector(containerSel);
     if (!c || c.querySelector(existsSel)) return false;
-    c.insertAdjacentHTML("beforeend", html2);
+    c.insertAdjacentHTML("beforeend", html);
     return true;
   }
   function injectAll() {
@@ -3337,7 +3337,11 @@ ${cot}` : cot;
   function logActiveGenre() {
     const name = engineName();
     const profile = profileFor(name);
-    log.info(`genre: engine ${name ? `"${name}"` : "(none)"} → profile "${profile.name}"` + (profile === MAIN && name ? " (no profile for that engine — using the default)" : ""));
+    if (!name) {
+      log.info(`genre: no engine has answered yet → profile "${profile.name}" for now (re-resolved on every use, so an engine that loads later is picked up)`);
+      return;
+    }
+    log.info(`genre: engine "${name}" → profile "${profile.name}"` + (profile === MAIN ? " (no profile for that engine — using the default)" : ""));
   }
 
   // src/features/galgame-bridge/location-time-core.js
@@ -3547,23 +3551,38 @@ ${cot}` : cot;
     }
   }
 
-  // src/features/galgame-bridge/next-block.js
+  // src/features/galgame-bridge/next-block-core.js
   var WRAP_CLASS = "school-nextblock";
   var CB_CLASS = "school-nextblock-cb";
-  function bindPath() {
-    const control = activeGenre().advanceControl;
-    return control && control.bindPath || null;
+  var LABEL_CLASS = "school-nextblock-label";
+  var PATH_ATTR = "data-advance-path";
+  var DEFAULT_LABEL = "Next";
+  var DEFAULT_TITLE = "Advance to the next segment — uncheck to cancel (until you send a message)";
+  function advanceControlFor(genre) {
+    const control2 = genre && genre.advanceControl;
+    if (!control2) return null;
+    const bindPath = String(control2.bindPath == null ? "" : control2.bindPath).trim();
+    if (!bindPath) return null;
+    const label = String(control2.label == null ? "" : control2.label).trim() || DEFAULT_LABEL;
+    const title = String(control2.title == null ? "" : control2.title).trim() || DEFAULT_TITLE;
+    return { bindPath, label, title };
   }
+  function attr(text) {
+    return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+  function chipHtml(control2) {
+    const title = attr(control2.title);
+    return `<label class="${WRAP_CLASS}" ${PATH_ATTR}="${attr(control2.bindPath)}" title="${title}"><span class="${LABEL_CLASS}">${attr(control2.label)}</span><input type="checkbox" class="${CB_CLASS}" aria-label="${title}" /></label>`;
+  }
+
+  // src/features/galgame-bridge/next-block.js
   var OVERLAY_SEL5 = "#gal-global-overlay";
-  function html() {
-    const control = activeGenre().advanceControl || {};
-    const label = control.label || "Next";
-    const title = control.title || "Advance to the next segment — uncheck to cancel (until you send a message)";
-    return `<label class="${WRAP_CLASS}" title="${title}"><span class="school-nextblock-label">${label}</span><input type="checkbox" class="${CB_CLASS}" aria-label="${title}" /></label>`;
+  function control() {
+    return advanceControlFor(activeGenre());
   }
   function findRealCb() {
-    const path = bindPath();
-    if (!path) return null;
+    const active = control();
+    if (!active) return null;
     const doc = topWindow && topWindow.document || DOC;
     const frames = [...doc.querySelectorAll('iframe[id^="TH-message--"]')].map((f) => {
       const m = /^TH-message--(\d+)--/.exec(f.id);
@@ -3571,7 +3590,7 @@ ${cot}` : cot;
     }).filter((x) => x.n >= 0).sort((a, b) => b.n - a.n);
     for (const { f } of frames) {
       try {
-        const cb = f.contentDocument && f.contentDocument.querySelector(`input[type="checkbox"][data-bind-checked="${path}"]`);
+        const cb = f.contentDocument && f.contentDocument.querySelector(`input[type="checkbox"][data-bind-checked="${active.bindPath}"]`);
         if (cb) return cb;
       } catch (e) {
       }
@@ -3592,35 +3611,50 @@ ${cot}` : cot;
     }, ms));
   }
   function setFlag(want) {
+    const active = control();
     const cb = findRealCb();
     if (!cb) {
-      log.warn(`next-block: real ${bindPath() || "(no advance control for this genre)"} checkbox not found — cannot set the flag`);
+      log.warn(`next-block: real ${active ? active.bindPath : "(no advance control for this genre)"} checkbox not found — cannot set the flag`);
       return false;
     }
     if (cb.checked !== want) {
       cb.checked = !want;
       cb.click();
     }
-    log.info(`next-block: ${bindPath()} flag ` + (want ? "SET (will advance at reply-end; the engine previews it)" : "cleared"));
+    log.info(`next-block: ${active.bindPath} flag ` + (want ? "SET (will advance at reply-end; the engine previews it)" : "cleared"));
     nudgePills();
     return want;
   }
+  var announced = "";
   function injectInto2() {
     const overlay = DOC.querySelector(OVERLAY_SEL5);
-    if (!overlay || overlay.querySelector(`.${WRAP_CLASS}`)) return false;
-    overlay.insertAdjacentHTML("beforeend", html());
+    if (!overlay) return false;
+    const active = control();
+    const existing = overlay.querySelector(`.${WRAP_CLASS}`);
+    if (!active) {
+      if (existing) {
+        existing.remove();
+        log.info("next-block: this genre declares no manual advance — chip removed");
+      }
+      return false;
+    }
+    if (existing) {
+      if (existing.getAttribute(PATH_ATTR) === active.bindPath) return false;
+      existing.remove();
+    }
+    overlay.insertAdjacentHTML("beforeend", chipHtml(active));
     const chip = overlay.querySelector(`.${WRAP_CLASS}`);
     if (chip) chip.addEventListener("click", (e) => e.stopPropagation());
     const cb = chip && chip.querySelector(`.${CB_CLASS}`);
     if (cb) cb.checked = readFlag();
+    if (announced !== active.bindPath) {
+      announced = active.bindPath;
+      log.info(`next-block: advance chip rendered for genre "${activeGenre().name}" (flag model, ${active.bindPath})`);
+    }
     return true;
   }
   function startNextBlock() {
     if (!DOC || !DOC.body) return setTimeout(startNextBlock, 200);
-    if (!bindPath()) {
-      log.info("next-block: this genre declares no manual advance — control not rendered");
-      return;
-    }
     DOC.addEventListener("change", (e) => {
       const cb = e.target && e.target.classList && e.target.classList.contains(CB_CLASS) ? e.target : null;
       if (!cb) return;
@@ -3643,7 +3677,7 @@ ${cot}` : cot;
     });
     observer2.observe(DOC.body, { childList: true, subtree: true });
     injectInto2();
-    log.info(`next-block active (flag model, ${bindPath()})`);
+    log.info("next-block watching (the chip appears once a genre declaring a manual advance is loaded)");
   }
 
   // src/app/index.js
