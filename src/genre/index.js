@@ -36,11 +36,22 @@ export function activeGenre() {
   return profileFor(engineName());
 }
 
-// One line at startup so the console says which profile is live — the fastest answer to "why is this
-// control missing" / "why is the clock reading that field".
+// One line at startup so the console says which profile the page resolves to — the fastest answer to
+// "why is this control missing" / "why is the clock reading that field".
+//
+// ⚠ THIS IS A SNAPSHOT, NOT A VERDICT, and the line says so. The engine loads on chat load, well after
+// boot, so at the moment this runs engineName() is normally still null and the answer is the default
+// profile — for every game, School included. Reported as a settled fact it would send someone hunting
+// a genre-resolution bug that does not exist (and it would hide the real one: a caller that LATCHES
+// this answer instead of re-asking, which is exactly what broke next-block).
 export function logActiveGenre() {
   const name = engineName();
   const profile = profileFor(name);
-  log.info(`genre: engine ${name ? `"${name}"` : '(none)'} → profile "${profile.name}"`
-    + (profile === MAIN && name ? ' (no profile for that engine — using the default)' : ''));
+  if (!name) {
+    log.info(`genre: no engine has answered yet → profile "${profile.name}" for now`
+      + ' (re-resolved on every use, so an engine that loads later is picked up)');
+    return;
+  }
+  log.info(`genre: engine "${name}" → profile "${profile.name}"`
+    + (profile === MAIN ? ' (no profile for that engine — using the default)' : ''));
 }

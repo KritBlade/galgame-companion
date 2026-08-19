@@ -1,11 +1,21 @@
-// galgame-companion · next-block — surface a game's manual time-advance control on galgame's GUI. v0.9
+// galgame-companion · next-block — surface a game's manual time-advance control on galgame's GUI. v1.0
 //
-// GENRE-GATED (2026-08-19). A manual block advance is not a universal idea — School has time blocks,
-// most genres do not — so both the PATH this drives and WHETHER THE CONTROL EXISTS come from the
-// active genre profile (src/genre/). A genre with `advanceControl: null` never renders the chip, which
-// is the whole point: this file used to hard-code PendingState.BlockDone, so every card got a button
-// that wrote a path only one game owns. The mechanism below is unchanged; only the source of the path
-// and the decision to appear at all moved out.
+// GENRE-GATED. A manual block advance is not a universal idea — School has time blocks, most genres
+// do not — so both the PATH this drives and WHETHER THE CONTROL EXISTS come from the active genre
+// profile (src/genre/). A genre with no advance control renders no chip, which is the point: this
+// file used to hard-code PendingState.BlockDone, so every card got a button writing a path only one
+// game owns. The decision itself is pure and lives in next-block-core.js.
+//
+// THE GENRE IS NOT KNOWABLE AT BOOT — read this before adding any startup gate here. mvu-helper's
+// engineInfo() answers {name: null} until the logic engine has loaded, and the engine loads on CHAT
+// LOAD, long after this script's boot. v0.9 decided the chip's existence ONCE in startNextBlock():
+// every session read "no engine", resolved to the default profile, and returned before installing
+// anything — so School's control was permanently absent and nothing was left watching to correct it
+// (live 2026-08-19, engine load logged 80+ console lines after the companion booted). So NOTHING here
+// latches the genre. The observer is installed unconditionally and every injection re-asks; a chip
+// stamped with another genre's path is replaced, and a chip whose genre no longer declares a control
+// is removed. A genre with no control costs one querySelector per overlay rebuild — the price of not
+// having to know, at boot, something that is not knowable at boot.
 //
 // FLAG MIRROR, NOT AN ACTION. Checking the box only SETS the game's flag — nothing advances at click
 // time. The engine previews where the advance will land so the narrator writes the reply in the new
@@ -25,36 +35,21 @@
 import { DOC, topWindow, log } from '../../env.js';
 import { refreshLocationTimePills } from './location-time-bridge.js';
 import { activeGenre } from '../../genre/index.js';
+import { advanceControlFor, chipHtml, WRAP_CLASS, CB_CLASS, PATH_ATTR } from './next-block-core.js';
 
-const WRAP_CLASS = 'school-nextblock';
-const CB_CLASS = 'school-nextblock-cb';
-// The stat_data path of the game's own advance flag, from the active genre profile. Read per call
-// rather than captured at import: a pack can be installed or switched without reloading this
-// companion, and a path frozen at startup would drive the previous genre's checkbox.
-// Returns null when the genre has no manual advance — every caller treats that as "no control".
-function bindPath() {
-  const control = activeGenre().advanceControl;
-  return (control && control.bindPath) || null;
-}
 const OVERLAY_SEL = '#gal-global-overlay';
 
-// A <label> (not a <div>) so a click ANYWHERE on the chip — the "Next" word included — natively forwards to the
-// checkbox and toggles it. As a bare <div> only the 16px box itself was clickable; clicking the label read as dead.
-function html() {
-  const control = activeGenre().advanceControl || {};
-  const label = control.label || 'Next';
-  const title = control.title || 'Advance to the next segment — uncheck to cancel (until you send a message)';
-  return `<label class="${WRAP_CLASS}" title="${title}">` +
-    `<span class="school-nextblock-label">${label}</span>` +
-    `<input type="checkbox" class="${CB_CLASS}" aria-label="${title}" />` +
-    `</label>`;
+// The live advance control, or null when this genre has none / no engine has answered yet. Read per
+// call, never captured: see THE GENRE IS NOT KNOWABLE AT BOOT above.
+function control() {
+  return advanceControlFor(activeGenre());
 }
 
 // The NEWEST reply's stat-menu advance checkbox (its iframe holds the current turn's stat_data).
 // null if unreachable, or if this genre has no advance control at all.
 function findRealCb() {
-  const path = bindPath();
-  if (!path) return null;
+  const active = control();
+  if (!active) return null;
   const doc = (topWindow && topWindow.document) || DOC;
   const frames = [...doc.querySelectorAll('iframe[id^="TH-message--"]')]
     .map((f) => { const m = /^TH-message--(\d+)--/.exec(f.id); return { f, n: m ? Number(m[1]) : -1 }; })
@@ -62,7 +57,7 @@ function findRealCb() {
     .sort((a, b) => b.n - a.n); // newest reply first
   for (const { f } of frames) {
     try {
-      const cb = f.contentDocument && f.contentDocument.querySelector(`input[type="checkbox"][data-bind-checked="${path}"]`);
+      const cb = f.contentDocument && f.contentDocument.querySelector(`input[type="checkbox"][data-bind-checked="${active.bindPath}"]`);
       if (cb) return cb;
     } catch (e) { /* cross-realm hiccup — try the next iframe */ }
   }
@@ -91,21 +86,41 @@ function nudgePills() {
 // applyValueUpdate(<flag>, want). Setting checked=want THEN click() would toggle AWAY from want and write the
 // opposite (live-caught 2026-07-28 on School: checking our box wrote the flag false).
 function setFlag(want) {
+  const active = control();
   const cb = findRealCb();
-  if (!cb) { log.warn(`next-block: real ${bindPath() || '(no advance control for this genre)'} checkbox not found — cannot set the flag`); return false; }
+  if (!cb) { log.warn(`next-block: real ${active ? active.bindPath : '(no advance control for this genre)'} checkbox not found — cannot set the flag`); return false; }
   if (cb.checked !== want) {
     cb.checked = !want;   // prime so the click toggles TO `want`
     cb.click();           // rt_bindings onclick → applyValueUpdate(<flag>, want) — persisted flag write, no advance
   }
-  log.info(`next-block: ${bindPath()} flag ` + (want ? 'SET (will advance at reply-end; the engine previews it)' : 'cleared'));
+  log.info(`next-block: ${active.bindPath} flag ` + (want ? 'SET (will advance at reply-end; the engine previews it)' : 'cleared'));
   nudgePills();
   return want;
 }
 
+// Say once, on the first chip we ever render, WHICH path it drives — the answer to "is this button
+// wired to the right flag". Repeating it on every overlay rebuild would bury the log instead.
+let announced = '';
+
 function injectInto() {
   const overlay = DOC.querySelector(OVERLAY_SEL);
-  if (!overlay || overlay.querySelector(`.${WRAP_CLASS}`)) return false;
-  overlay.insertAdjacentHTML('beforeend', html());
+  if (!overlay) return false;
+  const active = control();
+  const existing = overlay.querySelector(`.${WRAP_CLASS}`);
+
+  // No control for the live genre — and REMOVE a chip a previous genre left behind, so the answer is
+  // re-derived in both directions rather than only ever gaining.
+  if (!active) {
+    if (existing) { existing.remove(); log.info('next-block: this genre declares no manual advance — chip removed'); }
+    return false;
+  }
+  // A chip already driving this exact path is current; one driving another path is stale, not current.
+  if (existing) {
+    if (existing.getAttribute(PATH_ATTR) === active.bindPath) return false;
+    existing.remove();
+  }
+
+  overlay.insertAdjacentHTML('beforeend', chipHtml(active));
   // Keep the click off galgame's own overlay handlers (this chip lives INSIDE #gal-global-overlay). The label still
   // forwards the click to the checkbox natively — stopPropagation ≠ preventDefault — so it toggles + fires 'change'.
   const chip = overlay.querySelector(`.${WRAP_CLASS}`);
@@ -114,16 +129,15 @@ function injectInto() {
   // reflects RES consuming the flag at reply-end — the real checkbox unchecks, so ours follows on the next rebuild).
   const cb = chip && chip.querySelector(`.${CB_CLASS}`);
   if (cb) cb.checked = readFlag();
+  if (announced !== active.bindPath) {
+    announced = active.bindPath;
+    log.info(`next-block: advance chip rendered for genre "${activeGenre().name}" (flag model, ${active.bindPath})`);
+  }
   return true;
 }
 
 export function startNextBlock() {
   if (!DOC || !DOC.body) return setTimeout(startNextBlock, 200);
-  // NOT this genre's concept → render nothing at all. Checked here rather than inside injectInto so a
-  // genre without an advance control also costs no MutationObserver on the whole overlay subtree.
-  // Deliberately re-checked on the retry above, not before it: on a cold start the engine may not have
-  // finished loading when this first runs, and a genre resolved too early would be main forever.
-  if (!bindPath()) { log.info('next-block: this genre declares no manual advance — control not rendered'); return; }
 
   // Delegated change handler for OUR checkbox: a pure flag toggle. CHECK → set the flag true, UNCHECK → false.
   // Setting cb.checked here fires no further 'change' (property set), so there's no loop.
@@ -136,7 +150,11 @@ export function startNextBlock() {
   });
 
   // Re-inject whenever galgame (re)builds its overlay (rAF-batched, like the toolbar watcher). Each inject re-derives
-  // the box from the live flag, so a reply that consumes it leaves the box unchecked on galgame's next render.
+  // BOTH the genre and the box's checked state, so an engine that loads after this runs is picked up on the next
+  // rebuild, and a reply that consumes the flag leaves the box unchecked on galgame's next render.
+  //
+  // Watching the whole ST body is what makes the late genre safe: the overlay is only one of the things being
+  // rebuilt in there, so "no mutation at all after the engine loads" means nothing is happening on the page.
   let scheduled = false;
   const observer = new MutationObserver(() => {
     if (scheduled) return;
@@ -146,5 +164,5 @@ export function startNextBlock() {
   observer.observe(DOC.body, { childList: true, subtree: true });
 
   injectInto();
-  log.info(`next-block active (flag model, ${bindPath()})`);
+  log.info('next-block watching (the chip appears once a genre declaring a manual advance is loaded)');
 }
