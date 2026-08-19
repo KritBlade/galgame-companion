@@ -1,4 +1,4 @@
-// galgame-companion · location-time-core — the pill STRINGS, as a pure decision. v0.1
+// galgame-companion · location-time-core — the pill STRINGS, as a pure decision. v0.2
 //
 // WHY THIS FILE EXISTS: location-time-bridge.js reaches topWindow and writes DOM, so nothing in it can
 // be opened by a test. The formatting rules below are the part that can actually be WRONG in a way a
@@ -40,11 +40,11 @@ export function mvuVal(x) { return Array.isArray(x) ? x[0] : x; }
 /**
  * The two pill strings: `location`, and `time` as "date (weekday) time · weather".
  *
- * Date and Time are passed through UNRENDERED on purpose. They are already player-facing strings, and a
- * game that formats its clock unconventionally — a 25:00 late-night hour, an in-world calendar — means
- * it. Normalizing that here would be this module deciding it knows better than the game about the
- * game's own clock, which is precisely the genre knowledge it refuses to hold. Location, Weekday and
- * Weather are enum/registry keys and DO get rendered.
+ * EVERY World field routes through the labeler, Date and Time included. A game with unconventional
+ * clock semantics (an extended 25:00 late-night hour, an in-world calendar) owns their display
+ * translation — the labeler is the game's own voice, so asking it is the blind move, and no labeler
+ * or no opinion means the raw stored value shows, exactly as before. What this module still refuses
+ * to hold is any clock knowledge of its OWN: it never inspects or reformats what comes back.
  *
  * Every segment is conditional: a game that never sets Weather, or a save mid-migration with no
  * Weekday, gets a shorter pill rather than a stray "()" or a leading "·".
@@ -60,8 +60,8 @@ export function pillStrings(statData, renderLabel, onError) {
   const location = displayValue('World.Location', mvuVal(W.Location), statData, renderLabel, onError);
   const weekday = displayValue('World.Weekday', mvuVal(W.Weekday), statData, renderLabel, onError);
   const weather = displayValue('World.Weather', mvuVal(W.Weather), statData, renderLabel, onError);
-  const date = String(mvuVal(W.Date) == null ? '' : mvuVal(W.Date)).trim();
-  const time = String(mvuVal(W.Time) == null ? '' : mvuVal(W.Time)).trim();
+  const date = displayValue('World.Date', mvuVal(W.Date), statData, renderLabel, onError);
+  const time = displayValue('World.Time', mvuVal(W.Time), statData, renderLabel, onError);
   const parts = [];
   if (date) parts.push(weekday ? `${date} (${weekday})` : date);
   if (time) parts.push(time);

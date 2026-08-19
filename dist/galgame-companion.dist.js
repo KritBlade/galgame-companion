@@ -3,7 +3,7 @@
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
   var VERSION = "0.8.2";
-  var BUILD = "8011535-dirty";
+  var BUILD = "14144c3-dirty";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -3315,8 +3315,8 @@ ${cot}` : cot;
     const location = displayValue("World.Location", mvuVal(W.Location), statData, renderLabel, onError);
     const weekday = displayValue("World.Weekday", mvuVal(W.Weekday), statData, renderLabel, onError);
     const weather = displayValue("World.Weather", mvuVal(W.Weather), statData, renderLabel, onError);
-    const date = String(mvuVal(W.Date) == null ? "" : mvuVal(W.Date)).trim();
-    const time = String(mvuVal(W.Time) == null ? "" : mvuVal(W.Time)).trim();
+    const date = displayValue("World.Date", mvuVal(W.Date), statData, renderLabel, onError);
+    const time = displayValue("World.Time", mvuVal(W.Time), statData, renderLabel, onError);
     const parts = [];
     if (date) parts.push(weekday ? `${date} (${weekday})` : date);
     if (time) parts.push(time);

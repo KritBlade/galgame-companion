@@ -62,7 +62,7 @@ describe('displayValue — renders by ASKING, never by knowing', () => {
 });
 
 describe('pillStrings — the assembled pills', () => {
-  it('renders the enum-backed fields and leaves the clock alone', () => {
+  it('renders every World field through the labeler (clock included — stub has no clock opinion here)', () => {
     const p = pillStrings(world(), labeler);
     expect(p.location).toBe('一年一班');
     expect(p.time).toBe('2026-04-08 (週三) 07:45 · 晴朗');
@@ -76,12 +76,20 @@ describe('pillStrings — the assembled pills', () => {
     expect(p.time).toBe('2026-04-08 (Wed) 07:45 · Clear');
   });
 
-  // The clock is the GAME'S to format. School's real clock runs extended hours past midnight (25:30 =
-  // 1:30am of the same story day); the companion must carry that through untouched rather than
-  // "correcting" it, which would be genre knowledge it has no business holding.
-  it('passes an unconventional clock through verbatim', () => {
+  // The clock is the GAME'S to format — and the labeler is the game's voice. A labeler with no
+  // clock opinion means the stored value shows verbatim (this module still holds zero clock
+  // knowledge of its own); a labeler that DOES translate the clock — School answers civil time
+  // for its extended 25:30 hours — is honored like any other field.
+  it('no clock opinion -> the unconventional clock shows verbatim', () => {
     const p = pillStrings(world({ Time: ['25:30', 'Time'] }), labeler);
     expect(p.time).toBe('2026-04-08 (週三) 25:30 · 晴朗');
+  });
+  it('a labeler WITH a clock opinion is honored — the translation comes back through the ask', () => {
+    const civil = (path, val) => path === 'World.Time' && val === '25:30' ? '01:30'
+      : path === 'World.Date' && val === '2026-04-08' ? '2026-04-09'
+      : path === 'World.Weekday' ? '週四' : labeler(path, val);
+    const p = pillStrings(world({ Time: ['25:30', 'Time'] }), civil);
+    expect(p.time).toBe('2026-04-09 (週四) 01:30 · 晴朗');
   });
 
   it('drops missing segments instead of leaving dangling separators', () => {
