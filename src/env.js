@@ -1,4 +1,4 @@
-// galgame-companion · env — shared constants + parent-document access + logging. v0.2
+// galgame-companion · env — shared constants + parent-document access + logging. v0.3
 // The companion runs in its OWN Tavern-Helper iframe (same TH runtime as galgame; NOT an ST
 // extension). galgame renders its GUI into the PARENT SillyTavern document — same origin,
 // so we reach it via window.parent.document (GCP §1).
@@ -29,12 +29,13 @@ export const VERSION = '__VERSION__';
 // WHY IT EXISTS (2026-08-02): the dev loop serves dist/ off a local static server, and two different
 // builds of the SAME version are indistinguishable — a fix was in dist/ but there was no way to tell
 // whether the tab had loaded it or a copy from before the rebuild. VERSION alone could not answer
-// that; only a per-BUILD identity can. Shape: `<git-sha>[-dirty]`.
+// that; only a per-BUILD identity can. Shape: a 7-hex CONTENT HASH of the bundle itself.
 //
-// The `@<ISO time>` half was REMOVED 2026-08-14: dist/ is committed, so a stamp that changes on every
-// build made every rebuild look like a change and taught everyone to skim past the line — including
-// the `-dirty` flag, which is the half worth reading. See build.mjs buildStamp() for the full
-// argument. The stamp now moves only when the commit or the clean/dirty state does.
+// It is deliberately NOT the git sha, and carries no `-dirty` suffix: dist/ is committed, so a stamp
+// tied to HEAD could never settle — every dist commit moved HEAD and dirtied dist/ again. A hash of
+// the code changes if and only if the code changes, and a build made from uncommitted source hashes
+// to something no commit contains, which is the same warning the suffix used to give. See build.mjs
+// contentStamp() for the full argument. Map a stamp to its commit with `git log -S<stamp> -- dist/`.
 export const BUILD = '__BUILD_STAMP__';
 
 // Parent ST document (galgame's overlay lives here). Fallback to own document only if the

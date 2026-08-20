@@ -1,5 +1,5 @@
 // galgame-companion build — bundles src/ (entry src/app/index.js) into one IIFE dist file (mirrors galgame's
-// esbuild setup, minus its CSS/vendor plumbing we don't need). v0.1
+// esbuild setup, minus its CSS/vendor plumbing we don't need). v0.2
 //   node build.mjs           one-shot build
 //   node build.mjs --watch   rebuild on change (pair with a static server for live dev)
 // esbuild resolves from maker-app/node_modules (already a dependency there).
@@ -7,6 +7,7 @@
 import * as esbuild from 'esbuild';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { teeToLog } from './dev-log.mjs';
@@ -15,37 +16,45 @@ const root = dirname(fileURLToPath(import.meta.url));
 const isWatch = process.argv.includes('--watch');
 
 // Per-BUILD identity, stamped into the bundle so the running code can name itself (env.js BUILD).
-// git sha + a dirty flag: the sha says which commit, `-dirty` says "plus uncommitted edits".
+// It is a HASH OF THE BUNDLE'S OWN CONTENT — the identity of the code, not of the commit it happens
+// to land in.
 //
-// DELIBERATELY NO TIMESTAMP (2026-08-14). It used to carry `@<ISO time>`, to "separate two builds of
-// the same dirty tree" — but that reasoning does not survive contact with dist/ being COMMITTED:
-//   • if two builds of a dirty tree genuinely differ, the BUNDLE differs and the stamp is redundant;
-//   • if they do not differ, we want the output byte-identical — and the timestamp made it differ
-//     anyway, so every rebuild showed dist/ as modified with no change in it.
-// The only case the timestamp distinguished was therefore the case where there was nothing to
-// distinguish, while the noise it created is what teaches people to ignore the stamp — including the
-// `-dirty` half, which is the part that actually matters. Live proof: `e6fd873-dirty` shipped to
-// jsdelivr unnoticed, because a one-line stamp diff on every build is not worth reading.
-// The stamp now changes IF AND ONLY IF the commit or the clean/dirty state changed.
-function buildStamp() {
-  let sha = 'nogit';
-  let dirty = '';
+// IT USED TO BE `git rev-parse --short HEAD`, and that could never settle, because dist/ is
+// COMMITTED: a source commit moved HEAD, the rebuild stamped the new HEAD, dist/ went dirty, the
+// dist commit moved HEAD again, and the next rebuild was dirty again. Six commits in forty existed
+// only to re-stamp. The stamp was naming a commit that did not exist yet at build time — the same
+// defect as the removed `@<ISO time>` half (a stamp that changes with nothing else) and the same
+// defect as the old dirty check (a stamp measuring its own output), arrived at from a third
+// direction.
+//
+// A content hash changes IF AND ONLY IF the bundled code changes. Rebuild any number of times, commit
+// anything at all: identical source produces a byte-identical dist/, so it only ever shows as
+// modified when it genuinely differs. To map a stamp back to a commit: `git log -S<stamp> -- dist/`.
+//
+// THE `-dirty` SUFFIX IS GONE FROM THE STAMP, and its job is done better by the hash itself: a build
+// carrying uncommitted edits hashes to something no commit contains, so a bundle that does not match
+// any committed dist/ IS the dirty one (which is how `e6fd873-dirty` reached jsdelivr unnoticed —
+// a suffix people had learned to skim). The uncommitted-source WARNING stays, at build time, where
+// the person who could still act on it is looking.
+function contentStamp(text) {
+  return createHash('sha256').update(text).digest('hex').slice(0, 7);
+}
+
+// Shipping a bundle built from uncommitted source is the thing worth catching, so say it out loud
+// per build. dist/ is excluded: building WRITES dist/, so counting it would make every build after
+// the first report a dirtiness it caused itself.
+function warnIfSourceUncommitted() {
   try {
-    const r = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: root, encoding: 'utf8' });
-    if (r.status === 0) sha = r.stdout.trim();
-    // `-dirty` must mean "uncommitted SOURCE", so dist/ is excluded from the check. Building writes
-    // dist/, which dirties the tree, which the NEXT build would report as dirty — the stamp measuring
-    // its own output. That is why a clean-tree build was unreachable: `npm run build` guaranteed the
-    // condition it was reporting on.
     const s = spawnSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' });
-    const sourceChanges = s.status === 0
-      ? s.stdout.split('\n').map((l) => l.trim()).filter(Boolean).filter((l) => !/\sdist\//.test(l))
-      : [];
-    if (sourceChanges.length) dirty = '-dirty';
+    if (s.status !== 0) return;
+    const sourceChanges = s.stdout.split('\n').map((l) => l.trim()).filter(Boolean)
+      .filter((l) => !/\sdist\//.test(l));
+    if (sourceChanges.length) {
+      console.warn(`[build] NOTE: ${sourceChanges.length} uncommitted source change(s) — this bundle exists in no commit. Do not publish it.`);
+    }
   } catch (e) {
-    console.warn('[build] could not read git for the build stamp (using "nogit"):', e.message);
+    console.warn('[build] could not read git to check for uncommitted source:', e.message);
   }
-  return `${sha}${dirty}`;
 }
 
 // Tee build output (incl. esbuild's own warnings) to logs/ — 'dev' for the watch loop
@@ -56,7 +65,7 @@ teeToLog(isWatch ? 'dev' : 'build');
 // the bundle (env.js VERSION) alongside the build stamp, so the running code and the package agree
 // by construction instead of by remembering to edit two files.
 //
-// READ FRESH ON EVERY REBUILD, exactly like buildStamp() — never cached at process start. This is
+// READ FRESH ON EVERY REBUILD, exactly like the content stamp — never cached at process start. This is
 // the version-half of the 2026-08-02 stamp lesson, learned separately (2026-08-19): it used to be a
 // top-level `const`, so a --watch process outlived a version bump and stamped its startup version
 // onto every later rebuild — a `git pull` that moved package.json to 0.8.2 woke the watcher, which
@@ -106,7 +115,7 @@ const logMessages = {
       // "0 warning(s)" — the summary was reporting esbuild's tally while calling it the build's.
       let stampWarnings = 0;
       let stamp = '(unstamped)';
-      const version = currentVersion(); // per-rebuild, same discipline as buildStamp()
+      const version = currentVersion(); // per-rebuild, same discipline as the content stamp
       if (!errors.length) {
         try {
           const file = (result.outputFiles || [])[0];
@@ -116,13 +125,10 @@ const logMessages = {
           // visible to a player in a toast title line, and indistinguishable in the log from a
           // version that simply never got bumped.
           let text = file.text;
-          if (text.includes(PLACEHOLDER)) {
-            stamp = buildStamp();
-            text = text.replace(PLACEHOLDER, stamp);
-          } else {
-            stampWarnings++;
-            console.warn(`[build] WARNING: ${PLACEHOLDER} not found in the bundle — env.js BUILD will read as the raw placeholder and build reporting is BROKEN. Did the placeholder in src/env.js get renamed?`);
-          }
+          // VERSION IS STAMPED FIRST, because the build stamp is a hash of the FINISHED bundle: the
+          // version it reports has to be inside the text being hashed. Hashing first would give two
+          // different releases of identical code the same identity.
+          //
           // The banner carries the placeholder too (it must not freeze a startup version the way
           // the old template literal did), so this is a replaceAll and "found at least twice" is
           // the healthy state: banner + env.js. Fewer than two means one of them lost it.
@@ -133,8 +139,16 @@ const logMessages = {
             console.warn(`[build] WARNING: ${VERSION_PLACEHOLDER} found fewer than twice in the bundle (banner + env.js expected) — the missing site will NOT carry package.json's ${version}. Did a placeholder get renamed?`);
             text = text.replaceAll(VERSION_PLACEHOLDER, version); // stamp whatever is left anyway
           }
+          if (text.includes(PLACEHOLDER)) {
+            stamp = contentStamp(text);
+            text = text.replace(PLACEHOLDER, stamp);
+          } else {
+            stampWarnings++;
+            console.warn(`[build] WARNING: ${PLACEHOLDER} not found in the bundle — env.js BUILD will read as the raw placeholder and build reporting is BROKEN. Did the placeholder in src/env.js get renamed?`);
+          }
           mkdirSync(dirname(outfile), { recursive: true });
           writeFileSync(outfile, text);
+          warnIfSourceUncommitted();
         } catch (e) {
           console.error('[build] build-stamp write FAILED — dist/ may be stale or missing:', e);
         }
