@@ -1,4 +1,4 @@
-// galgame-companion · genre/genre-profile-core — pick the profile for the loaded engine. v0.1
+// galgame-companion · genre/genre-profile-core — pick the profile for the loaded engine. v0.2
 //
 // WHY THIS DIRECTORY EXISTS. This companion is a BLIND ADAPTER: it adapts interface SHAPES and must
 // never learn one game's vocabulary (see SCRIPT_NAME in env.js for the same argument applied to the
@@ -46,17 +46,16 @@ export const MAIN = Object.freeze({
   advanceControl: null,
 });
 
-// School: a WALL CLOCK distinct from the cursor, plus a manual block advance.
+// School: a plain civil World clock like everyone else, plus a manual block advance.
 //
-// World.Date/Time in School are a CURSOR — where the story RESUMES — so after a reply that ended the
-// day they read tomorrow morning rather than the scene just shown. School publishes World.Wall* for
-// display and the pills must prefer it. The plain fields stay as the SECOND candidate so a save
-// written before the wall clock existed still renders (its first resolve fills them in).
+// School v4's game-time model made World.Date/Time the one display clock (prose-driven civil time;
+// the engine steers by its own DayDate + band, which no display reads). The old Wall* fields are
+// gone — what makes School a distinct profile is ONLY the Next-Block control.
 export const SCHOOL = Object.freeze({
   name: 'school',
-  clockDate: Object.freeze(['WallDate', 'Date']),
-  clockWeekday: Object.freeze(['WallWeekday', 'Weekday']),
-  clockTime: Object.freeze(['WallTime', 'Time']),
+  clockDate: Object.freeze(['Date']),
+  clockWeekday: Object.freeze(['Weekday']),
+  clockTime: Object.freeze(['Time']),
   advanceControl: Object.freeze({
     bindPath: 'PendingState.BlockDone',
     label: 'Next',

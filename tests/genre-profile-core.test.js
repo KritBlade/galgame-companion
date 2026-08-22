@@ -63,11 +63,10 @@ describe('profile shape — what every genre must declare', () => {
     expect(MAIN.advanceControl).toBeNull();
   });
 
-  it('School prefers its wall clock but still falls back to the plain fields', () => {
-    // the fallback is what lets a save written before the wall clock existed still render a pill
-    expect(SCHOOL.clockDate).toEqual(['WallDate', 'Date']);
-    expect(SCHOOL.clockWeekday).toEqual(['WallWeekday', 'Weekday']);
-    expect(SCHOOL.clockTime).toEqual(['WallTime', 'Time']);
+  it('School reads the plain civil clock like everyone else (v4 game-time model: Wall* is gone)', () => {
+    expect(SCHOOL.clockDate).toEqual(['Date']);
+    expect(SCHOOL.clockWeekday).toEqual(['Weekday']);
+    expect(SCHOOL.clockTime).toEqual(['Time']);
   });
 
   it('profiles are frozen — a consumer cannot mutate another genre by accident', () => {

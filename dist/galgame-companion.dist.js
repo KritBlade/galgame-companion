@@ -3,7 +3,7 @@
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
   var VERSION = "0.8.2";
-  var BUILD = "44871dc";
+  var BUILD = "633ff0b";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -3304,9 +3304,9 @@ ${cot}` : cot;
   });
   var SCHOOL = Object.freeze({
     name: "school",
-    clockDate: Object.freeze(["WallDate", "Date"]),
-    clockWeekday: Object.freeze(["WallWeekday", "Weekday"]),
-    clockTime: Object.freeze(["WallTime", "Time"]),
+    clockDate: Object.freeze(["Date"]),
+    clockWeekday: Object.freeze(["Weekday"]),
+    clockTime: Object.freeze(["Time"]),
     advanceControl: Object.freeze({
       bindPath: "PendingState.BlockDone",
       label: "Next",

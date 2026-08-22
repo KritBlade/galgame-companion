@@ -115,42 +115,31 @@ describe('pillStrings — the assembled pills', () => {
     expect(bare).toEqual({ location: '', time: '' });
   });
 
-  // WALL CLOCK (2026-08-19). School publishes World.Wall* as its DISPLAY clock because World.Date/Time
-  // are a CURSOR — where the story resumes, which after a day-ending reply is tomorrow morning, not the
-  // scene just read. Preferring Wall* when present is a generic convention; absent or empty, nothing changes.
-  it('prefers the published wall clock over the cursor', () => {
+  // CLOCK PATHS ARE PROFILE-DECLARED. School v4's game-time model made World.Date/Time the one
+  // display clock, so its profile lists the plain fields — but the MECHANISM stays: a profile that
+  // declares other candidates is honored in order, with per-field fallback, and the default profile
+  // never reaches for a field it was not told about.
+  it('School reads the plain civil clock (its profile lists no other candidates)', () => {
     const p = pillStrings(world({
-      Date: ['2026-04-09', 'Date'], Time: ['07:30', 'Time'], Weekday: ['Thu', 'Weekday'],
-      WallDate: ['2026-04-08', 'WD'], WallWeekday: ['Wed', 'WW'], WallTime: ['23:40', 'WT'],
+      Date: ['2026-04-09', 'Date'], Time: ['23:40', 'Time'], Weekday: ['Wed', 'Weekday'],
     }), labeler, undefined, SCHOOL);
-    expect(p.time).toBe('2026-04-08 (週三) 23:40 · 晴朗');
+    expect(p.time).toBe('2026-04-09 (週三) 23:40 · 晴朗');
   });
-  it('renders wall values through the labeler too, by their own path', () => {
-    const seen = [];
-    pillStrings(world({ WallDate: ['2026-04-08', 'WD'], WallWeekday: ['Wed', 'WW'], WallTime: ['23:40', 'WT'] }),
-      (path, val) => { seen.push(path); return val; }, undefined, SCHOOL);
-    expect(seen).toContain('World.WallDate');
-    expect(seen).toContain('World.WallTime');
-    expect(seen).not.toContain('World.Date');
+  it('a multi-candidate profile is honored in order, per field (the mechanism survives)', () => {
+    const CUSTOM = { name: 'custom', clockDate: ['AltDate', 'Date'], clockWeekday: ['AltWeekday', 'Weekday'], clockTime: ['AltTime', 'Time'], advanceControl: null };
+    const p = pillStrings(world({ AltDate: ['2030-01-01', 'AD'], AltWeekday: ['', 'AW'], AltTime: ['12:34', 'AT'] }), labeler, undefined, CUSTOM);
+    expect(p.time).toBe('2030-01-01 (週三) 12:34 · 晴朗');   // empty AltWeekday falls back per-field
   });
-  it('falls back to the cursor when the wall clock is absent (a game that publishes none)', () => {
-    expect(pillStrings(world(), labeler, undefined, SCHOOL).time).toBe('2026-04-08 (週三) 07:45 · 晴朗');
-  });
-  it('falls back per-field when a wall value is empty', () => {
-    const p = pillStrings(world({ WallDate: ['', 'WD'], WallWeekday: ['', 'WW'], WallTime: ['23:40', 'WT'] }), labeler, undefined, SCHOOL);
-    expect(p.time).toBe('2026-04-08 (週三) 23:40 · 晴朗');
-  });
-
-  // THE BLINDNESS GUARD (2026-08-19): with the default profile this module must not reach for a field
+  // THE BLINDNESS GUARD: with the default profile this module must not reach for a field
   // only one game publishes, even when that field is sitting right there in stat_data.
-  it('the MAIN profile ignores a wall clock it was never told about', () => {
+  it('the MAIN profile ignores fields it was never told about', () => {
     const p = pillStrings(world({
-      WallDate: ['1999-01-01', 'WD'], WallWeekday: ['Fri', 'WW'], WallTime: ['03:00', 'WT'],
+      AltDate: ['1999-01-01', 'AD'], AltTime: ['03:00', 'AT'],
     }), labeler, undefined, MAIN);
     expect(p.time).toBe('2026-04-08 (週三) 07:45 · 晴朗');
   });
   it('no profile at all behaves as MAIN', () => {
-    const p = pillStrings(world({ WallTime: ['03:00', 'WT'] }), labeler);
+    const p = pillStrings(world({ AltTime: ['03:00', 'AT'] }), labeler);
     expect(p.time).toContain('07:45');
   });
 
