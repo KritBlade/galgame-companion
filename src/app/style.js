@@ -1,4 +1,4 @@
-// galgame-companion · style — small CSS overrides injected into the parent document. v0.4
+// galgame-companion · style — small CSS overrides injected into the parent document. v0.6
 // Only cosmetic nudges that a dictionary swap can't express. Keep tiny; anything galgame
 // renames simply stops matching (graceful).
 
@@ -110,6 +110,39 @@ const CSS = `
    survives the flex squeeze and displays inline (below the chat) even with immersive off.
    Keyed on .active — only present while the overlay is meant to be shown. */
 #gal-global-overlay.active { flex-shrink: 0 !important; min-height: 70vh !important; }
+
+/* Free-input box, desktop only — galgame sizes every .gal-input-box the same (max-width 31.25rem,
+   textarea min-height 5rem). That fits a one-line reply, not the multi-paragraph turns this card is
+   played with: the writing area is the smallest thing on screen while the artwork behind it is idle.
+   Widen and deepen ONLY #gal-free-input-modal (galgame's other dialogs keep their own size) and let
+   it cover the scene. Guarded above galgame's 48rem mobile breakpoint, where its own rule already
+   makes the box fullscreen — outbidding that (id beats class) would shrink the mobile modal. */
+@media screen and (min-width: 48.0625rem) {
+  #gal-free-input-modal .gal-input-box {
+    width: 88%; max-width: 62rem; max-height: 88vh;
+    display: flex; flex-direction: column;
+  }
+  #gal-free-input-modal .gal-input-field {
+    /* min() so a SHORT viewport (landscape phone / small laptop just past the breakpoint) can't
+       have the textarea's floor push the box past the 88vh cap — a flex item's min-height wins
+       over the parent's max-height, so a fixed floor would overflow off-screen there. */
+    flex: 1; min-height: min(22rem, 45vh); resize: vertical;
+  }
+}
+
+/* Card StatusMenu popups (quest/item detail, equip picker, image lightbox, portrait editor) — the
+   StatusMenu escapes them from its TH message iframe to the PARENT body so the iframe box can't clip
+   them, with a hardcoded inline z-index of 50000-60000. That wins in plain SillyTavern and loses
+   inside galgame, whose own body-level viewers sit at 99999 (.gal-embedded-viewer): opening a quest
+   from galgame's VIEW panel painted the popup BEHIND the panel — invisible, ✕ unclickable, no way to
+   close it (proven live 2026-08-24). Lift them above galgame AND above our own menu modal
+   (2147483000), keeping the StatusMenu's own relative order (detail/equip < lightbox < portrait) so a
+   lightbox opened from a detail popup still stacks on it. !important because the popup's z-index is
+   inline. Native fullscreen is a separate failure (top layer ignores z-index) — statusmenu-popup-layer.js.
+   Keyed on the StatusMenu's ids: a card without a StatusMenu matches nothing. */
+#detail-modal-overlay, #equip-modal-overlay { z-index: 2147483010 !important; }
+#img-popup-overlay { z-index: 2147483015 !important; }
+#portrait-mode-modal { z-index: 2147483020 !important; }
 `;
 
 export function injectStyle() {

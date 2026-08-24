@@ -14,7 +14,7 @@ import { SCRIPT_NAME, VERSION, BUILD, topWindow, log } from '../env.js';
 import { startGalgameDefaults } from './galgame-defaults.js';
 import { injectStyle } from './style.js';
 import { startI18n } from '../features/i18n/index.js';
-import { startToolbar } from '../features/menu/index.js';
+import { startToolbar, startStatusMenuPopupLayer } from '../features/menu/index.js';
 import { startFullscreenGuard, startGeneratingIndicator } from '../features/galgame-quirks/index.js';
 import { startImageSeam, startImageViewer, startImageRegen, startBackgroundManager } from '../features/image/index.js';
 import { startBeatShaper } from '../features/beat-shaper/index.js';
@@ -52,6 +52,7 @@ startGalgameDefaults();
 injectStyle();
 startI18n();
 startToolbar();
+startStatusMenuPopupLayer(); // card StatusMenu popups escape to the parent body: keep them above galgame's viewers and inside its fullscreen layer
 startFullscreenGuard(); // release native fullscreen galgame leaks when its "quit mode" is clicked
 // Order matters: the shaper MUST register before the seam so that on the same MESSAGE_UPDATED
 // (ST awaits listeners sequentially) the text is already shaped — uid-scoped scene names in place —
