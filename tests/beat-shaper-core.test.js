@@ -1,8 +1,8 @@
-// beat-shaper-core unit tests — pure transform (plan GALGAME_DUMB_TERMINAL_PLAN.md §5.1). v0.2
+// beat-shaper-core unit tests — pure transform (plan GALGAME_DUMB_TERMINAL_PLAN.md §5.1). v0.3
 import { describe, it, expect } from 'vitest';
 import {
   shapeMessage, sceneName, sceneUid, shortHash, uidOfSceneName, chatKeyOfSceneName,
-  SCENE_NAME_RE, LEGACY_SCENE_NAME_RE, parseCombatLog, repairTruncatedEnvelope,
+  SCENE_NAME_RE, LEGACY_SCENE_NAME_RE, parseCombatLog, repairTruncatedEnvelope, synthesizeEnvelope,
 } from '../src/features/beat-shaper/beat-shaper-core.js';
 
 // A rendered image block exactly as mvu-helper's imagegen REPLACE path writes it.
@@ -669,5 +669,92 @@ describe('§0a tail rescue — a <pic> outside the envelope still gets a backdro
     expect(r.stats.imagesRehomed).toBe(2);
     expect(r.stats.scenes).toBe(2);
     expect(r.text.indexOf(nameFor(m.uid, 1))).toBeLessThan(r.text.indexOf(nameFor(m.uid, 2)));
+  });
+});
+
+
+describe('synthesizeEnvelope (§4c)', () => {
+  // The live 2026-09-02 reply: <maintext> opened, prose in PLAIN TEXT (zero <p>), never closed.
+  const liveShape = [
+    '<maintext>',
+    'He jabbed a thumb at the boards.',
+    '',
+    'Class assignments, she said.',
+    '',
+    '<combat_log>',
+    '[Probe] on Mitsuki - DC 11, RawDie 13 +2 = 15 -> Success',
+    '</combat_log>',
+    '',
+    '<choices>',
+    '<choice value="go">Go</choice>',
+    '</choices>',
+  ].join('\n');
+
+  it('closes an unclosed envelope at the first tail-machinery tag - no </p> needed', () => {
+    const out = synthesizeEnvelope(liveShape);
+    expect(out.inserted).toEqual(['close']);
+    const inner = out.text.match(/<maintext>([\s\S]*?)<\/maintext>/i)[1];
+    expect(inner).toContain('Class assignments');
+    expect(inner).not.toContain('<combat_log>');
+  });
+
+  it('leaves <combat_log> in the TAIL, which is where parseCombatLog reads it', () => {
+    const out = synthesizeEnvelope(liveShape);
+    const tail = out.text.slice(out.text.indexOf('</maintext>'));
+    expect(parseCombatLog(tail).length).toBe(1);
+  });
+
+  it('is needed because §4b cannot help here', () => {
+    expect(repairTruncatedEnvelope(liveShape)).toBe(null);
+  });
+
+  it('synthesizes BOTH tags when the open tag is missing - the case galgame cannot survive', () => {
+    const noOpen = [
+      'She turned away.',
+      '',
+      '<UpdateVariable>',
+      '<JSONPatch>[{"op":"replace","path":"/a/0","value":1}]</JSONPatch>',
+      '</UpdateVariable>',
+    ].join('\n');
+    const out = synthesizeEnvelope(noOpen);
+    expect(out.inserted.slice().sort()).toEqual(['close', 'open']);
+    const inner = out.text.match(/<maintext>([\s\S]*?)<\/maintext>/i)[1];
+    expect(inner).toContain('She turned away.');
+    expect(inner).not.toContain('"op"');   // the JSON that became a speaker name on 2026-08-04
+  });
+
+  it('opens AFTER a leaked reasoning close, so step 0b still strips it from the head', () => {
+    const withThink = '<think>plotting</think>\nShe left.\n<combat_log>\n[Probe] on X\n</combat_log>';
+    const out = synthesizeEnvelope(withThink);
+    expect(out.text.indexOf('</think>')).toBeLessThan(out.text.indexOf('<maintext>'));
+    expect(out.text.match(/<maintext>([\s\S]*?)<\/maintext>/i)[1]).not.toContain('plotting');
+  });
+
+  it('never treats <classmate_trait_check> as a boundary - it belongs INSIDE inner', () => {
+    const withTrait = '<maintext>\nprose\n<classmate_trait_check>x</classmate_trait_check>\nmore prose\n<combat_log>\n[Probe] on X\n</combat_log>';
+    const inner = synthesizeEnvelope(withTrait).text.match(/<maintext>([\s\S]*?)<\/maintext>/i)[1];
+    expect(inner).toContain('<classmate_trait_check>');
+    expect(inner).toContain('more prose');
+  });
+
+  it('leaves an ordinary chat message alone - no machinery, no anchor, no envelope invented', () => {
+    expect(synthesizeEnvelope('Hello, how are you?')).toBe(null);
+    expect(synthesizeEnvelope('')).toBe(null);
+    expect(synthesizeEnvelope(null)).toBe(null);
+  });
+
+  it('does nothing when the envelope is already whole', () => {
+    expect(synthesizeEnvelope('<maintext>\n<p>fine</p>\n</maintext>\n<combat_log>x</combat_log>')).toBe(null);
+  });
+
+  it('shapeMessage reports no-envelope ONLY when machinery says one is owed', () => {
+    expect(shapeMessage('just chatting', mint()).deferred).toBe(null);
+    expect(shapeMessage('prose\n<UpdateVariable>x</UpdateVariable>', mint()).deferred).toBe('no-envelope');
+  });
+
+  it('the synthesized envelope then shapes normally - prose becomes <p> beats', () => {
+    const out = shapeMessage(synthesizeEnvelope(liveShape).text, mint());
+    expect(out.deferred).toBe(null);
+    expect(out.stats.wrapped).toBeGreaterThan(0);
   });
 });

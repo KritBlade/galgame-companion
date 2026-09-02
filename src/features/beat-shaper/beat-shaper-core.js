@@ -1,4 +1,4 @@
-// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v0.9
+// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v1.0
 //
 // Deterministically reshapes an AI reply into galgame's beat contract (plan: mvu-helper
 // plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). galgame's standard parser builds display beats ONLY
@@ -124,6 +124,13 @@ const RE_MAINTEXT_CLOSE = /<\/maintext>/i;
 // Engine-native display envelope (School v3 output.txt). galgame parses ONLY <maintext>; presets
 // carrying galgame's COT teach the model <maintext>, but any other preset keeps <gametxt> and the
 // GUI renders nothing scene-wise. Renamed to <maintext> ONLY when no <maintext> exists.
+// BLOCK MACHINERY THAT LIVES OUTSIDE THE ENVELOPE — the anchor §4c closes against.
+// These are the blocks a finished reply puts AFTER </maintext>, and the pipeline already assumes it:
+// parseCombatLog reads <combat_log> off the TAIL. So closing the envelope before the first of them
+// hands the rest of this file the shape it was written for, rather than inventing a new one.
+// <classmate_trait_check> is deliberately ABSENT: it is comment-hidden INSIDE inner (step 1), so
+// treating it as a boundary would move it to the tail and lose the hide.
+const RE_TAIL_MACHINERY = /<(?:combat_log|choices|UpdateVariable|POSTUpdateVariable|RES_Variable|RES_POST_Variable|StoryAnalysis|combat_calculation)\b/i;
 const RE_GAMETXT_OPEN = /<gametxt>/i;
 const RE_GAMETXT_CLOSE = /<\/gametxt>/i;
 // Engine/galgame-COT realtime-bg-gen prompt (<bgimg>TAGS</bgimg>, parser.js pairs it with the
@@ -446,6 +453,48 @@ export function repairTruncatedEnvelope(raw) {
   };
 }
 
+// ── §4c envelope synthesis ───────────────────────────────────────────────────
+// §4b repairs a MISSING CLOSE by anchoring on the last complete </p>. Measured against galgame v2.2
+// (2026-09-02), that is the case galgame already survives on its own — its extractor carries
+// RE_MAINTEXT_UNCLOSED, which takes everything from <maintext> to end of string.
+// What it does NOT survive is a missing OPEN tag: `content` is then left as the WHOLE message, JSON
+// and all, and `{ "op"` is read as a speaker name. That is the 2026-08-04 GUI death.
+//
+// So the invariant is ONE tag, not two: the OPEN must exist. This derives whichever edge is missing
+// from the first tail-machinery tag, which needs no </p> and no guess about where the model meant to
+// stop — a low-end model drops tags at random, but it does not drop every block tag at once.
+//
+// Returns null when there is nothing to do or no anchor to do it with — including for an ordinary
+// chat message, which carries no machinery and must stay untouched.
+export function synthesizeEnvelope(raw) {
+  const text = String(raw == null ? '' : raw);
+  const openM = text.match(RE_MAINTEXT_OPEN);
+  const closeM = text.match(RE_MAINTEXT_CLOSE);
+  if (openM && closeM) return null;
+
+  const machFrom = openM ? openM.index + openM[0].length : 0;
+  const machRel = RE_TAIL_MACHINERY.exec(text.slice(machFrom));
+  if (!machRel) return null;
+  const machAt = machFrom + machRel.index;
+
+  // Prose starts after the LAST reasoning close before the machinery, so step 0b still sees the
+  // think block in the head and strips it. Opening at 0 instead would trap it inside the envelope.
+  let proseAt = 0;
+  if (!openM) {
+    const re = /<\/think(?:ing)?>/gi;
+    let t;
+    while ((t = re.exec(text)) !== null && t.index < machAt) proseAt = t.index + t[0].length;
+    if (closeM) proseAt = Math.min(proseAt, closeM.index);
+  }
+
+  const inserted = [];
+  let out = text;
+  // Close first: it sits at a HIGHER index than the open, so inserting it cannot move proseAt.
+  if (!closeM) { out = `${out.slice(0, machAt)}\n</maintext>\n${out.slice(machAt)}`; inserted.push('close'); }
+  if (!openM) { out = `${out.slice(0, proseAt)}\n<maintext>\n${out.slice(proseAt)}`; inserted.push('open'); }
+  return { text: out, inserted };
+}
+
 export function shapeMessage(raw, mintUid) {
   const blankStats = () => ({
     wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false,
@@ -466,7 +515,9 @@ export function shapeMessage(raw, mintUid) {
   //    then shape normally. A reply that already has <maintext> keeps its <gametxt> (if any) as-is.
   let text0 = raw;
   if (!RE_MAINTEXT_OPEN.test(raw)) {
-    if (!RE_GAMETXT_OPEN.test(raw)) return unchanged(); // not a galgame-format reply — leave alone
+    // No envelope of either kind. A reply carrying tail machinery is this game's and has LOST its
+    // envelope (§4c repairs it once the turn is over); anything else is an ordinary message.
+    if (!RE_GAMETXT_OPEN.test(raw)) return unchanged(RE_TAIL_MACHINERY.test(raw) ? 'no-envelope' : null);
     if (!RE_GAMETXT_CLOSE.test(raw)) return unchanged('gametxt-unclosed'); // still streaming — retry later
     text0 = raw.replace(RE_GAMETXT_OPEN, '<maintext>').replace(RE_GAMETXT_CLOSE, '</maintext>');
     stats.renamed = true;

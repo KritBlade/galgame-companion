@@ -1,5 +1,5 @@
 // galgame-companion · beat-shaper — deterministic reshaping of AI replies into galgame's beat
-// contract (plan: mvu-helper plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). v0.3
+// contract (plan: mvu-helper plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). v0.4
 //
 // Event-driven wrapper around the pure transform in beat-shaper-core.js: on MESSAGE_RECEIVED /
 // MESSAGE_UPDATED, read the floor's raw text (TH getChatMessages), shape it, and write it back
@@ -20,7 +20,7 @@
 //   transform is idempotent, and a per-floor in-flight set blocks re-entry.
 
 import { topWindow, log, warnToast } from '../../env.js';
-import { shapeMessage, sceneUid, shortHash, repairTruncatedEnvelope } from './beat-shaper-core.js';
+import { shapeMessage, sceneUid, shortHash, repairTruncatedEnvelope, synthesizeEnvelope } from './beat-shaper-core.js';
 import { isTurnBusy } from '../galgame-quirks/index.js';
 
 const inFlight = new Set(); // message ids currently being shaped (re-entrancy guard)
@@ -197,9 +197,22 @@ async function onMessageEvent(messageId) {
   // never coming, so deferring forever leaves galgame parsing raw text (which blocked the whole GUI
   // once — see repairTruncatedEnvelope).
   // Repair, then re-shape the repaired text so this turn still gets its normal treatment.
-  if ((deferred === 'maintext-unclosed' || deferred === 'gametxt-unclosed') && !isTurnBusy()) {
-    const repair = repairTruncatedEnvelope(raw);
-    if (repair) {
+  if ((deferred === 'maintext-unclosed' || deferred === 'gametxt-unclosed' || deferred === 'no-envelope') && !isTurnBusy()) {
+    // §4c runs ONLY here, never inside shapeMessage: a synthesized tag is WRITTEN to the message, so
+    // doing it mid-stream would freeze a boundary the rest of the reply was about to move.
+    // It also outranks §4b on the missing-OPEN case, which §4b cannot address at all.
+    const repair = deferred === 'no-envelope' ? null : repairTruncatedEnvelope(raw);
+    const synth = repair ? null : synthesizeEnvelope(raw);
+    if (!repair && synth) {
+      log.warn(
+        `beat-shaper msg=${id}: reply is missing its envelope (${synth.inserted.join(' + ')}) and the turn is finished. ` +
+        'Derived it from the first block-machinery tag and inserted it. A MISSING OPEN tag is the one galgame ' +
+        'cannot survive — its extractor falls through to the whole message and reads JSON as a speaker name — ' +
+        'so this costs at most a beat of prose instead of the interface.',
+      );
+      ({ text, changed, deferred, stats } = shapeMessage(synth.text, mintUidForCurrentChat));
+      changed = true;
+    } else if (repair) {
       log.warn(
         `beat-shaper msg=${id}: reply is TRUNCATED — no ${repair.closeTag} and the turn is finished, so it is never coming. ` +
         `Inserted ${repair.closeTag} after the last complete </p>; ${repair.droppedChars} char(s) of partial output now sit ` +
@@ -209,7 +222,7 @@ async function onMessageEvent(messageId) {
       ({ text, changed, deferred, stats } = shapeMessage(repair.text, mintUidForCurrentChat));
       changed = true;   // the repair itself is a change even if shaping found nothing else to do
     } else {
-      log.warn(`beat-shaper msg=${id}: reply is TRUNCATED with no complete </p> to close after — leaving it raw (galgame may mis-parse it).`);
+      log.warn(`beat-shaper msg=${id}: reply has no usable envelope — no complete </p> to close after and no block-machinery tag to anchor on. Leaving it raw (galgame may mis-parse it).`);
     }
   }
 

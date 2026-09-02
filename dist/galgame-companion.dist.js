@@ -3,7 +3,7 @@
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
   var VERSION = "0.8.3";
-  var BUILD = "a182f70";
+  var BUILD = "4d8e333";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -1826,6 +1826,7 @@
   }
   var RE_MAINTEXT_OPEN = /<maintext>/i;
   var RE_MAINTEXT_CLOSE = /<\/maintext>/i;
+  var RE_TAIL_MACHINERY = /<(?:combat_log|choices|UpdateVariable|POSTUpdateVariable|RES_Variable|RES_POST_Variable|StoryAnalysis|combat_calculation)\b/i;
   var RE_GAMETXT_OPEN = /<gametxt>/i;
   var RE_GAMETXT_CLOSE = /<\/gametxt>/i;
   var RE_BGIMG_TAG = /[ \t]*<bgimg>[\s\S]*?<\/bgimg>[ \t]*\r?\n?/gi;
@@ -1931,6 +1932,38 @@ ${closeTag}${text.slice(lastEnd)}`,
       // how much fell OUTSIDE the envelope (not deleted)
     };
   }
+  function synthesizeEnvelope(raw) {
+    const text = String(raw == null ? "" : raw);
+    const openM = text.match(RE_MAINTEXT_OPEN);
+    const closeM = text.match(RE_MAINTEXT_CLOSE);
+    if (openM && closeM) return null;
+    const machFrom = openM ? openM.index + openM[0].length : 0;
+    const machRel = RE_TAIL_MACHINERY.exec(text.slice(machFrom));
+    if (!machRel) return null;
+    const machAt = machFrom + machRel.index;
+    let proseAt = 0;
+    if (!openM) {
+      const re = /<\/think(?:ing)?>/gi;
+      let t;
+      while ((t = re.exec(text)) !== null && t.index < machAt) proseAt = t.index + t[0].length;
+      if (closeM) proseAt = Math.min(proseAt, closeM.index);
+    }
+    const inserted = [];
+    let out = text;
+    if (!closeM) {
+      out = `${out.slice(0, machAt)}
+</maintext>
+${out.slice(machAt)}`;
+      inserted.push("close");
+    }
+    if (!openM) {
+      out = `${out.slice(0, proseAt)}
+<maintext>
+${out.slice(proseAt)}`;
+      inserted.push("open");
+    }
+    return { text: out, inserted };
+  }
   function shapeMessage(raw, mintUid) {
     const blankStats = () => ({
       wrapped: 0,
@@ -1960,7 +1993,7 @@ ${closeTag}${text.slice(lastEnd)}`,
     if (typeof raw !== "string" || raw.length === 0) return unchanged();
     let text0 = raw;
     if (!RE_MAINTEXT_OPEN.test(raw)) {
-      if (!RE_GAMETXT_OPEN.test(raw)) return unchanged();
+      if (!RE_GAMETXT_OPEN.test(raw)) return unchanged(RE_TAIL_MACHINERY.test(raw) ? "no-envelope" : null);
       if (!RE_GAMETXT_CLOSE.test(raw)) return unchanged("gametxt-unclosed");
       text0 = raw.replace(RE_GAMETXT_OPEN, "<maintext>").replace(RE_GAMETXT_CLOSE, "</maintext>");
       stats.renamed = true;
@@ -2211,16 +2244,23 @@ ${cot}` : cot;
       });
     }
     let { text, changed, deferred, stats } = shapeMessage(raw, mintUidForCurrentChat);
-    if ((deferred === "maintext-unclosed" || deferred === "gametxt-unclosed") && !isTurnBusy()) {
-      const repair = repairTruncatedEnvelope(raw);
-      if (repair) {
+    if ((deferred === "maintext-unclosed" || deferred === "gametxt-unclosed" || deferred === "no-envelope") && !isTurnBusy()) {
+      const repair = deferred === "no-envelope" ? null : repairTruncatedEnvelope(raw);
+      const synth = repair ? null : synthesizeEnvelope(raw);
+      if (!repair && synth) {
+        log.warn(
+          `beat-shaper msg=${id}: reply is missing its envelope (${synth.inserted.join(" + ")}) and the turn is finished. Derived it from the first block-machinery tag and inserted it. A MISSING OPEN tag is the one galgame cannot survive — its extractor falls through to the whole message and reads JSON as a speaker name — so this costs at most a beat of prose instead of the interface.`
+        );
+        ({ text, changed, deferred, stats } = shapeMessage(synth.text, mintUidForCurrentChat));
+        changed = true;
+      } else if (repair) {
         log.warn(
           `beat-shaper msg=${id}: reply is TRUNCATED — no ${repair.closeTag} and the turn is finished, so it is never coming. Inserted ${repair.closeTag} after the last complete </p>; ${repair.droppedChars} char(s) of partial output now sit OUTSIDE the envelope (kept, not deleted). The turn likely emitted no <UpdateVariable>, so RES resolved nothing — check the narrator's max response tokens.`
         );
         ({ text, changed, deferred, stats } = shapeMessage(repair.text, mintUidForCurrentChat));
         changed = true;
       } else {
-        log.warn(`beat-shaper msg=${id}: reply is TRUNCATED with no complete </p> to close after — leaving it raw (galgame may mis-parse it).`);
+        log.warn(`beat-shaper msg=${id}: reply has no usable envelope — no complete </p> to close after and no block-machinery tag to anchor on. Leaving it raw (galgame may mis-parse it).`);
       }
     }
     if (deferred) {
