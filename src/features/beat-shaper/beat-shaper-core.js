@@ -16,7 +16,8 @@
 // v0.5: beat-based binding also survives TAIL-CLUSTERING — a reasoning model sometimes dumps EVERY image
 // at the end (all prose, then img1 img2), which left image #2's scene governing no beat so it never showed
 // ("2nd image never displays"); we now guarantee every image owns >=1 beat (a starved tail image steals a
-// trailing beat). ALSO strips a leaked reasoning block (a </think>, matched OR orphan, before <maintext>).
+// trailing beat). ALSO strips a leaked reasoning block before <maintext> — anchored on a </think> close
+// (matched or orphan) OR on an unclosed <think> open; either half can arrive alone.
 // v0.4 was the interspersed-only fix (scene #n right after image #(n-1)); v0.5 generalizes it.
 // v0.6: scene names are keyed by a per-message UID instead of the chat index — see §2.1 for why the
 // index was actively wrong (deleting a message renumbered the chat and made two messages collide).
@@ -64,6 +65,8 @@
 // the SAME reply yields the SAME name. The image-seam prunes superseded siblings (same uid+n, old hash).
 //
 // Capture groups: 1 = uid, 2 = chatKey, 3 = beat number, 4 = image hash.
+import { scanTagBalance } from '../../shared/tag-balance-core.js';
+
 export const SCENE_NAME_RE = /^(gc([0-9a-z]+)-[0-9a-z]+)_scene_(\d+)_([0-9a-z]+)$/;
 
 // Pre-uid names (msg{index}_scene_{n} with an optional hash). NOTHING mints these any more — the regex
@@ -199,7 +202,10 @@ const RE_EXISTING_UID = /<background\s+scene="(gc[0-9a-z]+-[0-9a-z]+)_scene_\d+_
 // A leaked chain-of-thought CLOSE that survived into the message before <maintext>: a reasoning model can
 // emit </think> without a paired <think> (the open gets consumed upstream), so galgame's matched-tag strip
 // misses it. Everything up to the LAST such close in the head is CoT; we drop through it (Fix, §0b).
-const RE_THINK_CLOSE = /<\/think(?:ing)?>/gi;
+// Which balance events are a leaked reasoning block. Detection itself is the shared tag-balance
+// scanner (shared/tag-balance-core.js — every mis-emitted-tag shape used to grow its own regex fork
+// here); this file keeps only the POLICY: which tags are reasoning, and how a leak is repaired.
+const RE_THINK_TAG = /^think(?:ing)?$/i;
 
 // Blocks whose CONTENT must never be re-wrapped (protected verbatim during the <p>-wrap pass).
 // Built as alternatives of one scanning regex; order matters only for overlap (none in practice).
@@ -477,13 +483,24 @@ export function synthesizeEnvelope(raw) {
   if (!machRel) return null;
   const machAt = machFrom + machRel.index;
 
-  // Prose starts after the LAST reasoning close before the machinery, so step 0b still sees the
-  // think block in the head and strips it. Opening at 0 instead would trap it inside the envelope.
+  // WHERE THE SYNTHESIZED OPEN GOES, when a reasoning block leaked into the head. It must land AFTER
+  // the think tag, so step 0b (which only reads the head) still sees the leak and strips it; opening
+  // at 0 traps the tag INSIDE the envelope, where the <p>-wrap makes it a beat — `<p><think>plan…</p>`
+  // is the shape that fed the thinking beautifier a <style> element and cost the whole stage
+  // (2026-09-04). Detection is the shared scanner over the pre-machinery head, so both leak shapes
+  // land here as data:
+  //   • a close (matched or orphan) — the LAST one bounds the reasoning; prose starts after it.
+  //   • an unclosed open — nothing in the text says where the reasoning ENDS, so no boundary is
+  //     honest. Anchor on the open's end: §0b then removes the tag itself, which is what breaks
+  //     galgame's parse, and the planning TEXT stays visible as prose. That is this function's
+  //     standing trade — a beat of wrong prose instead of the interface — and it is loud in the log.
   let proseAt = 0;
   if (!openM) {
-    const re = /<\/think(?:ing)?>/gi;
-    let t;
-    while ((t = re.exec(text)) !== null && t.index < machAt) proseAt = t.index + t[0].length;
+    const thinkEvents = scanTagBalance(text.slice(0, machAt)).events.filter((e) => RE_THINK_TAG.test(e.tag));
+    const closes = thinkEvents.filter((e) => e.kind === 'close');
+    const unclosedOpen = thinkEvents.find((e) => e.kind === 'open' && e.status === 'unclosed-open');
+    if (closes.length) proseAt = closes[closes.length - 1].end;
+    else if (unclosedOpen) proseAt = unclosedOpen.end;
     if (closeM) proseAt = Math.min(proseAt, closeM.index);
   }
 
@@ -566,24 +583,43 @@ export function shapeMessage(raw, mintUid) {
     }
   }
 
-  // 0b) Strip a leaked reasoning block from the head. A </think> before <maintext> — matched OR ORPHAN (a
-  //     reasoning model can emit the close with no surviving <think> open, so galgame's own matched-tag
-  //     strip misses it) — means everything up to it is chain-of-thought that leaked into .mes. Drop
-  //     through the LAST such close; the <maintext> tag that follows is kept. SAFE: the real /Intent/
-  //     emissions live in the post-maintext <UpdateVariable> block (the untouched TAIL), never the head.
-  RE_THINK_CLOSE.lastIndex = 0;
-  let thinkM, lastThinkEnd = -1;
-  while ((thinkM = RE_THINK_CLOSE.exec(head)) !== null) lastThinkEnd = thinkM.index + thinkM[0].length;
-  if (lastThinkEnd !== -1) {
-    // HAND THE TEXT BACK rather than dropping it on the floor. The strip is still right — this content
-    // must not reach the player — but it is the model's actual reasoning, and it is the ONE copy in
-    // existence: ST never captured it (its parser needs BOTH tags and this case is a close with no
-    // open), so deleting here deleted it everywhere. The caller stashes it where a human can read it.
-    // Own closes come out of the captured text; a fresh regex, because RE_THINK_CLOSE is /g and
-    // carries lastIndex state across calls.
-    stats.strippedThinkText = head.slice(0, lastThinkEnd).replace(/<\/think(?:ing)?>/gi, '').trim();
-    head = head.slice(lastThinkEnd).replace(/^\s+/, '');
+  // 0b) Strip a leaked reasoning block from the head — POLICY over the shared tag-balance scanner's
+  //     findings. Every shape a model has leaked live is one policy branch here: a close (matched or
+  //     orphan — galgame's own matched-tag strip misses the orphan) bounds the leak from above; an
+  //     unclosed open bounds it from below, ending at the envelope. SAFE: the real /Intent/ emissions
+  //     live in the post-maintext <UpdateVariable> block (the untouched TAIL), never the head.
+  // Detection: ONE scan of the head names every think-tag event with positions — matched pair,
+  // orphan close (2026-08 live) and unclosed open (2026-09-04 live) all arrive as data instead of
+  // each owning a regex fork here. (`head` ends with the <maintext> open by construction, which the
+  // scanner reports as one more unclosed-open — filtered out with everything non-think.)
+  const thinkEvents = scanTagBalance(head).events.filter((e) => RE_THINK_TAG.test(e.tag));
+  const thinkCloses = thinkEvents.filter((e) => e.kind === 'close');
+  const thinkOpen = thinkEvents.find((e) => e.kind === 'open' && e.status === 'unclosed-open');
+  if (thinkCloses.length) {
+    // Any close — matched or orphan — bounds the leak: everything up THROUGH THE LAST one is
+    // chain-of-thought. HAND THE TEXT BACK rather than dropping it on the floor: it is the model's
+    // actual reasoning and the ONE copy in existence (ST's parser needs both tags), so deleting here
+    // deleted it everywhere. The caller stashes it where a human can read it.
+    const cutEnd = thinkCloses[thinkCloses.length - 1].end;
+    stats.strippedThinkText = head.slice(0, cutEnd).replace(/<\/?think(?:ing)?>/gi, '').trim();
+    head = head.slice(cutEnd).replace(/^\s+/, '');
     stats.strippedThink = 1;
+  } else if (thinkOpen) {
+    // The MIRROR leak (live 2026-09-04): <think> opened and NEVER closed, running its planning block
+    // straight into <maintext>. Everything from that open to the envelope is reasoning — the close
+    // that would bound it tighter does not exist, so end-of-head is the only boundary that is not a
+    // guess (engine caption lines caught in the span are display sugar whose data lives in
+    // stat_data). Left in place it cost the whole stage: a thinking beautifier rendered the block as
+    // a <style> element, galgame's parser fell through to the raw floor, and no <background scene>
+    // was ever requested. Text before the open (usually nothing) is kept — and so is the <maintext>
+    // open tag, by construction the LAST thing in `head`.
+    const envM = head.match(RE_MAINTEXT_OPEN);
+    const end = envM ? envM.index : head.length;
+    if (end > thinkOpen.at) {
+      stats.strippedThinkText = head.slice(thinkOpen.end, end).trim();
+      head = head.slice(0, thinkOpen.at) + head.slice(end);
+      stats.strippedThink = 1;
+    }
   }
 
   // mvu-helper still owes this message rendered images. Shape everything else NOW and skip only the

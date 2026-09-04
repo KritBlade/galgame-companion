@@ -345,6 +345,31 @@ describe('leaked-reasoning strip (Fix §0b)', () => {
     expect(r.stats.strippedThinkText).toBe('');
   });
 
+  // THE MIRROR LEAK (live 2026-09-04): <think> opened and NEVER closed — the model ran a planning
+  // block straight into <maintext>. The close-anchored strip finds no </think> and used to pass the
+  // whole block through; a thinking beautifier then rendered it as a <style> element, galgame's
+  // parser fell through to the raw floor, and the stage never requested the scene's backdrop.
+  it('strips an UNCLOSED <think> (open, no close) ahead of <maintext>, and hands the CoT back', () => {
+    const raw = '<think><plan~>\n- step one\n- step two\n</plan~>\n\n[ 🗓️ Date: 2026-04-08 ]\n\n<maintext>\n<p>narration</p>\n</maintext>\n\n<UpdateVariable>/Intent/eventFire: x</UpdateVariable>';
+    const r = shapeMessage(raw, mint());
+    expect(r.stats.strippedThink).toBe(1);
+    expect(r.text.startsWith('<maintext>')).toBe(true);
+    expect(r.text).not.toContain('<think>');
+    expect(r.text).not.toContain('step one');
+    expect(r.text).toContain('<p>narration</p>');
+    expect(r.text).toContain('/Intent/eventFire: x');            // TAIL untouched
+    expect(r.stats.strippedThinkText).toContain('step one');     // handed back, not destroyed
+    expect(r.stats.strippedThinkText).not.toContain('<think>');  // the tag is packaging, not reasoning
+  });
+
+  it('an unclosed <think> strip keeps any text BEFORE the open', () => {
+    const raw = 'kept preamble\n<think>leaked plan\n<maintext>\n<p>beat</p>\n</maintext>';
+    const r = shapeMessage(raw, mint());
+    expect(r.text).toContain('kept preamble');
+    expect(r.text).not.toContain('leaked plan');
+    expect(r.stats.strippedThinkText).toBe('leaked plan');
+  });
+
   // The strip REMOVES the CoT from the reply and HANDS IT BACK, because it is the only copy that
   // exists — ST never parsed it (it needs both tags; this is a close with no open). Returning '' here
   // would put us back to destroying the model's reasoning, which is what made the deletion invisible.
@@ -728,6 +753,24 @@ describe('synthesizeEnvelope (§4c)', () => {
     const out = synthesizeEnvelope(withThink);
     expect(out.text.indexOf('</think>')).toBeLessThan(out.text.indexOf('<maintext>'));
     expect(out.text.match(/<maintext>([\s\S]*?)<\/maintext>/i)[1]).not.toContain('plotting');
+  });
+
+  // THE UNCLOSED MIRROR (live 2026-09-04, found by the shared scanner 2026-09-05): <think> opened and
+  // never closed, with no envelope either. The close-only scan this function used to run saw nothing,
+  // left proseAt at 0, and put <maintext> BEFORE the tag — so the tag rode INSIDE the envelope, the
+  // <p>-wrap made it a beat (`<p><think>plan…</p>`), and that is the shape that fed the thinking
+  // beautifier a <style> element and took the stage down.
+  it('opens after an UNCLOSED <think> too, so 0b can still remove the tag that breaks the parse', () => {
+    const unclosed = '<think>plotting hard\nShe left.\n<combat_log>\n[Probe] on X\n</combat_log>';
+    const out = synthesizeEnvelope(unclosed);
+    expect(out.inserted.slice().sort()).toEqual(['close', 'open']);
+    expect(out.text.indexOf('<think>')).toBeLessThan(out.text.indexOf('<maintext>'));
+
+    // …and end to end: the tag is gone from the shaped reply, never wrapped into a beat.
+    const shaped = shapeMessage(out.text, mint());
+    expect(shaped.stats.strippedThink).toBe(1);
+    expect(shaped.text).not.toContain('<think');
+    expect(shaped.text).not.toContain('<p><think');
   });
 
   it('never treats <classmate_trait_check> as a boundary - it belongs INSIDE inner', () => {
