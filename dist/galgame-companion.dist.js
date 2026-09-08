@@ -1,9 +1,9 @@
-// galgame-companion v0.8.6
+// galgame-companion v0.8.7
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.8.6";
-  var BUILD = "f5c5558";
+  var VERSION = "0.8.7";
+  var BUILD = "84bb65c";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -1347,6 +1347,86 @@
     log.info("i18n active" + (HARVEST ? " (harvest mode — run __galI18nDump() when done)" : ""));
   }
 
+  // src/shared/tag-balance-core.js
+  var kMarkupPattern = /<!--[\s\S]*?-->|<(\/?)([a-zA-Z][-.:0-9_a-zA-Z@\xB7\xC0-\xD6\xD8-\xF6\u00F8-\u03A1\u03A3-\u03D9\u03DB-\u03EF\u03F7-\u03FF\u0400-\u04FF\u0500-\u052F\u1D00-\u1D2B\u1D6B-\u1D77\u1D79-\u1D9A\u1E00-\u1E9B\u1F00-\u1F15\u1F18-\u1F1D\u1F20-\u1F45\u1F48-\u1F4D\u1F50-\u1F57\u1F59\u1F5B\u1F5D\u1F5F-\u1F7D\u1F80-\u1FB4\u1FB6-\u1FBC\u1FBE\u1FC2-\u1FC4\u1FC6-\u1FCC\u1FD0-\u1FD3\u1FD6-\u1FDB\u1FE0-\u1FEC\u1FF2-\u1FF4\u1FF6-\u1FFC\u2126\u212A-\u212B\u2132\u214E\u2160-\u2188\u2C60-\u2C7F\uA722-\uA787\uA78B-\uA78E\uA790-\uA7AD\uA7B0-\uA7B7\uA7F7-\uA7FF\uAB30-\uAB5A\uAB5C-\uAB5F\uAB64-\uAB65\uFB00-\uFB06\uFB13-\uFB17\uFF21-\uFF3A\uFF41-\uFF5A\x37F-\u1FFF\u200C-\u200D\u203F-\u2040\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD]*)((?:\s+[^>]*?(?:(?:'[^']*')|(?:"[^"]*"))?)*)\s*(\/?)>/gu;
+  var DEFAULT_VOID_TAGS = ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"];
+  var DEFAULT_RAW_TEXT_TAGS = ["script", "noscript", "style", "pre"];
+  function scanTagBalance(text, options = {}) {
+    const src = String(text || "");
+    const voidTags = new Set((options.voidTags || DEFAULT_VOID_TAGS).map((t) => t.toLowerCase()));
+    const rawTextTags = new Set((options.rawTextTags || DEFAULT_RAW_TEXT_TAGS).map((t) => t.toLowerCase()));
+    const events = [];
+    const stack = [];
+    const re = new RegExp(kMarkupPattern.source, kMarkupPattern.flags);
+    let match;
+    while (match = re.exec(src)) {
+      const { 0: matchText, 1: leadingSlash, 2: tagName, 4: closingSlash } = match;
+      const at = re.lastIndex - matchText.length;
+      const end = re.lastIndex;
+      if (matchText[1] === "!") continue;
+      const lower = tagName.toLowerCase();
+      if (!leadingSlash) {
+        if (closingSlash || voidTags.has(lower)) {
+          events.push({ tag: tagName, kind: closingSlash ? "self" : "void", at, end, status: "matched" });
+          continue;
+        }
+        const ev = { tag: tagName, kind: "open", at, end, status: "unclosed-open" };
+        events.push(ev);
+        stack.push(ev);
+        if (rawTextTags.has(lower)) {
+          const closeMarkup = `</${tagName}>`;
+          const closeIndex = src.toLowerCase().indexOf(closeMarkup.toLowerCase(), re.lastIndex);
+          if (closeIndex !== -1) {
+            const closeEnd = closeIndex + closeMarkup.length;
+            ev.status = "matched";
+            ev.pairAt = closeIndex;
+            ev.pairEnd = closeEnd;
+            events.push({ tag: tagName, kind: "close", at: closeIndex, end: closeEnd, status: "matched", pairAt: at, pairEnd: end });
+            stack.pop();
+            re.lastIndex = closeEnd;
+          }
+        }
+        continue;
+      }
+      let found = -1;
+      for (let i = stack.length - 1; i >= 0; i--) {
+        if (stack[i].tag.toLowerCase() === lower) {
+          found = i;
+          break;
+        }
+      }
+      if (found === -1) {
+        events.push({ tag: tagName, kind: "close", at, end, status: "orphan-close" });
+        continue;
+      }
+      for (let i = stack.length - 1; i > found; i--) stack.pop();
+      const open = stack.pop();
+      open.status = "matched";
+      open.pairAt = at;
+      open.pairEnd = end;
+      events.push({ tag: tagName, kind: "close", at, end, status: "matched", pairAt: open.at, pairEnd: open.end });
+    }
+    return { events, findings: events.filter((e) => e.status !== "matched") };
+  }
+
+  // src/features/menu/status-menu-core.js
+  var RE_DOCTYPE = /<!doctype\b[^>]*>/gi;
+  function extractMenuDocument(raw) {
+    const text = String(raw == null ? "" : raw);
+    if (!text) return { html: "", wrapperChars: 0 };
+    const open = scanTagBalance(text).events.find(
+      (e) => e.kind === "open" && e.status === "matched" && /^html$/i.test(e.tag)
+    );
+    if (!open) return { html: text, wrapperChars: 0 };
+    let start = open.at;
+    RE_DOCTYPE.lastIndex = 0;
+    const before = text.slice(0, open.at);
+    let m;
+    while ((m = RE_DOCTYPE.exec(before)) !== null) start = m.index;
+    const html = text.slice(start, open.pairEnd);
+    return { html, wrapperChars: text.length - html.length };
+  }
+
   // src/features/menu/status-menu.js
   var MENU_MARKER = "VARIABLE_UPDATE_ENDED";
   function pickMenuScript(scripts) {
@@ -1368,8 +1448,11 @@
         log.warn(`status-menu: no StatusMenu regex script on "${char?.name}"`);
         return null;
       }
-      log.info(`status-menu: loaded "${menu.scriptName}" (${menu.replaceString.length} chars)`);
-      return menu.replaceString;
+      const { html, wrapperChars } = extractMenuDocument(menu.replaceString);
+      log.info(
+        `status-menu: loaded "${menu.scriptName}" (${html.length} chars${wrapperChars ? `, unwrapped from ${wrapperChars} chars of card/platform packaging` : ""})`
+      );
+      return html;
     } catch (e) {
       log.error("status-menu: loadMenuHtml failed:", e);
       return null;
@@ -1404,26 +1487,22 @@
     return last;
   }
   function bridgeGlobals(iw) {
-    const fromSelf = [
-      "getVariables",
-      "getChatMessages",
-      "waitGlobalInitialized",
-      "eventOn",
-      "getLastMessageId",
-      "triggerSlash",
-      "SillyTavern",
-      "TavernHelper",
-      "updateVariablesWith",
-      "insertOrAssignVariables",
-      "replaceVariables"
-    ];
     const bridged = [];
-    for (const k of fromSelf) {
+    for (const k of ["SillyTavern", "TavernHelper"]) {
       if (typeof window[k] !== "undefined") {
         iw[k] = window[k];
         bridged.push(k);
       }
     }
+    let copied = 0;
+    for (const k of Object.keys(window.TavernHelper || {})) {
+      if (typeof window[k] === "function") {
+        iw[k] = window[k];
+        copied++;
+      }
+    }
+    if (copied) bridged.push(`${copied} TavernHelper functions`);
+    else log.error("status-menu: no TavernHelper functions found on this window — is the companion running inside a TH script iframe? The menu will render blank");
     iw.getCurrentMessageId = latestMessageId;
     bridged.push("getCurrentMessageId(shim)");
     try {
@@ -1436,7 +1515,7 @@
       log.warn("status-menu: could not reach parent Mvu:", e);
     }
     if (typeof iw.getVariables !== "function") {
-      log.error("status-menu: getVariables NOT bridged — menu will render blank");
+      log.error("status-menu: getVariables NOT bridged even after the namespace copy — menu will render blank");
     }
     return bridged;
   }
@@ -1788,68 +1867,6 @@
     observer2.observe(DOC.body, { childList: true });
     ["fullscreenchange", "webkitfullscreenchange", "mozfullscreenchange", "MSFullscreenChange"].forEach((evt) => DOC.addEventListener(evt, sweep2));
     log.info("statusmenu-popup-layer active");
-  }
-
-  // src/shared/tag-balance-core.js
-  var kMarkupPattern = /<!--[\s\S]*?-->|<(\/?)([a-zA-Z][-.:0-9_a-zA-Z@\xB7\xC0-\xD6\xD8-\xF6\u00F8-\u03A1\u03A3-\u03D9\u03DB-\u03EF\u03F7-\u03FF\u0400-\u04FF\u0500-\u052F\u1D00-\u1D2B\u1D6B-\u1D77\u1D79-\u1D9A\u1E00-\u1E9B\u1F00-\u1F15\u1F18-\u1F1D\u1F20-\u1F45\u1F48-\u1F4D\u1F50-\u1F57\u1F59\u1F5B\u1F5D\u1F5F-\u1F7D\u1F80-\u1FB4\u1FB6-\u1FBC\u1FBE\u1FC2-\u1FC4\u1FC6-\u1FCC\u1FD0-\u1FD3\u1FD6-\u1FDB\u1FE0-\u1FEC\u1FF2-\u1FF4\u1FF6-\u1FFC\u2126\u212A-\u212B\u2132\u214E\u2160-\u2188\u2C60-\u2C7F\uA722-\uA787\uA78B-\uA78E\uA790-\uA7AD\uA7B0-\uA7B7\uA7F7-\uA7FF\uAB30-\uAB5A\uAB5C-\uAB5F\uAB64-\uAB65\uFB00-\uFB06\uFB13-\uFB17\uFF21-\uFF3A\uFF41-\uFF5A\x37F-\u1FFF\u200C-\u200D\u203F-\u2040\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD]*)((?:\s+[^>]*?(?:(?:'[^']*')|(?:"[^"]*"))?)*)\s*(\/?)>/gu;
-  var DEFAULT_VOID_TAGS = ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"];
-  var DEFAULT_RAW_TEXT_TAGS = ["script", "noscript", "style", "pre"];
-  function scanTagBalance(text, options = {}) {
-    const src = String(text || "");
-    const voidTags = new Set((options.voidTags || DEFAULT_VOID_TAGS).map((t) => t.toLowerCase()));
-    const rawTextTags = new Set((options.rawTextTags || DEFAULT_RAW_TEXT_TAGS).map((t) => t.toLowerCase()));
-    const events = [];
-    const stack = [];
-    const re = new RegExp(kMarkupPattern.source, kMarkupPattern.flags);
-    let match;
-    while (match = re.exec(src)) {
-      const { 0: matchText, 1: leadingSlash, 2: tagName, 4: closingSlash } = match;
-      const at = re.lastIndex - matchText.length;
-      const end = re.lastIndex;
-      if (matchText[1] === "!") continue;
-      const lower = tagName.toLowerCase();
-      if (!leadingSlash) {
-        if (closingSlash || voidTags.has(lower)) {
-          events.push({ tag: tagName, kind: closingSlash ? "self" : "void", at, end, status: "matched" });
-          continue;
-        }
-        const ev = { tag: tagName, kind: "open", at, end, status: "unclosed-open" };
-        events.push(ev);
-        stack.push(ev);
-        if (rawTextTags.has(lower)) {
-          const closeMarkup = `</${tagName}>`;
-          const closeIndex = src.toLowerCase().indexOf(closeMarkup.toLowerCase(), re.lastIndex);
-          if (closeIndex !== -1) {
-            const closeEnd = closeIndex + closeMarkup.length;
-            ev.status = "matched";
-            ev.pairAt = closeIndex;
-            ev.pairEnd = closeEnd;
-            events.push({ tag: tagName, kind: "close", at: closeIndex, end: closeEnd, status: "matched", pairAt: at, pairEnd: end });
-            stack.pop();
-            re.lastIndex = closeEnd;
-          }
-        }
-        continue;
-      }
-      let found = -1;
-      for (let i = stack.length - 1; i >= 0; i--) {
-        if (stack[i].tag.toLowerCase() === lower) {
-          found = i;
-          break;
-        }
-      }
-      if (found === -1) {
-        events.push({ tag: tagName, kind: "close", at, end, status: "orphan-close" });
-        continue;
-      }
-      for (let i = stack.length - 1; i > found; i--) stack.pop();
-      const open = stack.pop();
-      open.status = "matched";
-      open.pairAt = at;
-      open.pairEnd = end;
-      events.push({ tag: tagName, kind: "close", at, end, status: "matched", pairAt: open.at, pairEnd: open.end });
-    }
-    return { events, findings: events.filter((e) => e.status !== "matched") };
   }
 
   // src/features/beat-shaper/beat-shaper-core.js

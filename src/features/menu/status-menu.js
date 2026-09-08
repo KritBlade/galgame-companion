@@ -1,8 +1,9 @@
 // galgame-companion · status-menu — load the card's StatusMenu into a bridged iframe. v0.1 (G3)
-// The StatusMenu is embedded IN THE CARD as a regex script whose replaceString IS the menu
-// HTML (~335 KB, contains the marker "VARIABLE_UPDATE_ENDED"). We read it from card data at
-// click time (always the card's exact version — nothing shipped here, no drift) and mount it
-// in an iframe, bridging the Tavern-Helper globals the menu needs.
+// The StatusMenu is embedded IN THE CARD as a regex script whose replaceString CONTAINS the menu
+// HTML (~200 KB, marked by "VARIABLE_UPDATE_ENDED"). We read it from card data at click time
+// (always the card's exact version — nothing shipped here, no drift), take the document out of the
+// platform envelope it now ships in (status-menu-core), and mount THAT in an iframe, bridging the
+// Tavern-Helper globals the menu needs.
 //
 // THE BRIDGE (verified live 2026-07-15, corrects GCP §10.1):
 //  - the menu's context lookup is: (typeof window.getVariables === 'function' && window)
@@ -15,6 +16,7 @@
 //    BEFORE writing HTML. The menu then resolves targetWindow = its own window.
 
 import { DOC, log } from '../../env.js';
+import { extractMenuDocument } from './status-menu-core.js';
 
 const MENU_MARKER = 'VARIABLE_UPDATE_ENDED';
 
@@ -39,8 +41,15 @@ export function loadMenuHtml() {
     const scripts = char?.data?.extensions?.regex_scripts || [];
     const menu = pickMenuScript(scripts);
     if (!menu) { log.warn(`status-menu: no StatusMenu regex script on "${char?.name}"`); return null; }
-    log.info(`status-menu: loaded "${menu.scriptName}" (${menu.replaceString.length} chars)`);
-    return menu.replaceString;
+    const { html, wrapperChars } = extractMenuDocument(menu.replaceString);
+    log.info(
+      `status-menu: loaded "${menu.scriptName}" (${html.length} chars`
+      // Named when it happens, because the alternative reads identically in the log right up until
+      // the menu renders as an empty panel: a wrapper written into the iframe puts the menu's real
+      // <!DOCTYPE html> inside a div, and the browser drops it (live 2026-09-08).
+      + `${wrapperChars ? `, unwrapped from ${wrapperChars} chars of card/platform packaging` : ''})`,
+    );
+    return html;
   } catch (e) {
     log.error('status-menu: loadMenuHtml failed:', e);
     return null;
@@ -87,18 +96,34 @@ function latestMessageId() {
 }
 
 // The globals the menu resolves against. Functions come from OUR window; Mvu from the top window.
-// Includes the WRITE API — the menu's interactive controls (Present/In-Conflict checkboxes, the
+//
+// THE WHOLE TAVERN-HELPER SURFACE, not a hand-picked subset. The menu is authored against a real TH
+// script iframe, where every function on the TavernHelper namespace (150 as of TH's current build)
+// is ALSO a bare global — and its API discovery reads exactly that way: `typeof getLorebookEntries
+// === 'function' ? getLorebookEntries : window.parent.getLorebookEntries`. Our popup's parent is the
+// top SillyTavern window, which has none of them, so any name we fail to copy resolves to nothing
+// on BOTH legs and the menu silently skips whatever needed it. That is how the pack layout went
+// missing (live 2026-09-08): the menu had grown a lorebook read for its pack registry, the eleven
+// names listed here did not include it, and the School Menu opened as an empty coloured panel with
+// no error anywhere. Copying the namespace wholesale reproduces the environment instead of chasing
+// it — verified against a blank iframe: none of the 150 names collide with a window property.
+//
+// The WRITE API rides along — the menu's interactive controls (Present/In-Conflict checkboxes, the
 // ✎ editor) call `updateVariablesWith((vars)=>…, {type:'message',message_id})` to persist edits.
-// Without it the menu reads fine but every toggle is a silent no-op. `resolveCurrentMessageId`
-// (our shim) picks the same data floor for writes as for reads.
+// `resolveCurrentMessageId` (our shim, below) picks the same data floor for writes as for reads.
 function bridgeGlobals(iw) {
-  const fromSelf = ['getVariables', 'getChatMessages', 'waitGlobalInitialized', 'eventOn',
-    'getLastMessageId', 'triggerSlash', 'SillyTavern', 'TavernHelper',
-    'updateVariablesWith', 'insertOrAssignVariables', 'replaceVariables'];
   const bridged = [];
-  for (const k of fromSelf) {
+  // The two namespace objects the menu may reach through directly.
+  for (const k of ['SillyTavern', 'TavernHelper']) {
     if (typeof window[k] !== 'undefined') { iw[k] = window[k]; bridged.push(k); }
   }
+  // Every TavernHelper function, as the bare global TH made it on OUR window.
+  let copied = 0;
+  for (const k of Object.keys(window.TavernHelper || {})) {
+    if (typeof window[k] === 'function') { iw[k] = window[k]; copied++; }
+  }
+  if (copied) bridged.push(`${copied} TavernHelper functions`);
+  else log.error('status-menu: no TavernHelper functions found on this window — is the companion running inside a TH script iframe? The menu will render blank');
   // getCurrentMessageId: OVERRIDE (do not pass through) — the companion's own returns -1 in a
   // script iframe. Give the menu the latest message id so it reads that message's stat_data.
   iw.getCurrentMessageId = latestMessageId;
@@ -112,7 +137,7 @@ function bridgeGlobals(iw) {
     log.warn('status-menu: could not reach parent Mvu:', e);
   }
   if (typeof iw.getVariables !== 'function') {
-    log.error('status-menu: getVariables NOT bridged — menu will render blank');
+    log.error('status-menu: getVariables NOT bridged even after the namespace copy — menu will render blank');
   }
   return bridged;
 }
