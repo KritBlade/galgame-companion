@@ -1,4 +1,4 @@
-// galgame-companion · image-seam-core — PURE decisions for the image seam (no DOM/IndexedDB). v0.2
+// galgame-companion · image-seam-core — PURE decisions for the image seam (no DOM/IndexedDB). v0.3
 //
 // The image-seam DELETES rows out of galgame's own global background DB, so "which keys go" is the one
 // decision in this feature that must never be wrong: over-delete and the player loses backdrops from a
@@ -210,4 +210,28 @@ export function decideForceReconcile({ stored, live } = {}) {
   if (typeof value !== 'boolean') return { write: true, to: on, reason: `stored value is not a boolean (${typeof value})` };
   if (value === on) return { write: false, to: on, reason: 'already in sync' };
   return { write: true, to: on, reason: `stored ${value} but galgame is ${on ? 'OPEN' : 'CLOSED'}` };
+}
+
+// ── which floors carry the ForceImageType latch ───────────────────────────────
+// THE BUG THIS EXISTS TO FIX (live 2026-09-08). The latch was written to ONE floor: the newest that
+// holds stat_data. MVU carries stat_data forward, so a NEW reply inherits it — but a REGENERATE (and a
+// swipe) of the newest reply drops that floor and derives the new one from the floor BENEATH it, which
+// never saw the write. mvu-helper's draw pass then reads the latch off that floor, finds it false, and
+// honours the narrator's per-<pic> type= — so the default image type went unenforced for exactly the
+// reply the player had just asked to redo, and the seam's reconcile put the latch back only AFTER the
+// image was drawn. Two floors cover every way a generation derives its state: send / continue read the
+// newest, regenerate / swipe read the one beneath.
+//
+// @param {number} lastId  the newest message id (chat.length - 1); anything below 0 means no chat.
+// @param {(id: number) => boolean} hasStatData  whether floor `id` holds stat_data. Host-supplied and
+//   expected NOT to throw — the host wraps its read and logs, this decision only asks the question.
+// @param {number} lookback  how many floors below lastId to consider before giving up.
+// @returns {number[]} newest-first, at most two floor ids that hold stat_data; [] when none does.
+export function latchFloors(lastId, hasStatData, lookback = 30) {
+  const out = [];
+  if (!Number.isFinite(lastId) || lastId < 0) return out;
+  for (let id = lastId; id >= 0 && id > lastId - lookback && out.length < 2; id--) {
+    if (hasStatData(id) === true) out.push(id);
+  }
+  return out;
 }

@@ -1,5 +1,5 @@
 // galgame-companion · image-seam (G4b) — feed mvu-helper's generated images into galgame's own
-// backdrop library, and flip the ForceImageType latch on immersive enter/exit. GCP §10.3 / VPP §3. v0.7
+// backdrop library, and flip the ForceImageType latch on immersive enter/exit. GCP §10.3 / VPP §3. v0.8
 //
 // PIPELINE: the narrator writes `<background scene="X">` beats; mvu-helper draws each `<pic>` and
 // stamps `<span class="auto-img-wrap"><img src="…"></span>` into the message (then emits
@@ -15,7 +15,7 @@
 import { DOC, topWindow, log } from '../../env.js';
 import { uidOfSceneName, currentChatKey } from '../beat-shaper/index.js';
 import {
-  staleSiblingKeys, deadBackgroundKeys, pairImagesToScenes, unboundImageReport, decideForceReconcile,
+  staleSiblingKeys, deadBackgroundKeys, pairImagesToScenes, unboundImageReport, decideForceReconcile, latchFloors,
 } from './image-seam-core.js';
 import {
   STORE, openBackgroundDb, readAllBackgroundKeys, deleteBackgroundKeys,
@@ -252,23 +252,24 @@ function topMvu() {
   try { return topWindow.Mvu || null; } catch (e) { log.warn('image-seam: reaching top Mvu threw:', e); return null; }
 }
 
-// Newest message floor whose variables actually hold stat_data (mirrors status-menu's resolution;
-// mvu-helper reads ForceImageType at chat.length-1, and MVU carries stat_data forward, so writing
-// the newest data floor propagates the latch to every following reply).
-function latestDataFloor() {
+// The floors the latch is written to — newest-first, the newest floor holding stat_data and the one
+// beneath it (image-seam-core latchFloors says why two: a regenerate or swipe of the newest reply
+// derives its state from the floor beneath, and mvu-helper's draw pass reads the latch there). The
+// newest is also the floor the reconcile reads. [] when no floor holds stat_data yet.
+function latchTargetFloors() {
   let last = -1;
-  try { const n = Number(window.getLastMessageId ? window.getLastMessageId() : NaN); if (Number.isFinite(n) && n >= 0) last = n; } catch (e) { /* fall through */ }
+  try { const n = Number(window.getLastMessageId ? window.getLastMessageId() : NaN); if (Number.isFinite(n) && n >= 0) last = n; }
+  catch (e) { log.warn('image-seam: getLastMessageId threw — falling back to the chat length:', e); }
   if (last < 0) {
-    try { const chat = topWindow.SillyTavern && topWindow.SillyTavern.getContext && topWindow.SillyTavern.getContext().chat; if (Array.isArray(chat)) last = chat.length - 1; } catch (e) { /* fall through */ }
+    try { const chat = topWindow.SillyTavern && topWindow.SillyTavern.getContext && topWindow.SillyTavern.getContext().chat; if (Array.isArray(chat)) last = chat.length - 1; }
+    catch (e) { log.warn('image-seam: reading the chat length threw — no data floor this attempt:', e); }
   }
-  if (last < 0) return -1;
-  const gv = typeof window.getVariables === 'function' ? window.getVariables : null;
-  if (gv) {
-    for (let id = last; id >= 0 && id > last - FLOOR_LOOKBACK; id--) {
-      try { const v = gv({ type: 'message', message_id: id }); if (v && v.stat_data) return id; } catch (e) { /* keep scanning */ }
-    }
-  }
-  return last;
+  if (typeof window.getVariables !== 'function') return [];
+  const hasStatData = (id) => {
+    try { const v = window.getVariables({ type: 'message', message_id: id }); return !!(v && v.stat_data); }
+    catch (e) { log.warn(`image-seam: getVariables(message ${id}) threw — treating that floor as holding no stat_data:`, e); return false; }
+  };
+  return latchFloors(last, hasStatData, FLOOR_LOOKBACK);
 }
 
 // Single flip attempt. Returns 'ok' (written) | 'retry' (transient — Mvu/floor not ready yet, worth
@@ -291,20 +292,26 @@ async function attemptForceImageType(on) {
     log.image('image-seam: top-window Mvu not attached yet — ForceImageType flip deferred to the retry loop');
     return 'retry';
   }
-  const id = latestDataFloor();
-  if (id < 0) { log.image('image-seam: no data floor yet — ForceImageType flip deferred to the retry loop'); return 'retry'; }
+  const floors = latchTargetFloors();
+  if (!floors.length) { log.image('image-seam: no data floor yet — ForceImageType flip deferred to the retry loop'); return 'retry'; }
   try {
-    const data = Mvu.getMvuData({ type: 'message', message_id: id });
-    if (!data || !data.stat_data) { log.image(`image-seam: floor ${id} has no stat_data yet — ForceImageType flip deferred to the retry loop`); return 'retry'; }
-    // setMvuVariable returns false on an unknown path — i.e. a card WITHOUT the G4a init. Tri-state
-    // on the mvu-helper side means that's fine (absent latch = honor the tag); we just skip for good.
-    const okSet = Mvu.setMvuVariable(data, FORCE_PATH, on, { reason: `galgame ${on ? 'enter' : 'exit'}` });
-    if (okSet === false) {
-      log.warn(`image-seam: ${FORCE_PATH} not on this card (card-side init missing) — skip flip`);
-      return 'skip';
+    const written = [];
+    for (const id of floors) {
+      // eslint-disable-next-line no-await-in-loop -- serial on purpose: two floors, and the second write must not race the first
+      const data = Mvu.getMvuData({ type: 'message', message_id: id });
+      if (!data || !data.stat_data) { log.image(`image-seam: floor ${id} has no stat_data yet — ForceImageType flip deferred to the retry loop`); return 'retry'; }
+      // setMvuVariable returns false on an unknown path — i.e. a card WITHOUT the G4a init. Tri-state
+      // on the mvu-helper side means that's fine (absent latch = honor the tag); we just skip for good.
+      const okSet = Mvu.setMvuVariable(data, FORCE_PATH, on, { reason: `galgame ${on ? 'enter' : 'exit'}` });
+      if (okSet === false) {
+        log.warn(`image-seam: ${FORCE_PATH} not on this card (card-side init missing) — skip flip`);
+        return 'skip';
+      }
+      // eslint-disable-next-line no-await-in-loop -- see above
+      await Mvu.replaceMvuData(data, { type: 'message', message_id: id });
+      written.push(id);
     }
-    await Mvu.replaceMvuData(data, { type: 'message', message_id: id });
-    log.image(`image-seam: ForceImageType → ${on} (floor ${id})`);
+    log.image(`image-seam: ForceImageType → ${on} (floors ${written.join(', ')}: the newest and the one beneath, so a regenerate or swipe of the newest reply reads it too)`);
     return 'ok';
   } catch (e) {
     // NOT the async-attach race — a real throw from the MVU API. Kept ungated with its error object:
@@ -381,8 +388,8 @@ let reconcileTimer = null;
 function readStoredForceImageType() {
   const Mvu = topMvu();
   if (!Mvu || typeof Mvu.getMvuData !== 'function') return { ok: false };
-  const id = latestDataFloor();
-  if (id < 0) return { ok: false };
+  const id = latchTargetFloors()[0];
+  if (id === undefined) return { ok: false };
   try {
     const data = Mvu.getMvuData({ type: 'message', message_id: id });
     if (!data || !data.stat_data) return { ok: false };

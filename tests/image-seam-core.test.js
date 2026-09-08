@@ -1,12 +1,12 @@
 // image-seam-core unit tests — the seam's pure decisions: the two DELETE predicates for galgame's
-// shared background store, and the ForceImageType reconcile. v0.2
+// shared background store, and the ForceImageType reconcile and floor choice. v0.3
 //
 // These are the only functions in the companion that remove someone else's data, so the tests lean hard
 // on what must NEVER be deleted: another chat's records, a foreign scene name, or anything at all when
 // the caller's view of "what is alive" is empty/unreadable.
 import { describe, it, expect } from 'vitest';
 import {
-  staleSiblingKeys, deadBackgroundKeys, pairImagesToScenes, unboundImageReport, decideForceReconcile,
+  staleSiblingKeys, deadBackgroundKeys, pairImagesToScenes, unboundImageReport, decideForceReconcile, latchFloors,
 } from '../src/features/image/image-seam-core.js';
 import { sceneName, sceneUid, shortHash } from '../src/features/beat-shaper/beat-shaper-core.js';
 
@@ -266,5 +266,40 @@ describe('unboundImageReport — a fully orphaned message must not fail silently
     expect(r).toMatch(/EVERY image is unbound/);
     expect(r).toMatch(/drifted/);
     expect(r).not.toMatch(/outside the envelope/);
+  });
+});
+
+// The latch used to land on ONE floor, and a regenerate of that very reply reads the floor beneath it.
+describe('latchFloors (which floors carry the ForceImageType latch)', () => {
+  it('THE REGRESSION (live 2026-09-08): a regenerate of the newest reply reads the floor beneath — it is written too', () => {
+    // chat: 0 greeting · 1 user · 2 reply — latch flipped at floor 2, then floor 2 is regenerated.
+    const floors = latchFloors(2, () => true);
+    expect(floors).toEqual([2, 1]);
+    const floorARegenerateDerivesFrom = 2 - 1;
+    expect(floors).toContain(floorARegenerateDerivesFrom);
+  });
+
+  it('skips floors that hold no stat_data and keeps looking for the second', () => {
+    expect(latchFloors(5, (id) => id !== 4 && id !== 3)).toEqual([5, 2]);
+  });
+
+  it('a chat with a single data floor gets that one floor', () => {
+    expect(latchFloors(0, () => true)).toEqual([0]);
+    expect(latchFloors(3, (id) => id === 3)).toEqual([3]);
+  });
+
+  it('never goes below the lookback, and never reports a floor that has no stat_data', () => {
+    expect(latchFloors(40, (id) => id === 5, 30)).toEqual([]);
+    expect(latchFloors(40, (id) => id === 11 || id === 5, 30)).toEqual([11]);
+  });
+
+  it('no chat, or no data floor at all, is an empty answer — the caller defers, it never guesses', () => {
+    expect(latchFloors(-1, () => true)).toEqual([]);
+    expect(latchFloors(NaN, () => true)).toEqual([]);
+    expect(latchFloors(4, () => false)).toEqual([]);
+  });
+
+  it('is newest-first, so the reconcile can read the head as THE current floor', () => {
+    expect(latchFloors(9, () => true)[0]).toBe(9);
   });
 });

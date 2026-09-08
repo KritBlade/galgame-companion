@@ -1,9 +1,9 @@
-// galgame-companion v0.8.7
+// galgame-companion v0.8.10
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.8.7";
-  var BUILD = "84bb65c";
+  var VERSION = "0.8.10";
+  var BUILD = "f918a90";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -2500,6 +2500,14 @@ ${cot}` : cot;
     if (value === on) return { write: false, to: on, reason: "already in sync" };
     return { write: true, to: on, reason: `stored ${value} but galgame is ${on ? "OPEN" : "CLOSED"}` };
   }
+  function latchFloors(lastId, hasStatData, lookback = 30) {
+    const out = [];
+    if (!Number.isFinite(lastId) || lastId < 0) return out;
+    for (let id = lastId; id >= 0 && id > lastId - lookback && out.length < 2; id--) {
+      if (hasStatData(id) === true) out.push(id);
+    }
+    return out;
+  }
 
   // src/features/image/background-store.js
   var DB_NAME = "GalgameUIPluginDB";
@@ -2753,32 +2761,33 @@ ${cot}` : cot;
       return null;
     }
   }
-  function latestDataFloor() {
+  function latchTargetFloors() {
     let last = -1;
     try {
       const n = Number(window.getLastMessageId ? window.getLastMessageId() : NaN);
       if (Number.isFinite(n) && n >= 0) last = n;
     } catch (e) {
+      log.warn("image-seam: getLastMessageId threw — falling back to the chat length:", e);
     }
     if (last < 0) {
       try {
         const chat = topWindow.SillyTavern && topWindow.SillyTavern.getContext && topWindow.SillyTavern.getContext().chat;
         if (Array.isArray(chat)) last = chat.length - 1;
       } catch (e) {
+        log.warn("image-seam: reading the chat length threw — no data floor this attempt:", e);
       }
     }
-    if (last < 0) return -1;
-    const gv = typeof window.getVariables === "function" ? window.getVariables : null;
-    if (gv) {
-      for (let id = last; id >= 0 && id > last - FLOOR_LOOKBACK2; id--) {
-        try {
-          const v = gv({ type: "message", message_id: id });
-          if (v && v.stat_data) return id;
-        } catch (e) {
-        }
+    if (typeof window.getVariables !== "function") return [];
+    const hasStatData = (id) => {
+      try {
+        const v = window.getVariables({ type: "message", message_id: id });
+        return !!(v && v.stat_data);
+      } catch (e) {
+        log.warn(`image-seam: getVariables(message ${id}) threw — treating that floor as holding no stat_data:`, e);
+        return false;
       }
-    }
-    return last;
+    };
+    return latchFloors(last, hasStatData, FLOOR_LOOKBACK2);
   }
   async function attemptForceImageType(on) {
     const Mvu = topMvu();
@@ -2786,24 +2795,28 @@ ${cot}` : cot;
       log.image("image-seam: top-window Mvu not attached yet — ForceImageType flip deferred to the retry loop");
       return "retry";
     }
-    const id = latestDataFloor();
-    if (id < 0) {
+    const floors = latchTargetFloors();
+    if (!floors.length) {
       log.image("image-seam: no data floor yet — ForceImageType flip deferred to the retry loop");
       return "retry";
     }
     try {
-      const data = Mvu.getMvuData({ type: "message", message_id: id });
-      if (!data || !data.stat_data) {
-        log.image(`image-seam: floor ${id} has no stat_data yet — ForceImageType flip deferred to the retry loop`);
-        return "retry";
+      const written = [];
+      for (const id of floors) {
+        const data = Mvu.getMvuData({ type: "message", message_id: id });
+        if (!data || !data.stat_data) {
+          log.image(`image-seam: floor ${id} has no stat_data yet — ForceImageType flip deferred to the retry loop`);
+          return "retry";
+        }
+        const okSet = Mvu.setMvuVariable(data, FORCE_PATH, on, { reason: `galgame ${on ? "enter" : "exit"}` });
+        if (okSet === false) {
+          log.warn(`image-seam: ${FORCE_PATH} not on this card (card-side init missing) — skip flip`);
+          return "skip";
+        }
+        await Mvu.replaceMvuData(data, { type: "message", message_id: id });
+        written.push(id);
       }
-      const okSet = Mvu.setMvuVariable(data, FORCE_PATH, on, { reason: `galgame ${on ? "enter" : "exit"}` });
-      if (okSet === false) {
-        log.warn(`image-seam: ${FORCE_PATH} not on this card (card-side init missing) — skip flip`);
-        return "skip";
-      }
-      await Mvu.replaceMvuData(data, { type: "message", message_id: id });
-      log.image(`image-seam: ForceImageType → ${on} (floor ${id})`);
+      log.image(`image-seam: ForceImageType → ${on} (floors ${written.join(", ")}: the newest and the one beneath, so a regenerate or swipe of the newest reply reads it too)`);
       return "ok";
     } catch (e) {
       log.warn("image-seam: ForceImageType flip threw (will retry):", e);
@@ -2854,8 +2867,8 @@ ${cot}` : cot;
   function readStoredForceImageType() {
     const Mvu = topMvu();
     if (!Mvu || typeof Mvu.getMvuData !== "function") return { ok: false };
-    const id = latestDataFloor();
-    if (id < 0) return { ok: false };
+    const id = latchTargetFloors()[0];
+    if (id === void 0) return { ok: false };
     try {
       const data = Mvu.getMvuData({ type: "message", message_id: id });
       if (!data || !data.stat_data) return { ok: false };
@@ -3337,6 +3350,17 @@ ${cot}` : cot;
     log.image("background-manager active");
   }
 
+  // src/features/galgame-bridge/galgame-mode-core.js
+  var GALGAME_MODE_FLAG_PATH = "galgame_ui_plugin.runtime.enabled";
+  function isGalgameModeFlagOn(characterVariables) {
+    if (!characterVariables || typeof characterVariables !== "object") return false;
+    const plugin = characterVariables.galgame_ui_plugin;
+    if (!plugin || typeof plugin !== "object") return false;
+    const runtime = plugin.runtime;
+    if (!runtime || typeof runtime !== "object") return false;
+    return runtime.enabled === true;
+  }
+
   // src/features/galgame-bridge/choices.js
   var INJECT_KEY = "galgame-companion-choices";
   var OPTION_SHEET_KEY = "sheet_gal_companion_options";
@@ -3352,7 +3376,10 @@ ${cot}` : cot;
     "- Each label is an ACTION the player takes: START WITH A VERB and convey tone + target,",
     '  e.g. "Tease Mitsuki about her blush", "Coolly brush off Mana", "Pull Aoi aside to apologize".',
     "  NEVER a bare line of dialogue and never a lone verb — always verb + who/what + how.",
-    "Offer 3 to 5 distinct actions — more when the moment genuinely branches, fewer when it does not.",
+    "WHICH actions: if another instruction in your context ASSIGNS the options (what each one is, in what",
+    "order), offer exactly those, in that order, as many as it assigns — skip one only when the source it",
+    "names is absent, never because the scene seems not to call for it. Only when nothing assigns them,",
+    "offer 3 to 5 distinct actions — more when the moment genuinely branches, fewer when it does not.",
     "This rule positions ONLY the choice block and relocates NOTHING else: every other block keeps the",
     "exact position its own instructions give it. A block that belongs BEFORE the narration (thoughts,",
     "plans, state) still goes BEFORE the opening narration tag — never moved to the end; a block that",
@@ -3414,6 +3441,20 @@ ${cot}` : cot;
     _cache = { id, len: raw.length, sheet };
     return sheet;
   }
+  function isGalgameModeOn() {
+    if (!topWindow.galgame) return false;
+    if (typeof window.getVariables !== "function") {
+      log.warn(`choices: getVariables is not on this window — cannot read ${GALGAME_MODE_FLAG_PATH}; treating galgame mode as OFF`);
+      return false;
+    }
+    try {
+      return isGalgameModeFlagOn(window.getVariables({ type: "character" }));
+    } catch (e) {
+      log.warn(`choices: reading ${GALGAME_MODE_FLAG_PATH} threw — treating galgame mode as OFF:`, e);
+      return false;
+    }
+  }
+  var _lastInjectOn = null;
   function applyInject(dryRun) {
     if (dryRun) return;
     let ctx = null;
@@ -3424,7 +3465,11 @@ ${cot}` : cot;
       return;
     }
     if (!ctx || typeof ctx.setExtensionPrompt !== "function") return;
-    const on = !!topWindow.galgame;
+    const on = isGalgameModeOn();
+    if (on !== _lastInjectOn) {
+      _lastInjectOn = on;
+      log.info(`choices: galgame mode ${on ? "ON" : "OFF"} (${topWindow.galgame ? GALGAME_MODE_FLAG_PATH : "galgame not on the page"}) → choice instruction ${on ? "injected" : "cleared"}`);
+    }
     try {
       ctx.setExtensionPrompt(INJECT_KEY, on ? CHOICES_INSTRUCTION : "", 1, 0, false, 0);
     } catch (e) {
