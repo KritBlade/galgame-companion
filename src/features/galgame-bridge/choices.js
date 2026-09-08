@@ -1,14 +1,12 @@
-// galgame-companion · choices — card-agnostic story-choice provider. v0.4
-// v0.3 — BUTTON-ONLY: the choice panel NEVER auto-pops. galgame's checkAndRenderOptions auto-shows the panel when
-//   options are new AND the reader is on the last segment (or a panel was already open) — which fires over UNREAD
-//   narration on short / few-segment replies (v3-fixed, regressed in v4). We can't patch galgame's internal
-//   renderGalgameChoices call, so instead we DISMISS any panel that opens WITHOUT a recent click on the "剧情选项 /
-//   Story choices" button (enforceButtonOnlyChoices). The pending-choices BUTTON is untouched — options are never
-//   lost; the reader opens them when ready. Supersedes v0.2's read-gate reset (kept for the new-generation carry-over).
-// v0.2 — READ-FIRST: on each real new generation, dismiss any open choice panel so galgame's OWN read-gate
-//   (pop only when the reader reaches the last beat) re-applies per message. Fixes the carry-over where an
-//   already-visible panel makes the NEXT reply's options pop instantly over unread narration (galgame
-//   choices.js:211). The pending-choices BUTTON still shows immediately — options are never lost.
+// galgame-companion · choices — card-agnostic story-choice provider. v0.7
+//
+// BUTTON-ONLY: the choice panel NEVER auto-pops. galgame's checkAndRenderOptions auto-shows the panel when
+// options are new AND the reader is on the last segment (or a panel was already open) — which fires over UNREAD
+// narration on short / few-segment replies. We can't patch galgame's internal renderGalgameChoices call, so
+// instead we DISMISS any panel that opens WITHOUT a recent click on the "剧情选项 / Story choices" button
+// (enforceButtonOnlyChoices), and on each real new generation fire galgame's own dismiss so its read-gate
+// re-applies per message. The pending-choices BUTTON is untouched — options are never lost; the reader opens
+// them when ready.
 //
 // A2 design (all-genre): galgame's "剧情选项 / Story choices" UI is a PURE READER of
 // AutoCardUpdaterAPI.exportTableAsJson() → the 选项表/行动选项 sheet (galgame/src/ui/choices.js
@@ -33,6 +31,7 @@
 // chat sharing this script never gets the instruction.
 
 import { DOC, topWindow, log } from '../../env.js';
+import { isGalgameModeFlagOn, GALGAME_MODE_FLAG_PATH } from './galgame-mode-core.js';
 
 const INJECT_KEY = 'galgame-companion-choices';
 const OPTION_SHEET_KEY = 'sheet_gal_companion_options'; // galgame REQUIRES a "sheet_"-prefixed key (getOptionsFromDatabase)
@@ -59,6 +58,12 @@ const MAX_CHOICES = 6;                                   // galgame renders what
 // keep the exact position your own instructions gave you — head blocks stay at the head. (galgame's
 // own COT example opens the reply at <maintext>, which already pressures head blocks toward the tail;
 // this line is the counterweight, and it is the part that keeps working when that COT changes.)
+// THE COUNT DEFERS, AND THE DEFERRAL COMES FIRST (2026-09-08): a card may assign the options — slot by
+// slot, with its own genre content — and a count rule that says "fewer when the moment does not branch"
+// lets the model drop assigned slots. Stated as a trailing "unless" after "3 to 5", the deferral lost
+// live: six assigned, three offered. Depth-0 recency makes the first clause the order, so the assigned
+// case is stated first and the 3-to-5 default is the fallback sentence. This inject never knows what
+// the slots ARE — the card does — so it stays card-agnostic.
 const CHOICES_INSTRUCTION = [
   'Also append ONE player-choice block as the very last block of your reply, outside the narration',
   'tags (after </maintext> / </gametxt>):',
@@ -67,7 +72,10 @@ const CHOICES_INSTRUCTION = [
   '- Each label is an ACTION the player takes: START WITH A VERB and convey tone + target,',
   '  e.g. "Tease Mitsuki about her blush", "Coolly brush off Mana", "Pull Aoi aside to apologize".',
   '  NEVER a bare line of dialogue and never a lone verb — always verb + who/what + how.',
-  'Offer 3 to 5 distinct actions — more when the moment genuinely branches, fewer when it does not.',
+  'WHICH actions: if another instruction in your context ASSIGNS the options (what each one is, in what',
+  'order), offer exactly those, in that order, as many as it assigns — skip one only when the source it',
+  'names is absent, never because the scene seems not to call for it. Only when nothing assigns them,',
+  'offer 3 to 5 distinct actions — more when the moment genuinely branches, fewer when it does not.',
   'This rule positions ONLY the choice block and relocates NOTHING else: every other block keeps the',
   'exact position its own instructions give it. A block that belongs BEFORE the narration (thoughts,',
   'plans, state) still goes BEFORE the opening narration tag — never moved to the end; a block that',
@@ -151,15 +159,42 @@ export function getOptionSheet() {
   return sheet;
 }
 
-// Re-assert the inject each real generation based on current galgame presence (mirrors galgame's own
-// GENERATION_STARTED pattern). Empty string clears it — so a non-galgame chat never gets instructed.
+// Is the player IN galgame mode right now? galgame present on the page AND its own per-character mode
+// flag ON (galgame-mode-core says why presence alone is not enough). Read through Tavern-Helper's
+// `getVariables`, a bare global in this script iframe like `getChatMessages` above; the store is the
+// same one galgame's buttons write, so a toggle mid-session is seen on the next generation.
+function isGalgameModeOn() {
+  if (!topWindow.galgame) return false;
+  if (typeof window.getVariables !== 'function') {
+    log.warn(`choices: getVariables is not on this window — cannot read ${GALGAME_MODE_FLAG_PATH}; treating galgame mode as OFF`);
+    return false;
+  }
+  try {
+    return isGalgameModeFlagOn(window.getVariables({ type: 'character' }));
+  } catch (e) {
+    log.warn(`choices: reading ${GALGAME_MODE_FLAG_PATH} threw — treating galgame mode as OFF:`, e);
+    return false;
+  }
+}
+
+// The last decision, so the log says something only when the answer CHANGES — a line per generation
+// would drown the pipeline log for a state that flips a few times a session at most.
+let _lastInjectOn = null;
+
+// Re-assert the inject each real generation from the live galgame MODE (mirrors galgame's own
+// GENERATION_STARTED pattern). Empty string clears it — so a chat outside galgame mode never gets
+// instructed, whether galgame is absent or merely switched off for this character.
 function applyInject(dryRun) {
   if (dryRun) return;
   let ctx = null;
   try { ctx = topWindow.SillyTavern && topWindow.SillyTavern.getContext && topWindow.SillyTavern.getContext(); }
   catch (e) { log.warn('choices: getContext threw:', e); return; }
   if (!ctx || typeof ctx.setExtensionPrompt !== 'function') return;
-  const on = !!topWindow.galgame;
+  const on = isGalgameModeOn();
+  if (on !== _lastInjectOn) {
+    _lastInjectOn = on;
+    log.info(`choices: galgame mode ${on ? 'ON' : 'OFF'} (${topWindow.galgame ? GALGAME_MODE_FLAG_PATH : 'galgame not on the page'}) → choice instruction ${on ? 'injected' : 'cleared'}`);
+  }
   try {
     // position IN_CHAT (1), depth 0, role SYSTEM (0) — the same slot galgame's own COT uses.
     ctx.setExtensionPrompt(INJECT_KEY, on ? CHOICES_INSTRUCTION : '', 1, 0, false, 0);
