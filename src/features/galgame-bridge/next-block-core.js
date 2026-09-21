@@ -1,5 +1,5 @@
 // galgame-companion · next-block-core — does this genre HAVE a manual advance, and what does its
-// chip look like. v0.1
+// chip look like. v0.2
 //
 // WHY THIS FILE EXISTS (L6). next-block.js reaches topWindow, walks iframes and installs a
 // MutationObserver, so no test can open it — and the defect that created this file lived exactly
@@ -12,6 +12,8 @@
 // Not "iff the profile has an advanceControl key" — a profile carrying a control with no usable path
 // would render a checkbox that writes nowhere, which reads to a player as a dead button rather than
 // as a missing feature. Null means the same thing in both directions: render nothing.
+
+import { escapeHtml } from './html-escape-core.js';
 
 export const WRAP_CLASS = 'school-nextblock';
 export const CB_CLASS = 'school-nextblock-cb';
@@ -46,15 +48,6 @@ export function advanceControlFor(genre) {
   return { bindPath, label, title };
 }
 
-// Attribute-safe text. The words come from a profile in this repo rather than from a player, so this
-// is not a sanitiser — it is here so a title containing an apostrophe or a quote cannot silently end
-// the attribute and swallow the rest of the chip.
-function attr(text) {
-  return String(text)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
-
 /**
  * The chip's markup for one control.
  *
@@ -64,9 +57,9 @@ function attr(text) {
  * @returns {string}
  */
 export function chipHtml(control) {
-  const title = attr(control.title);
-  return `<label class="${WRAP_CLASS}" ${PATH_ATTR}="${attr(control.bindPath)}" title="${title}">` +
-    `<span class="${LABEL_CLASS}">${attr(control.label)}</span>` +
+  const title = escapeHtml(control.title);
+  return `<label class="${WRAP_CLASS}" ${PATH_ATTR}="${escapeHtml(control.bindPath)}" title="${title}">` +
+    `<span class="${LABEL_CLASS}">${escapeHtml(control.label)}</span>` +
     `<input type="checkbox" class="${CB_CLASS}" aria-label="${title}" />` +
     `</label>`;
 }

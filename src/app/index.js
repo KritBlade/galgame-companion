@@ -18,7 +18,7 @@ import { startToolbar, startStatusMenuPopupLayer } from '../features/menu/index.
 import { startFullscreenGuard, startGeneratingIndicator } from '../features/galgame-quirks/index.js';
 import { startImageSeam, startImageViewer, startImageRegen, startBackgroundManager } from '../features/image/index.js';
 import { startBeatShaper } from '../features/beat-shaper/index.js';
-import { startChoices, startLocationTimeBridge, startNextBlock } from '../features/galgame-bridge/index.js';
+import { startChoices, startLocationTimeBridge, startNextBlock, startMeterPanel } from '../features/galgame-bridge/index.js';
 import { logActiveGenre } from '../genre/index.js';
 
 // WHICH BUILD IS RUNNING — deliberately UNGATED (not log.info, which needs DEBUG). This is the
@@ -63,6 +63,7 @@ startGeneratingIndicator(); // own galgame's "Generating" popup: up from mvu-hel
 startLocationTimeBridge(); // feed galgame's location/time pills from stat_data.World (AutoCardUpdaterAPI shim; MVU cards have none)
 startChoices();            // A2 all-genre: inject a <choices> format instruction + feed galgame's Story-choices UI via the same shim's 选项表 sheet
 startNextBlock();          // surface the game's manual advance flag top-right (genre profile's bindPath), driving its own stat-menu checkbox; genres without one render nothing
+startMeterPanel();         // the genre profile's live bars over the stage (School: his energy + her energy/arousal/climax while the H latch is on); genres without meters render nothing
 startImageViewer();        // top-right button → near-full-viewport lightbox of galgame's current backdrop image
 startImageRegen();         // top-right button (under 🖼) → click mvu-helper's regen control for the current backdrop
 startBackgroundManager();  // galgame's Background Manager pane: sort newest-first + bulk select/delete (our unique scene names made its A-Z order useless)

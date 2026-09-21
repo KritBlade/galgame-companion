@@ -1,4 +1,4 @@
-// galgame-companion · style — small CSS overrides injected into the parent document. v0.6
+// galgame-companion · style — small CSS overrides injected into the parent document. v0.7
 // Only cosmetic nudges that a dictionary swap can't express. Keep tiny; anything galgame
 // renames simply stops matching (graceful).
 
@@ -143,6 +143,37 @@ const CSS = `
 #detail-modal-overlay, #equip-modal-overlay { z-index: 2147483010 !important; }
 #img-popup-overlay { z-index: 2147483015 !important; }
 #portrait-mode-modal { z-index: 2147483020 !important; }
+
+/* Live meter panel (meter-panel.js) — the genre profile's bars over the stage, in the left column
+   under the MENU button (whose chip ends 32px down; galgame's own status pills sit centred at the
+   top, its dialog panel ~490px down, so this column is the one free strip). Drawn only while the
+   profile's gate reads true (School: an H scene). pointer-events:none — the stage advances on
+   click and this panel must never eat one. Fill colours come from the profile (inline), the chip
+   look mirrors the top-right controls. */
+#gal-global-overlay .companion-meters {
+  position: absolute; top: 44px; left: 14px; z-index: 30; width: 150px;
+  display: flex; flex-direction: column; gap: 6px; pointer-events: none;
+}
+#gal-global-overlay .companion-meter-group {
+  padding: 6px 8px; border-radius: 8px;
+  background: rgba(20, 22, 34, 0.72); border: 1px solid rgba(120, 140, 200, 0.42);
+  color: #fff; font-size: 0.68rem; line-height: 1.2;
+}
+#gal-global-overlay .companion-meter-title {
+  font-weight: 700; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#gal-global-overlay .companion-meter { display: grid; grid-template-columns: 1fr auto; column-gap: 6px; margin-top: 3px; }
+#gal-global-overlay .companion-meter-label { opacity: 0.85; }
+#gal-global-overlay .companion-meter-value { font-variant-numeric: tabular-nums; }
+#gal-global-overlay .companion-meter-track {
+  grid-column: 1 / -1; height: 6px; margin-top: 2px; border-radius: 3px;
+  background: rgba(255, 255, 255, 0.16); overflow: hidden;
+}
+#gal-global-overlay .companion-meter-fill { height: 100%; border-radius: 3px; transition: width 0.35s ease; }
+@media screen and (max-width: 48rem) {
+  #gal-global-overlay .companion-meters { width: 118px; top: 40px; left: 8px; }
+  #gal-global-overlay .companion-meter-group { font-size: 0.6rem; padding: 4px 6px; }
+}
 `;
 
 export function injectStyle() {

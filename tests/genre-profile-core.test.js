@@ -1,4 +1,4 @@
-// genre-profile-core unit tests — which profile a given engine resolves to. v0.1
+// genre-profile-core unit tests — which profile a given engine resolves to, and its shape. v0.2
 //
 // The rule this file exists for: an engine this companion has never heard of must get the ORDINARY
 // profile, not a broken one. Everything genre-specific now hangs off `profileFor`, so a wrong answer
@@ -51,16 +51,45 @@ describe('profile shape — what every genre must declare', () => {
         expect(typeof p.advanceControl.label).toBe('string');
         expect(typeof p.advanceControl.title).toBe('string');
       }
+      // meterPanel is optional too; if present, every bar must name a path, a scale and a colour
+      expect('meterPanel' in p, `${id}.meterPanel must be declared (null when none)`).toBe(true);
+      if (p.meterPanel) {
+        expect(typeof p.meterPanel.showWhen, `${id}.meterPanel.showWhen`).toBe('string');
+        const groups = [p.meterPanel.player, p.meterPanel.cast].filter(Boolean);
+        expect(groups.length, `${id}.meterPanel declares no group`).toBeGreaterThan(0);
+        for (const g of groups) {
+          expect(typeof g.root).toBe('string');
+          expect(g.bars.length).toBeGreaterThan(0);
+          for (const bar of g.bars) {
+            expect(typeof bar.path, `${id} bar ${bar.key}`).toBe('string');
+            expect(typeof bar.label).toBe('string');
+            expect(typeof bar.color).toBe('string');
+            expect(bar.maxPath || (typeof bar.max === 'number' && bar.max > 0), `${id} bar ${bar.key} needs a scale`).toBeTruthy();
+          }
+        }
+        if (p.meterPanel.cast) {
+          expect(typeof p.meterPanel.cast.presentPath).toBe('string');
+          expect(typeof p.meterPanel.cast.namePath).toBe('string');
+        }
+      }
     }
   });
 
   // The default genre must stay the PLAIN one. If MAIN ever grows a game's invented field or a control
   // only one game has, every unrelated card inherits it — which is the defect this directory undid.
-  it('MAIN names only the plain World fields and declares no advance control', () => {
+  it('MAIN names only the plain World fields and declares no advance control and no meters', () => {
     expect(MAIN.clockDate).toEqual(['Date']);
     expect(MAIN.clockWeekday).toEqual(['Weekday']);
     expect(MAIN.clockTime).toEqual(['Time']);
     expect(MAIN.advanceControl).toBeNull();
+    expect(MAIN.meterPanel).toBeNull();
+  });
+
+  it("School's meters are gated on its H latch — outside a scene the bars would only cover the artwork", () => {
+    expect(SCHOOL.meterPanel.showWhen).toBe('PendingState.IntimacyActive');
+    expect(SCHOOL.meterPanel.player.root).toBe('Mainchar');
+    expect(SCHOOL.meterPanel.cast.root).toBe('Classmate');
+    expect(SCHOOL.meterPanel.cast.bars.map((b) => b.path)).toEqual(['Energy', 'Arousal', 'ClimaxGauge']);
   });
 
   it('School reads the plain civil clock like everyone else (v4 game-time model: Wall* is gone)', () => {

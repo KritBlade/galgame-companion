@@ -1,6 +1,8 @@
-// features/galgame-bridge — feeds galgame's own UI from stat_data through the
-// AutoCardUpdaterAPI shim: location/time pills, the Story-choices sheet, and the manual
-// Next-Block advance. Internal chain: next-block -> location-time-bridge -> choices.
+// features/galgame-bridge — feeds galgame's own UI from stat_data: the location/time pills and
+// the Story-choices sheet through the AutoCardUpdaterAPI shim, plus the controls drawn over the
+// stage from the genre profile — the manual Next-Block advance and the live meter panel.
+// Internal chain: next-block -> location-time-bridge -> choices; meter-panel -> live-stat-data.
 export { startChoices } from './choices.js';
 export { startLocationTimeBridge } from './location-time-bridge.js';
 export { startNextBlock } from './next-block.js';
+export { startMeterPanel } from './meter-panel.js';

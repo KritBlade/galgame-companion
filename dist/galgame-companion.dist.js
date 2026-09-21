@@ -1,9 +1,9 @@
-// galgame-companion v0.8.10
+// galgame-companion v0.8.11
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.8.10";
-  var BUILD = "f918a90";
+  var VERSION = "0.8.11";
+  var BUILD = "e7be97b";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -346,6 +346,37 @@
 #detail-modal-overlay, #equip-modal-overlay { z-index: 2147483010 !important; }
 #img-popup-overlay { z-index: 2147483015 !important; }
 #portrait-mode-modal { z-index: 2147483020 !important; }
+
+/* Live meter panel (meter-panel.js) — the genre profile's bars over the stage, in the left column
+   under the MENU button (whose chip ends 32px down; galgame's own status pills sit centred at the
+   top, its dialog panel ~490px down, so this column is the one free strip). Drawn only while the
+   profile's gate reads true (School: an H scene). pointer-events:none — the stage advances on
+   click and this panel must never eat one. Fill colours come from the profile (inline), the chip
+   look mirrors the top-right controls. */
+#gal-global-overlay .companion-meters {
+  position: absolute; top: 44px; left: 14px; z-index: 30; width: 150px;
+  display: flex; flex-direction: column; gap: 6px; pointer-events: none;
+}
+#gal-global-overlay .companion-meter-group {
+  padding: 6px 8px; border-radius: 8px;
+  background: rgba(20, 22, 34, 0.72); border: 1px solid rgba(120, 140, 200, 0.42);
+  color: #fff; font-size: 0.68rem; line-height: 1.2;
+}
+#gal-global-overlay .companion-meter-title {
+  font-weight: 700; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#gal-global-overlay .companion-meter { display: grid; grid-template-columns: 1fr auto; column-gap: 6px; margin-top: 3px; }
+#gal-global-overlay .companion-meter-label { opacity: 0.85; }
+#gal-global-overlay .companion-meter-value { font-variant-numeric: tabular-nums; }
+#gal-global-overlay .companion-meter-track {
+  grid-column: 1 / -1; height: 6px; margin-top: 2px; border-radius: 3px;
+  background: rgba(255, 255, 255, 0.16); overflow: hidden;
+}
+#gal-global-overlay .companion-meter-fill { height: 100%; border-radius: 3px; transition: width 0.35s ease; }
+@media screen and (max-width: 48rem) {
+  #gal-global-overlay .companion-meters { width: 118px; top: 40px; left: 8px; }
+  #gal-global-overlay .companion-meter-group { font-size: 0.6rem; padding: 4px 6px; }
+}
 `;
   function injectStyle() {
     if (!DOC || !DOC.head) return setTimeout(injectStyle, 200);
@@ -1823,12 +1854,12 @@
         log.error("menu modal failed to open:", err);
       }
     });
-    let scheduled2 = false;
+    let scheduled3 = false;
     const observer2 = new MutationObserver(() => {
-      if (scheduled2) return;
-      scheduled2 = true;
+      if (scheduled3) return;
+      scheduled3 = true;
       requestAnimationFrame(() => {
-        scheduled2 = false;
+        scheduled3 = false;
         injectAll();
       });
     });
@@ -2940,12 +2971,12 @@ ${cot}` : cot;
         log.warn("image-seam: eventOn(CHAT_CHANGED) failed — ForceImageType reconcile not bound to a chat load:", e);
       }
     }
-    let scheduled2 = false;
+    let scheduled3 = false;
     const obs = new MutationObserver(() => {
-      if (scheduled2) return;
-      scheduled2 = true;
+      if (scheduled3) return;
+      scheduled3 = true;
       (topWindow.requestAnimationFrame || setTimeout)(() => {
-        scheduled2 = false;
+        scheduled3 = false;
         syncGalState();
       }, 0);
     });
@@ -3046,12 +3077,12 @@ ${cot}` : cot;
   }
   function startImageViewer() {
     if (!DOC || !DOC.body) return setTimeout(startImageViewer, 200);
-    let scheduled2 = false;
+    let scheduled3 = false;
     const observer2 = new MutationObserver(() => {
-      if (scheduled2) return;
-      scheduled2 = true;
+      if (scheduled3) return;
+      scheduled3 = true;
       requestAnimationFrame(() => {
-        scheduled2 = false;
+        scheduled3 = false;
         injectButton();
       });
     });
@@ -3123,12 +3154,12 @@ ${cot}` : cot;
   }
   function startImageRegen() {
     if (!DOC || !DOC.body) return setTimeout(startImageRegen, 200);
-    let scheduled2 = false;
+    let scheduled3 = false;
     const observer2 = new MutationObserver(() => {
-      if (scheduled2) return;
-      scheduled2 = true;
+      if (scheduled3) return;
+      scheduled3 = true;
       requestAnimationFrame(() => {
-        scheduled2 = false;
+        scheduled3 = false;
         injectButton2();
       });
     });
@@ -3333,15 +3364,15 @@ ${cot}` : cot;
   }
   function startBackgroundManager() {
     if (!DOC || !DOC.body) return setTimeout(startBackgroundManager, 200);
-    let scheduled2 = false;
+    let scheduled3 = false;
     const patchAll = () => {
       for (const pane of DOC.querySelectorAll(`${PANE_SEL}:not(.${READY_CLASS})`)) patchPane(pane);
     };
     const observer2 = new MutationObserver(() => {
-      if (scheduled2) return;
-      scheduled2 = true;
+      if (scheduled3) return;
+      scheduled3 = true;
       requestAnimationFrame(() => {
-        scheduled2 = false;
+        scheduled3 = false;
         patchAll();
       });
     });
@@ -3534,14 +3565,17 @@ ${cot}` : cot;
     log.info("choices active (inject + 选项表 shim reader)");
   }
 
-  // src/genre/genre-profile-core.js
+  // src/genre/main/main-profile.js
   var MAIN = Object.freeze({
     name: "main",
     clockDate: Object.freeze(["Date"]),
     clockWeekday: Object.freeze(["Weekday"]),
     clockTime: Object.freeze(["Time"]),
-    advanceControl: null
+    advanceControl: null,
+    meterPanel: null
   });
+
+  // src/genre/school/school-profile.js
   var SCHOOL = Object.freeze({
     name: "school",
     clockDate: Object.freeze(["Date"]),
@@ -3551,8 +3585,36 @@ ${cot}` : cot;
       bindPath: "PendingState.BlockDone",
       label: "Next",
       title: "Advance one time block — uncheck to cancel (until you send a message)"
+    }),
+    // Live bars over the stage, shown ONLY while an H scene is latched (PendingState.IntimacyActive):
+    // outside one every meter sits at its resting value and the bars would only cover the artwork.
+    // His side is an energy BUDGET — Energy_curr against Energy_max; each sex act drains it, and at 0
+    // he must rest (School models no climax gauge for him: his release is the narrator's to write, his
+    // energy is the only hard limit the engine keeps). Her side is the three meters the engine moves
+    // per act; the gauge reaching 100 is what fires her climax.
+    meterPanel: Object.freeze({
+      showWhen: "PendingState.IntimacyActive",
+      player: Object.freeze({
+        root: "Mainchar",
+        label: "You",
+        bars: Object.freeze([
+          Object.freeze({ key: "energy", label: "Energy", path: "Energy_curr", maxPath: "Energy_max", color: "#60a5fa" })
+        ])
+      }),
+      cast: Object.freeze({
+        root: "Classmate",
+        presentPath: "Is_present",
+        namePath: "Name",
+        bars: Object.freeze([
+          Object.freeze({ key: "energy", label: "Energy", path: "Energy", max: 100, color: "#60a5fa" }),
+          Object.freeze({ key: "arousal", label: "Arousal", path: "Arousal", max: 100, color: "#f472b6" }),
+          Object.freeze({ key: "climax", label: "Climax", path: "ClimaxGauge", max: 100, color: "#fbbf24" })
+        ])
+      })
     })
   });
+
+  // src/genre/genre-profile-core.js
   var PROFILES = Object.freeze({ main: MAIN, school: SCHOOL });
   function profileFor(engineName2) {
     const key = String(engineName2 == null ? "" : engineName2).trim().toLowerCase();
@@ -3589,12 +3651,12 @@ ${cot}` : cot;
     const raw = String(val == null ? "" : val).trim();
     if (!raw || typeof renderLabel !== "function") return raw;
     try {
-      const shown = renderLabel(path, raw, statData);
-      if (shown && typeof shown.then === "function") {
+      const shown2 = renderLabel(path, raw, statData);
+      if (shown2 && typeof shown2.then === "function") {
         if (typeof onError === "function") onError('i18nLabel("' + path + '") returned a Promise — a label must be synchronous here; showing the raw value', new Error("async labeler"));
         return raw;
       }
-      return shown == null || String(shown) === "" ? raw : String(shown);
+      return shown2 == null || String(shown2) === "" ? raw : String(shown2);
     } catch (e) {
       if (typeof onError === "function") onError('i18nLabel("' + path + '") threw — showing the raw value', e);
       return raw;
@@ -3631,8 +3693,55 @@ ${cot}` : cot;
     return { location, time: timeStr };
   }
 
+  // src/features/galgame-bridge/live-stat-data.js
+  var FLOOR_LOOKBACK3 = 30;
+  function newestMessageId() {
+    try {
+      const n = Number(window.getLastMessageId ? window.getLastMessageId() : NaN);
+      if (Number.isFinite(n) && n >= 0) return n;
+    } catch (e) {
+      log.warn("live-stat-data: getLastMessageId threw — reading the chat length instead:", e);
+    }
+    try {
+      const chat = topWindow.SillyTavern && topWindow.SillyTavern.getContext && topWindow.SillyTavern.getContext().chat;
+      if (Array.isArray(chat)) return chat.length - 1;
+    } catch (e) {
+      log.warn("live-stat-data: reading the chat length threw — no floor can be resolved right now:", e);
+    }
+    return -1;
+  }
+  function statDataOf(id) {
+    if (typeof window.getVariables === "function") {
+      const v = window.getVariables({ type: "message", message_id: id });
+      return v && v.stat_data;
+    }
+    const Mvu = topWindow.Mvu;
+    if (Mvu && typeof Mvu.getMvuData === "function") {
+      const d = Mvu.getMvuData({ type: "message", message_id: id });
+      return d && d.stat_data;
+    }
+    return null;
+  }
+  function latestStatData({ from, accept } = {}) {
+    const top = Number.isFinite(from) && from >= 0 ? Math.floor(from) : newestMessageId();
+    if (top < 0) return null;
+    const ok = typeof accept === "function" ? accept : () => true;
+    let firstError = null;
+    for (let id = top; id >= 0 && id > top - FLOOR_LOOKBACK3; id--) {
+      let sd = null;
+      try {
+        sd = statDataOf(id);
+      } catch (e) {
+        if (!firstError) firstError = { id, e };
+        continue;
+      }
+      if (sd && typeof sd === "object" && ok(sd)) return { statData: sd, floor: id };
+    }
+    if (firstError) log.warn(`live-stat-data: reading floor ${firstError.id} threw (and no floor qualified):`, firstError.e);
+    return null;
+  }
+
   // src/features/galgame-bridge/location-time-bridge.js
-  var FLOOR_LOOKBACK3 = 8;
   var SHEET_UID = "sheet_global_data";
   var SHEET_NAME = "全局数据表";
   var COL_LOCATION = "当前详细地点";
@@ -3687,47 +3796,9 @@ ${cot}` : cot;
       return value;
     };
   }
-  function latestStatData() {
-    const gv = typeof window.getVariables === "function" ? window.getVariables : null;
-    let last = -1;
-    try {
-      const n = Number(window.getLastMessageId ? window.getLastMessageId() : NaN);
-      if (Number.isFinite(n) && n >= 0) last = n;
-    } catch (e) {
-    }
-    if (last < 0) {
-      try {
-        const chat = topWindow.SillyTavern && topWindow.SillyTavern.getContext && topWindow.SillyTavern.getContext().chat;
-        if (Array.isArray(chat)) last = chat.length - 1;
-      } catch (e) {
-      }
-    }
-    if (last < 0) return null;
-    for (let id = last; id >= 0 && id > last - FLOOR_LOOKBACK3; id--) {
-      let sd = null;
-      try {
-        if (gv) {
-          const v = gv({ type: "message", message_id: id });
-          sd = v && v.stat_data;
-        }
-      } catch (e) {
-      }
-      if (!sd) {
-        try {
-          const Mvu = topWindow.Mvu;
-          if (Mvu && Mvu.getMvuData) {
-            const d = Mvu.getMvuData({ type: "message", message_id: id });
-            sd = d && d.stat_data;
-          }
-        } catch (e) {
-        }
-      }
-      if (sd && sd.World) return sd;
-    }
-    return null;
-  }
   function pills() {
-    const sd = latestStatData();
+    const found = latestStatData({ accept: (sd2) => !!sd2.World });
+    const sd = found && found.statData;
     if (!sd) return null;
     return pillStrings(sd, engineLabeler(), (msg, e) => log.warn("location-time-bridge: " + msg, e), activeGenre());
   }
@@ -3791,6 +3862,11 @@ ${cot}` : cot;
     }
   }
 
+  // src/features/galgame-bridge/html-escape-core.js
+  function escapeHtml2(text) {
+    return String(text == null ? "" : text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+
   // src/features/galgame-bridge/next-block-core.js
   var WRAP_CLASS = "school-nextblock";
   var CB_CLASS = "school-nextblock-cb";
@@ -3807,12 +3883,9 @@ ${cot}` : cot;
     const title = String(control2.title == null ? "" : control2.title).trim() || DEFAULT_TITLE;
     return { bindPath, label, title };
   }
-  function attr(text) {
-    return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-  }
   function chipHtml(control2) {
-    const title = attr(control2.title);
-    return `<label class="${WRAP_CLASS}" ${PATH_ATTR}="${attr(control2.bindPath)}" title="${title}"><span class="${LABEL_CLASS}">${attr(control2.label)}</span><input type="checkbox" class="${CB_CLASS}" aria-label="${title}" /></label>`;
+    const title = escapeHtml2(control2.title);
+    return `<label class="${WRAP_CLASS}" ${PATH_ATTR}="${escapeHtml2(control2.bindPath)}" title="${title}"><span class="${LABEL_CLASS}">${escapeHtml2(control2.label)}</span><input type="checkbox" class="${CB_CLASS}" aria-label="${title}" /></label>`;
   }
 
   // src/features/galgame-bridge/next-block.js
@@ -3906,18 +3979,211 @@ ${cot}` : cot;
       }
       cb.checked = got;
     });
-    let scheduled2 = false;
+    let scheduled3 = false;
     const observer2 = new MutationObserver(() => {
-      if (scheduled2) return;
-      scheduled2 = true;
+      if (scheduled3) return;
+      scheduled3 = true;
       requestAnimationFrame(() => {
-        scheduled2 = false;
+        scheduled3 = false;
         injectInto2();
       });
     });
     observer2.observe(DOC.body, { childList: true, subtree: true });
     injectInto2();
     log.info("next-block watching (the chip appears once a genre declaring a manual advance is loaded)");
+  }
+
+  // src/features/galgame-bridge/meter-panel-core.js
+  var PANEL_CLASS = "companion-meters";
+  var GROUP_CLASS = "companion-meter-group";
+  var TITLE_CLASS = "companion-meter-title";
+  var BAR_CLASS2 = "companion-meter";
+  var LABEL_CLASS2 = "companion-meter-label";
+  var VALUE_CLASS = "companion-meter-value";
+  var TRACK_CLASS = "companion-meter-track";
+  var FILL_CLASS = "companion-meter-fill";
+  var SIGNATURE_ATTR = "data-meter-signature";
+  var RE_COLOR = /^(#[0-9a-f]{3,8}|rgba?\([\d.,\s%]+\)|hsla?\([\d.,\s%]+\))$/i;
+  var DEFAULT_COLOR = "#9ca3af";
+  function readPath(root, path) {
+    const segments = String(path == null ? "" : path).split(".").filter(Boolean);
+    let node = root;
+    for (const segment of segments) {
+      if (node == null || typeof node !== "object") return void 0;
+      node = node[segment];
+    }
+    return mvuVal(node);
+  }
+  function finiteNumber(x) {
+    const n = Number(x);
+    return Number.isFinite(n) ? n : null;
+  }
+  function readBar(node, bar, where, onError) {
+    const rawValue = readPath(node, bar.path);
+    let value = finiteNumber(rawValue);
+    if (value === null) {
+      onError(`meter "${bar.label}": ${where}.${bar.path} is ${rawValue === void 0 ? "absent" : "not a number"} — drawn as 0`);
+      value = 0;
+    }
+    let max;
+    if (bar.maxPath) {
+      const rawMax = readPath(node, bar.maxPath);
+      max = finiteNumber(rawMax);
+      if (max === null || max <= 0) {
+        onError(`meter "${bar.label}": ${where}.${bar.maxPath} is ${rawMax === void 0 ? "absent" : "not a positive number"} — scale drawn as 100`);
+        max = 100;
+      }
+    } else {
+      max = finiteNumber(bar.max);
+      if (max === null || max <= 0) {
+        onError(`meter "${bar.label}": the profile declares no usable max — scale drawn as 100`);
+        max = 100;
+      }
+    }
+    const pct = Math.max(0, Math.min(100, Math.round(value / max * 100)));
+    const color = RE_COLOR.test(String(bar.color || "")) ? String(bar.color) : DEFAULT_COLOR;
+    return { key: String(bar.key || bar.path), label: String(bar.label || bar.path), value, max, pct, color };
+  }
+  function meterPanelModel(statData, spec, onError = () => {
+  }) {
+    if (!spec || !statData || typeof statData !== "object") return null;
+    if (spec.showWhen && readPath(statData, spec.showWhen) !== true) return null;
+    let player = null;
+    if (spec.player && spec.player.root) {
+      const node = statData[spec.player.root];
+      if (node && typeof node === "object") {
+        player = {
+          label: String(spec.player.label || spec.player.root),
+          bars: (spec.player.bars || []).map((bar) => readBar(node, bar, spec.player.root, onError))
+        };
+      } else {
+        onError(`meter panel: ${spec.player.root} is absent from stat_data — the player's bars are not drawn`);
+      }
+    }
+    const cast = [];
+    if (spec.cast && spec.cast.root) {
+      const roster = statData[spec.cast.root];
+      if (roster && typeof roster === "object") {
+        for (const key of Object.keys(roster)) {
+          const member = roster[key];
+          if (!member || typeof member !== "object") continue;
+          if (readPath(member, spec.cast.presentPath) !== true) continue;
+          const rawName = readPath(member, spec.cast.namePath);
+          const name = String(rawName == null ? "" : rawName).trim() || key;
+          cast.push({ key, name, bars: (spec.cast.bars || []).map((bar) => readBar(member, bar, `${spec.cast.root}.${key}`, onError)) });
+        }
+      } else {
+        onError(`meter panel: ${spec.cast.root} is absent from stat_data — no cast bars are drawn`);
+      }
+    }
+    if (!player && !cast.length) return null;
+    return { player, cast };
+  }
+  function modelSignature(model) {
+    const bars = (list) => list.map((b) => `${b.key}=${b.value}/${b.max}`).join(",");
+    const groups = [];
+    if (model.player) groups.push(`${model.player.label}:${bars(model.player.bars)}`);
+    for (const member of model.cast) groups.push(`${member.key}:${member.name}:${bars(member.bars)}`);
+    return groups.join("|");
+  }
+  function barHtml(bar) {
+    return `<div class="${BAR_CLASS2}" data-meter="${escapeHtml2(bar.key)}"><span class="${LABEL_CLASS2}">${escapeHtml2(bar.label)}</span><span class="${VALUE_CLASS}">${escapeHtml2(bar.value)}/${escapeHtml2(bar.max)}</span><div class="${TRACK_CLASS}"><div class="${FILL_CLASS}" style="width:${bar.pct}%;background:${escapeHtml2(bar.color)}"></div></div></div>`;
+  }
+  function groupHtml(title, bars) {
+    return `<div class="${GROUP_CLASS}"><div class="${TITLE_CLASS}">${escapeHtml2(title)}</div>${bars.map(barHtml).join("")}</div>`;
+  }
+  function panelHtml(model) {
+    const groups = [];
+    if (model.player) groups.push(groupHtml(model.player.label, model.player.bars));
+    for (const member of model.cast) groups.push(groupHtml(member.name, member.bars));
+    return `<div class="${PANEL_CLASS}" ${SIGNATURE_ATTR}="${escapeHtml2(modelSignature(model))}">${groups.join("")}</div>`;
+  }
+
+  // src/features/galgame-bridge/meter-panel.js
+  var OVERLAY_SEL6 = "#gal-global-overlay";
+  var STAGE_SEL = "#gal-global-overlay .gal-game-container";
+  var MVU_UPDATE_ENDED = "mag_variable_update_ended";
+  function displayedFloor() {
+    const stage = DOC.querySelector(STAGE_SEL);
+    const raw = stage && stage.getAttribute("data-mes-id");
+    if (raw == null || raw === "") return -1;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : -1;
+  }
+  var reported = /* @__PURE__ */ new Set();
+  function reportOnce(message) {
+    if (reported.has(message)) return;
+    reported.add(message);
+    log.warn("meter-panel: " + message);
+  }
+  var shown = false;
+  function redraw() {
+    const overlay = DOC.querySelector(OVERLAY_SEL6);
+    if (!overlay) return;
+    const spec = activeGenre().meterPanel;
+    const existing = overlay.querySelector(`.${PANEL_CLASS}`);
+    if (!spec) {
+      if (existing) {
+        existing.remove();
+        log.info("meter-panel: this genre declares no meters — panel removed");
+      }
+      shown = false;
+      return;
+    }
+    const from = displayedFloor();
+    const found = latestStatData(from >= 0 ? { from } : {});
+    const model = found ? meterPanelModel(found.statData, spec, reportOnce) : null;
+    if (!model) {
+      if (existing) existing.remove();
+      if (shown) {
+        shown = false;
+        log.info(`meter-panel: hidden — ${spec.showWhen || "nothing"} no longer reads true`);
+      }
+      return;
+    }
+    const html = panelHtml(model);
+    const signature = /data-meter-signature="([^"]*)"/.exec(html);
+    if (existing && signature && existing.getAttribute(SIGNATURE_ATTR) === signature[1]) return;
+    if (existing) existing.outerHTML = html;
+    else overlay.insertAdjacentHTML("beforeend", html);
+    if (!shown) {
+      shown = true;
+      log.info(`meter-panel: shown for genre "${activeGenre().name}" (${spec.showWhen} reads true on floor ${found.floor}) — ${model.player ? 1 : 0} player group, ${model.cast.length} cast group(s)`);
+    }
+  }
+  var scheduled2 = false;
+  function schedule() {
+    if (scheduled2) return;
+    scheduled2 = true;
+    requestAnimationFrame(() => {
+      scheduled2 = false;
+      try {
+        redraw();
+      } catch (e) {
+        log.error("meter-panel: redraw failed:", e);
+      }
+    });
+  }
+  function startMeterPanel() {
+    if (!DOC || !DOC.body) return setTimeout(startMeterPanel, 200);
+    const te = window.tavern_events || {};
+    const names = [te.MESSAGE_RECEIVED, te.MESSAGE_UPDATED, te.MESSAGE_SWIPED, te.MESSAGE_EDITED, te.MESSAGE_DELETED, te.CHAT_CHANGED, MVU_UPDATE_ENDED];
+    if (typeof window.eventOn === "function") {
+      for (const name of names) {
+        if (!name) continue;
+        try {
+          window.eventOn(name, schedule);
+        } catch (e) {
+          log.warn(`meter-panel: eventOn(${name}) failed — that trigger will not redraw the bars:`, e);
+        }
+      }
+    } else {
+      log.warn("meter-panel: eventOn is not on this window — the bars redraw only on stage rebuilds");
+    }
+    const observer2 = new MutationObserver(schedule);
+    observer2.observe(DOC.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-mes-id"] });
+    schedule();
+    log.info("meter-panel watching (the bars appear once a genre declaring meters is loaded and its gate reads true)");
   }
 
   // src/app/index.js
@@ -3945,6 +4211,7 @@ ${cot}` : cot;
   startLocationTimeBridge();
   startChoices();
   startNextBlock();
+  startMeterPanel();
   startImageViewer();
   startImageRegen();
   startBackgroundManager();

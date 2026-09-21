@@ -1,4 +1,4 @@
-// galgame-companion · location-time-bridge — feed galgame's top-right location/time pills from MVU. v0.3
+// galgame-companion · location-time-bridge — feed galgame's top-right location/time pills from MVU. v0.4
 //
 // WHY: galgame's status pills (地点 / 时间) take their TEXT from
 // AutoCardUpdaterAPI.exportTableAsJson() — updateLocationTimeDisplay() reads the "全局数据表" sheet's
@@ -15,8 +15,8 @@ import { topWindow, log } from '../../env.js';
 import { activeGenre } from '../../genre/index.js';
 import { getOptionSheet } from './choices.js';
 import { pillStrings } from './location-time-core.js';
+import { latestStatData } from './live-stat-data.js';
 
-const FLOOR_LOOKBACK = 8;              // newest floor with stat_data (MVU carries it forward)
 const SHEET_UID = 'sheet_global_data'; // galgame matches this uid (or name 全局数据表) in getGlobalLocationAndTime
 const SHEET_NAME = '全局数据表';
 const COL_LOCATION = '当前详细地点';   // → galgame detailedLocation
@@ -84,34 +84,16 @@ function engineLabeler() {
   };
 }
 
-// stat_data.World from the newest floor that has it (mirrors image-seam's floor resolution). Returns the
-// WHOLE stat_data, not just .World: rendering a value needs the game's own settings (its language, its
-// registries), and only the game knows which parts of its state those are — so we hand it all of it.
-function latestStatData() {
-  const gv = typeof window.getVariables === 'function' ? window.getVariables : null;
-  let last = -1;
-  try { const n = Number(window.getLastMessageId ? window.getLastMessageId() : NaN); if (Number.isFinite(n) && n >= 0) last = n; } catch (e) { /* fall through */ }
-  if (last < 0) {
-    try { const chat = topWindow.SillyTavern && topWindow.SillyTavern.getContext && topWindow.SillyTavern.getContext().chat; if (Array.isArray(chat)) last = chat.length - 1; } catch (e) { /* fall through */ }
-  }
-  if (last < 0) return null;
-  for (let id = last; id >= 0 && id > last - FLOOR_LOOKBACK; id--) {
-    let sd = null;
-    try { if (gv) { const v = gv({ type: 'message', message_id: id }); sd = v && v.stat_data; } } catch (e) { /* keep scanning */ }
-    if (!sd) { // fallback: top-window Mvu (getVariables can be momentarily absent early)
-      try { const Mvu = topWindow.Mvu; if (Mvu && Mvu.getMvuData) { const d = Mvu.getMvuData({ type: 'message', message_id: id }); sd = d && d.stat_data; } } catch (e) { /* keep scanning */ }
-    }
-    if (sd && sd.World) return sd;
-  }
-  return null;
-}
-
 // Pill strings — the RULES are location-time-core's; this half only supplies the host bits (which floor
 // to read, which engine is hosting, WHICH GENRE'S clock fields to prefer, where a failure gets logged).
 // The genre is read per call, not captured: installing or switching a pack must take effect without a
 // reload of this companion.
 function pills() {
-  const sd = latestStatData();
+  // The newest floor whose stat_data carries a World: the WHOLE stat_data is handed on, not just
+  // .World, because rendering a value needs the game's own settings (its language, its registries)
+  // and only the game knows which parts of its state those are.
+  const found = latestStatData({ accept: (sd) => !!sd.World });
+  const sd = found && found.statData;
   if (!sd) return null;
   return pillStrings(sd, engineLabeler(), (msg, e) => log.warn('location-time-bridge: ' + msg, e), activeGenre());
 }
