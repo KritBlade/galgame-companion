@@ -14,7 +14,7 @@ Five capabilities:
    (new `data-action` → inert to galgame's own handlers).
 3. **MVU stat HUD** — pops a StatusMenu rendering the card's MVU `stat_data` in an iframe
    with a TH-globals bridge.
-4. **Image seam** — writes [mvu-helper](https://github.com/KritBlade/mvu-helper)-generated
+4. **Image seam** — writes [mvu-helper](https://github.com/KritBlade/mvu-helper-dev)-generated
    images into galgame's own background library (`saveBackground`, keyed by the
    nearest-preceding `<background scene>`), and flips `Preferences.ForceImageType` on
    immersive enter/exit so every image matches the user's chosen aspect.
@@ -27,10 +27,10 @@ Five capabilities:
 ## Install (Tavern Helper script library)
 
 ```js
-import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.6.12/dist/galgame-companion.dist.js'
+import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.8.0/dist/galgame-companion.dist.js'
 ```
 
-Add AFTER the galgame script entry. `@v0.6.12` pins a release tag — bump it to update.
+Add AFTER the galgame script entry. `@v0.8.0` pins a release tag — bump it to update.
 
 **Versionless (auto-latest)** — resolves to the newest semver tag, so the TH entry never needs editing:
 
