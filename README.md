@@ -27,10 +27,10 @@ Five capabilities:
 ## Install (Tavern Helper script library)
 
 ```js
-import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.8.0/dist/galgame-companion.dist.js'
+import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.9.0/dist/galgame-companion.dist.js'
 ```
 
-Add AFTER the galgame script entry. `@v0.8.0` pins a release tag — bump it to update.
+Add AFTER the galgame script entry. `@v0.9.0` pins a release tag — bump it to update.
 
 **Versionless (auto-latest)** — resolves to the newest semver tag, so the TH entry never needs editing:
 
@@ -43,9 +43,12 @@ Caveats: the CDN caches versionless URLs up to **12 h** (force with
 and every new tag auto-ships to you. Use versionless for your own dev loop; anything shipped
 inside a card's 脚本库 should stay **pinned**.
 
-**Versioning:** `0.X` = dev phase, `0.X.N` = iteration within the phase (since pinned tags
-are the update mechanism, every change ships as a new tag). Same-phase fixes: v0.3.1,
-v0.3.2, …; a new phase (StatusMenu HUD, image seam) bumps to v0.4, v0.5, ….
+**Versioning:** `0.X` = dev phase, `0.X.N` = iteration within the phase. Same-phase fixes:
+v0.3.1, v0.3.2, …; a new phase (StatusMenu HUD, image seam) bumps to v0.4, v0.5, ….
+Pinned tags are the update mechanism, so the version in `package.json`, the git tag and the
+jsDelivr pin always move together: set `@v<version>` in the Install line above and in
+`galgame-companion.import.json`, commit, tag that commit `v<version>`, and push the commit AND
+the tag. A bump with no tag ships nothing; a stale pin keeps every card on the old build.
 
 ## Dev
 
