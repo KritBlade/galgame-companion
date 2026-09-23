@@ -1,9 +1,9 @@
-// galgame-companion v0.9.0
+// galgame-companion v0.9.1
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.9.0";
-  var BUILD = "4ae8e24";
+  var VERSION = "0.9.1";
+  var BUILD = "95d912b";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -3751,6 +3751,21 @@ ${cot}` : cot;
     log.image("image-seam active");
   }
 
+  // src/features/image/image-viewer-core.js
+  var BACKDROP_URL_VARIABLE = "--gal-bg-url";
+  function urlFromCssValue(value) {
+    const match = String(value == null ? "" : value).trim().match(/^url\(\s*(["']?)([\s\S]*?)\1\s*\)$/);
+    if (!match || !match[2]) return null;
+    return match[2].replace(/\\(.)/g, "$1");
+  }
+  function displayedBackdropUrl(layerValues) {
+    for (const value of layerValues || []) {
+      const url = urlFromCssValue(value);
+      if (url) return url;
+    }
+    return null;
+  }
+
   // src/features/image/image-viewer.js
   var OVERLAY_SEL5 = "#gal-global-overlay";
   var BTN_CLASS = "school-imgview-btn";
@@ -3762,14 +3777,10 @@ ${cot}` : cot;
   function currentBgUrl() {
     const ov = DOC.querySelector(OVERLAY_SEL5);
     if (!ov) return null;
-    for (const sel of [".gal-bg-front", ".gal-bg-base"]) {
+    return displayedBackdropUrl([".gal-bg-front", ".gal-bg-base"].map((sel) => {
       const el = ov.querySelector(sel);
-      if (!el) continue;
-      const bg = getComputedStyle(el).backgroundImage;
-      const m = bg && bg.match(/url\((['"]?)(.*?)\1\)/);
-      if (m && m[2]) return m[2];
-    }
-    return null;
+      return el ? el.style.getPropertyValue(BACKDROP_URL_VARIABLE) : null;
+    }));
   }
   var cleanup = null;
   function closeImageViewer() {

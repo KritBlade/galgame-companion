@@ -1,7 +1,8 @@
-// galgame-companion · image-viewer — a button that pops the CURRENT backdrop near-fullscreen. v0.1
+// galgame-companion · image-viewer — a button that pops the CURRENT backdrop near-fullscreen. v0.2
 //
-// galgame paints the active scene image as a CSS background-image on .gal-bg-front / .gal-bg-base inside
-// #gal-global-overlay (front = the transition target, base = the settled image). This adds a companion button
+// galgame keeps the active scene image in the `--gal-bg-url` variable on .gal-bg-front / .gal-bg-base inside
+// #gal-global-overlay (front = the transition target, base = the settled image) — never in the layer's own
+// background-image, which is `none` in its avoid-dialog fill mode (image-viewer-core.js). This adds a companion button
 // (top-right, stacked with the other companion controls — fullscreen · Next · 🖼) that opens a near-full-viewport
 // lightbox of that exact image at full size (contain-fit). Mounts INTO the fullscreen element when in fullscreen
 // (same top-layer reason as menu-modal) so it shows over galgame's fullscreen stage. galgame stays untouched —
@@ -9,6 +10,7 @@
 
 import { DOC, log } from '../../env.js';
 import { currentFullscreenEl } from '../galgame-quirks/index.js';
+import { BACKDROP_URL_VARIABLE, displayedBackdropUrl } from './image-viewer-core.js';
 
 const OVERLAY_SEL = '#gal-global-overlay';
 const BTN_CLASS = 'school-imgview-btn';
@@ -19,19 +21,16 @@ const Z_INDEX = 2147483000;
 // Native fullscreen paints ONLY the fullscreen subtree — mount the lightbox there when fullscreen, else body.
 function modalParent() { return currentFullscreenEl() || DOC.body; }
 
-// URL of the currently displayed backdrop: the front layer wins during/after a cross-fade, else the base layer.
+// URL of the currently displayed backdrop, as galgame wrote it (a path relative to the page, here): the front
+// layer wins during a cross-fade, else the base layer. Read off the INLINE style, where galgame sets it.
 // Exported so image-regen can map the shown backdrop back to its message <img> + regen control.
 export function currentBgUrl() {
   const ov = DOC.querySelector(OVERLAY_SEL);
   if (!ov) return null;
-  for (const sel of ['.gal-bg-front', '.gal-bg-base']) {
+  return displayedBackdropUrl(['.gal-bg-front', '.gal-bg-base'].map((sel) => {
     const el = ov.querySelector(sel);
-    if (!el) continue;
-    const bg = getComputedStyle(el).backgroundImage;
-    const m = bg && bg.match(/url\((['"]?)(.*?)\1\)/);
-    if (m && m[2]) return m[2];
-  }
-  return null;
+    return el ? el.style.getPropertyValue(BACKDROP_URL_VARIABLE) : null;
+  }));
 }
 
 let cleanup = null;

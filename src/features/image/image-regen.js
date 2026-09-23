@@ -1,4 +1,4 @@
-// galgame-companion · image-regen — surface mvu-helper's per-image "Regenerate" control on galgame's GUI. v0.2
+// galgame-companion · image-regen — surface mvu-helper's per-image "Regenerate" control on galgame's GUI. v0.3
 //
 // mvu-helper renders each generated image in the message as:
 //   <span class="auto-img-wrap" data-rawtag="<pic …>"><img src="…"><span class="auto-img-regen …" role="button"></span></span>
@@ -21,8 +21,8 @@ import { currentBgUrl } from './image-viewer.js';
 const OVERLAY_SEL = '#gal-global-overlay';
 const BTN_CLASS = 'school-imgregen-btn';
 
-// Filename only — the CSS backgroundImage URL (absolute) and the <img src> (maybe relative, maybe ?query) share
-// the same unique timestamped basename, so compare on that.
+// Filename only — the backdrop URL galgame wrote (relative) and the <img src> (maybe absolute, maybe ?query)
+// share the same unique timestamped basename, so compare on that.
 function basename(u) { return (u || '').split('/').pop().split('?')[0]; }
 
 // The regen control for the image currently shown as galgame's backdrop (matched by filename). Class is matched
