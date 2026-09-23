@@ -1,9 +1,9 @@
-// galgame-companion v0.9.1
+// galgame-companion v0.9.2
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.9.1";
-  var BUILD = "95d912b";
+  var VERSION = "0.9.2";
+  var BUILD = "4745338";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -3269,6 +3269,18 @@ ${cot}` : cot;
     if (RE_PIC_PENDING.test(text)) return null;
     return `EVERY image is unbound — ${imageCount} rendered image(s), ${sceneCount} scene tag(s)` + (foreignScenes ? `, ${foreignScenes} foreign` : "") + ". galgame will show NO backdrop for this message. " + (sceneCount === 0 ? "No scene tags exist at all, so the beat-shaper saw no image INSIDE <maintext> — the most likely cause is a <pic> tag emitted outside the envelope (in the tail, after the engine blocks)." : "Scene tags exist but none carries an image hash — the shaper and the rendered <img> src have drifted.");
   }
+  function missingBackdropPairs(rawMessages, libraryKeys) {
+    const present = new Set(libraryKeys || []);
+    const missing2 = [];
+    for (const raw of rawMessages || []) {
+      for (const pair of pairImagesToScenes(raw).pairs) {
+        if (present.has(pair.scene)) continue;
+        present.add(pair.scene);
+        missing2.push(pair);
+      }
+    }
+    return missing2;
+  }
   function staleSiblingKeys(allKeys, uid, keep) {
     if (!uid || !keep || keep.size === 0) return [];
     const prefix = `${uid}_scene_`;
@@ -3391,37 +3403,35 @@ ${cot}` : cot;
       return DEFAULT_PACK_ID;
     }
   }
-  async function writeBackground(sceneName2, imageUrl) {
+  async function writeBackgrounds(pairs) {
+    if (!pairs.length) return 0;
     let db;
     try {
       db = await openBackgroundDb();
     } catch (e) {
       log.error("image-seam: could not open galgame DB — write skipped:", e);
-      return false;
+      return 0;
     }
     try {
       if (!db.objectStoreNames.contains(STORE)) {
         log.error(`image-seam: '${STORE}' store missing — galgame schema drift; aborting write`);
-        return false;
+        return 0;
       }
+      const packId = currentPackId();
       await new Promise((resolve, reject) => {
         const tx = db.transaction([STORE], "readwrite");
-        const rec = {
-          id: sceneName2,
-          sceneName: sceneName2,
-          imageBlob: null,
-          imageUrl,
-          packId: currentPackId(),
-          lastModified: (/* @__PURE__ */ new Date()).toISOString()
-        };
-        const r = tx.objectStore(STORE).put(rec);
-        r.onsuccess = () => resolve();
-        r.onerror = () => reject(r.error);
+        const store = tx.objectStore(STORE);
+        for (const { scene, url } of pairs) {
+          store.put({ id: scene, sceneName: scene, imageBlob: null, imageUrl: url, packId, lastModified: (/* @__PURE__ */ new Date()).toISOString() });
+        }
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error || new Error("transaction aborted"));
       });
-      return true;
+      return pairs.length;
     } catch (e) {
-      log.warn(`image-seam: writeBackground("${sceneName2}") failed:`, e);
-      return false;
+      log.warn(`image-seam: writing ${pairs.length} background(s) failed (${pairs.map((p) => p.scene).join(", ")}):`, e);
+      return 0;
     } finally {
       try {
         db.close();
@@ -3458,10 +3468,7 @@ ${cot}` : cot;
     const report = unboundImageReport(raw, scan);
     if (report) log.image(`image-seam: message ${id} — ${report}`);
     if (!pairs.length) return;
-    let ok = 0;
-    for (const { scene, url } of pairs) {
-      if (await writeBackground(scene, url)) ok++;
-    }
+    const ok = await writeBackgrounds(pairs);
     const keepByUid = /* @__PURE__ */ new Map();
     for (const p of pairs) {
       const uid = uidOfSceneName(p.scene);
@@ -3478,6 +3485,31 @@ ${cot}` : cot;
         `image-seam: wrote ${ok}/${pairs.length} background(s) from message ${id}` + (removed ? `, pruned ${removed} superseded` : "")
       );
     }
+  }
+  function chatSceneTexts() {
+    let chat = null;
+    try {
+      const ctx = topWindow.SillyTavern && typeof topWindow.SillyTavern.getContext === "function" ? topWindow.SillyTavern.getContext() : null;
+      chat = ctx ? ctx.chat : null;
+    } catch (e) {
+      log.warn("image-seam: backfill could not read the chat array — skipped:", e);
+      return null;
+    }
+    if (!Array.isArray(chat)) return null;
+    return chat.filter((m) => m && !m.is_user && typeof m.mes === "string" && m.mes.includes("<background")).map((m) => m.mes);
+  }
+  async function backfillChat(why) {
+    const texts = chatSceneTexts();
+    if (!texts || !texts.length) return;
+    const keys = await readAllBackgroundKeys(`image-seam backfill (${why})`);
+    if (!keys) return;
+    const missing2 = missingBackdropPairs(texts, keys);
+    if (!missing2.length) {
+      log.image(`image-seam: backfill (${why}) — the library already holds every backdrop this chat binds`);
+      return;
+    }
+    const wrote = await writeBackgrounds(missing2);
+    log.image(`image-seam: backfill (${why}) — wrote ${wrote}/${missing2.length} backdrop(s) this browser's library was missing`);
   }
   var RE_ANY_SCENE_NAME = /<background\s+scene="([^"]+)"/gi;
   function liveSceneNames() {
@@ -3725,6 +3757,18 @@ ${cot}` : cot;
       }
     }
     scheduleSweep("seam start");
+    if (te.CHAT_CHANGED) {
+      if (typeof window.eventMakeFirst === "function") {
+        try {
+          window.eventMakeFirst(te.CHAT_CHANGED, () => backfillChat("chat loaded").catch((e) => log.warn("image-seam: chat-load backfill rejected:", e)));
+        } catch (e) {
+          log.warn("image-seam: eventMakeFirst(CHAT_CHANGED) failed — the chat-load backfill is not bound:", e);
+        }
+      } else {
+        log.warn("image-seam: TavernHelper eventMakeFirst is absent — the chat-load backfill is not bound, so a browser that never saw this chat drawn shows no backdrop for it");
+      }
+    }
+    backfillChat("seam start").catch((e) => log.warn("image-seam: start-up backfill rejected:", e));
     if (te.CHAT_CHANGED) {
       try {
         window.eventOn(te.CHAT_CHANGED, () => scheduleReconcile("chat loaded"));

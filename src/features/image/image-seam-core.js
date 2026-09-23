@@ -1,4 +1,4 @@
-// galgame-companion · image-seam-core — PURE decisions for the image seam (no DOM/IndexedDB). v0.3
+// galgame-companion · image-seam-core — PURE decisions for the image seam (no DOM/IndexedDB). v0.4
 //
 // The image-seam DELETES rows out of galgame's own global background DB, so "which keys go" is the one
 // decision in this feature that must never be wrong: over-delete and the player loses backdrops from a
@@ -123,6 +123,33 @@ export function unboundImageReport(rawMes, scan) {
       ? 'No scene tags exist at all, so the beat-shaper saw no image INSIDE <maintext> — the most '
         + 'likely cause is a <pic> tag emitted outside the envelope (in the tail, after the engine blocks).'
       : 'Scene tags exist but none carries an image hash — the shaper and the rendered <img> src have drifted.');
+}
+
+/**
+ * The backdrops a chat-load BACKFILL must write: every scene→url pair the chat's messages bind — by the
+ * same pairImagesToScenes the per-message scan uses — whose scene is NOT already a key in the library.
+ *
+ * galgame keeps backdrops in THIS browser's IndexedDB, and the per-message scan runs only on a message
+ * event, so a browser that never saw a message drawn holds nothing for it. The image itself is on the
+ * server and its <img> is in the message, so the chat alone says what the library should hold. A scene
+ * name carries its image's hash, so a key already present is the same image: only the missing are
+ * written, which keeps the backfill cheap enough to run ahead of galgame's own chat-load render.
+ *
+ * @param {string[]} rawMessages        raw text of the chat's AI messages
+ * @param {Iterable<string>} libraryKeys every key already in galgame's backgrounds store
+ * @returns {{scene: string, url: string}[]} one pair per missing scene, in chat order
+ */
+export function missingBackdropPairs(rawMessages, libraryKeys) {
+  const present = new Set(libraryKeys || []);
+  const missing = [];
+  for (const raw of rawMessages || []) {
+    for (const pair of pairImagesToScenes(raw).pairs) {
+      if (present.has(pair.scene)) continue;
+      present.add(pair.scene);   // a scene bound twice is written once
+      missing.push(pair);
+    }
+  }
+  return missing;
 }
 
 /**

@@ -5,8 +5,10 @@
 // on what must NEVER be deleted: another chat's records, a foreign scene name, or anything at all when
 // the caller's view of "what is alive" is empty/unreadable.
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   staleSiblingKeys, deadBackgroundKeys, pairImagesToScenes, unboundImageReport, decideForceReconcile, latchFloors,
+  missingBackdropPairs,
 } from '../src/features/image/image-seam-core.js';
 import { sceneName, sceneUid, shortHash } from '../src/features/beat-shaper/beat-shaper-core.js';
 
@@ -301,5 +303,50 @@ describe('latchFloors (which floors carry the ForceImageType latch)', () => {
 
   it('is newest-first, so the reconcile can read the head as THE current floor', () => {
     expect(latchFloors(9, () => true)[0]).toBe(9);
+  });
+});
+
+describe('missingBackdropPairs (chat-load backfill)', () => {
+  // A second browser opened a chat whose images were all drawn elsewhere: its IndexedDB held none of
+  // them, and galgame showed no backdrop (staging, 2026-09-23). The chat alone says what to write.
+  const uid1 = sceneUid(CHAT, 'm1m1m1');
+  const uid2 = sceneUid(CHAT, 'm2m2m2');
+  const srcA = '/user/images/ArtificKoi/A_2026-09-23@21h58m30s841ms.png';
+  const srcB = '/user/images/ArtificKoi/B_2026-09-23@22h01m02s100ms.png';
+  const sceneA = sceneName(uid1, 1, shortHash(srcA));
+  const sceneB = sceneName(uid2, 1, shortHash(srcB));
+  const bg = (n) => `<background scene="${n}" />`;
+  const img = (s) => `<span class="auto-img-wrap" data-rawtag="x"><img src="${s}"><span class="auto-img-regen"></span></span>`;
+  const mesA = `${bg(sceneA)}<p>a</p>${img(srcA)}`;
+  const mesB = `${bg(sceneB)}<p>b</p>${img(srcB)}`;
+
+  it('an EMPTY library (a fresh browser) gets every pair the chat binds, in chat order', () => {
+    expect(missingBackdropPairs([mesA, mesB], [])).toEqual([{ scene: sceneA, url: srcA }, { scene: sceneB, url: srcB }]);
+  });
+  it('a scene already in the library is not rewritten — its name carries its image hash', () => {
+    expect(missingBackdropPairs([mesA, mesB], [sceneA, 'someone-elses-scene'])).toEqual([{ scene: sceneB, url: srcB }]);
+  });
+  it('a library that holds the whole chat needs nothing', () => {
+    expect(missingBackdropPairs([mesA, mesB], new Set([sceneA, sceneB]))).toEqual([]);
+  });
+  it('a scene bound in two messages is written once', () => {
+    expect(missingBackdropPairs([mesA, mesA], [])).toEqual([{ scene: sceneA, url: srcA }]);
+  });
+  it('messages with no bound image, or no chat at all, write nothing', () => {
+    expect(missingBackdropPairs([`${bg(sceneA)}<p>no image yet</p>`, '<p>plain</p>'], [])).toEqual([]);
+    expect(missingBackdropPairs(null, null)).toEqual([]);
+  });
+});
+
+describe('the backfill runs ahead of galgame on a chat load', () => {
+  // image-seam.js needs TavernHelper and IndexedDB, so the guard reads its source: registered with a
+  // plain eventOn, the backfill runs AFTER galgame's own CHAT_CHANGED render has already looked the
+  // scene up and found nothing.
+  const seam = readFileSync(new URL('../src/features/image/image-seam.js', import.meta.url), 'utf8');
+  it('CHAT_CHANGED is bound with eventMakeFirst, and the listener returns the backfill promise', () => {
+    expect(seam).toMatch(/window\.eventMakeFirst\(te\.CHAT_CHANGED,\s*\(\)\s*=>\s*backfillChat\(/);
+  });
+  it('the seam also backfills once at start (the chat loaded before it wired up)', () => {
+    expect(seam).toMatch(/\n {2}backfillChat\('seam start'\)/);
   });
 });

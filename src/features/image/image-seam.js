@@ -1,21 +1,30 @@
 // galgame-companion · image-seam (G4b) — feed mvu-helper's generated images into galgame's own
-// backdrop library, and flip the ForceImageType latch on immersive enter/exit. GCP §10.3 / VPP §3. v0.8
+// backdrop library, and flip the ForceImageType latch on immersive enter/exit. GCP §10.3 / VPP §3. v0.9
 //
 // PIPELINE: the narrator writes `<background scene="X">` beats; mvu-helper draws each `<pic>` and
 // stamps `<span class="auto-img-wrap"><img src="…"></span>` into the message (then emits
-// MESSAGE_UPDATED). We scan the RAW message, bind each <img> to the nearest PRECEDING
-// `<background scene>` (galgame's getBackgroundAtPosition semantics), and PUT that scene→url pair
-// straight into galgame's IndexedDB `backgrounds` store. galgame's getBackground() falls through to
-// the DB on a cache miss, so the backdrop appears when the player reaches that beat — no galgame edit.
+// MESSAGE_UPDATED). We scan the RAW message, bind each <img> to its scene (image-seam-core
+// pairImagesToScenes), and PUT that scene→url pair straight into galgame's IndexedDB `backgrounds`
+// store. galgame's getBackground() falls through to the DB on a cache miss, so the backdrop appears
+// when the player reaches that beat — no galgame edit.
 //
-// SOURCE-READ from galgame v2.1 (H:\Github\Dev\misc\galgame): DB `GalgameUIPluginDB` store
-// `backgrounds` (keyPath `id`), record shape from db/backgrounds.js saveBackground(); packId from
-// localStorage `galgame-ui-plugin_current_pack` (default `pack_default`), db/image-packs.js.
+// THE LIBRARY IS PER BROWSER, THE CHAT IS NOT. galgame's store lives in this browser's IndexedDB, and
+// the scan above runs only on a message event. So on every chat load the seam BACKFILLS: each scene the
+// chat binds that the library lacks is written, before galgame's own chat-load render looks it up
+// (eventMakeFirst — SillyTavern awaits listeners in order). A second browser, or cleared site data,
+// used to show no backdrop for any message drawn elsewhere (staging, 2026-09-23). galgame's own
+// in-message source, its st-chatu8 mode, re-reads the message on every render for the same reason.
+//
+// SOURCE-READ from galgame v2.2 (H:\Github\Dev\misc\galgame, re-read 2026-09-23): DB
+// `GalgameUIPluginDB` store `backgrounds` (keyPath `id`), record shape from db/backgrounds.js
+// saveBackground(); packId from localStorage `galgame-ui-plugin_current_pack` (default
+// `pack_default`), db/image-packs.js.
 
 import { DOC, topWindow, log } from '../../env.js';
 import { uidOfSceneName, currentChatKey } from '../beat-shaper/index.js';
 import {
   staleSiblingKeys, deadBackgroundKeys, pairImagesToScenes, unboundImageReport, decideForceReconcile, latchFloors,
+  missingBackdropPairs,
 } from './image-seam-core.js';
 import {
   STORE, openBackgroundDb, readAllBackgroundKeys, deleteBackgroundKeys,
@@ -38,34 +47,33 @@ function currentPackId() {
   catch (e) { log.warn('image-seam: could not read current pack id (default):', e); return DEFAULT_PACK_ID; }
 }
 
-// Upsert one scene→url background, mirroring galgame's saveBackground() record shape exactly.
-async function writeBackground(sceneName, imageUrl) {
+// Upsert scene→url backgrounds in ONE transaction, mirroring galgame's saveBackground() record shape
+// exactly. Returns how many were written (0 when the DB could not be opened or the write failed).
+async function writeBackgrounds(pairs) {
+  if (!pairs.length) return 0;
   let db;
   try { db = await openBackgroundDb(); }
-  catch (e) { log.error('image-seam: could not open galgame DB — write skipped:', e); return false; }
+  catch (e) { log.error('image-seam: could not open galgame DB — write skipped:', e); return 0; }
   try {
     if (!db.objectStoreNames.contains(STORE)) {
       log.error(`image-seam: '${STORE}' store missing — galgame schema drift; aborting write`);
-      return false;
+      return 0;
     }
+    const packId = currentPackId();
     await new Promise((resolve, reject) => {
       const tx = db.transaction([STORE], 'readwrite');
-      const rec = {
-        id: sceneName,
-        sceneName,
-        imageBlob: null,
-        imageUrl,
-        packId: currentPackId(),
-        lastModified: new Date().toISOString(),
-      };
-      const r = tx.objectStore(STORE).put(rec); // put = idempotent upsert by id
-      r.onsuccess = () => resolve();
-      r.onerror = () => reject(r.error);
+      const store = tx.objectStore(STORE);
+      for (const { scene, url } of pairs) {
+        store.put({ id: scene, sceneName: scene, imageBlob: null, imageUrl: url, packId, lastModified: new Date().toISOString() });
+      }
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error('transaction aborted'));
     });
-    return true;
+    return pairs.length;
   } catch (e) {
-    log.warn(`image-seam: writeBackground("${sceneName}") failed:`, e);
-    return false;
+    log.warn(`image-seam: writing ${pairs.length} background(s) failed (${pairs.map((p) => p.scene).join(', ')}):`, e);
+    return 0;
   } finally {
     try { db.close(); } catch (e) { /* EXPECTED: closing an already-closing db is harmless */ }
   }
@@ -124,11 +132,7 @@ async function processMessage(id) {
   const report = unboundImageReport(raw, scan);
   if (report) log.image(`image-seam: message ${id} — ${report}`);
   if (!pairs.length) return; // transient (pre-shape / no images) — write nothing AND prune nothing
-  let ok = 0;
-  for (const { scene, url } of pairs) {
-    // eslint-disable-next-line no-await-in-loop -- serialize DB writes; a message has at most a few
-    if (await writeBackground(scene, url)) ok++;
-  }
+  const ok = await writeBackgrounds(pairs);
   // Drop superseded gens of THIS message's beats so swipe/regen doesn't accumulate (keep = current
   // names). Grouped by uid: the shaper mints exactly one per message, but grouping keeps every prune
   // scoped to a uid we actually saw here, so a hand-edited message carrying two can't widen the delete.
@@ -150,6 +154,37 @@ async function processMessage(id) {
         (removed ? `, pruned ${removed} superseded` : ''),
     );
   }
+}
+
+// ── chat-load backfill: the library holds every backdrop the chat binds (file header) ──
+
+// Raw text of the loaded chat's AI messages that name a scene; null when the chat cannot be read.
+function chatSceneTexts() {
+  let chat = null;
+  try {
+    const ctx = topWindow.SillyTavern && typeof topWindow.SillyTavern.getContext === 'function'
+      ? topWindow.SillyTavern.getContext() : null;
+    chat = ctx ? ctx.chat : null;
+  } catch (e) {
+    log.warn('image-seam: backfill could not read the chat array — skipped:', e);
+    return null;
+  }
+  if (!Array.isArray(chat)) return null;
+  return chat.filter((m) => m && !m.is_user && typeof m.mes === 'string' && m.mes.includes('<background')).map((m) => m.mes);
+}
+
+async function backfillChat(why) {
+  const texts = chatSceneTexts();
+  if (!texts || !texts.length) return;
+  const keys = await readAllBackgroundKeys(`image-seam backfill (${why})`);
+  if (!keys) return; // library unreadable — background-store logged why
+  const missing = missingBackdropPairs(texts, keys);
+  if (!missing.length) {
+    log.image(`image-seam: backfill (${why}) — the library already holds every backdrop this chat binds`);
+    return;
+  }
+  const wrote = await writeBackgrounds(missing);
+  log.image(`image-seam: backfill (${why}) — wrote ${wrote}/${missing.length} backdrop(s) this browser's library was missing`);
 }
 
 // ── orphan sweep: drop backdrops whose message no longer exists ───────────────
@@ -456,6 +491,20 @@ export function startImageSeam() {
     catch (e) { log.warn(`image-seam: eventOn(${ev}) failed — orphan sweep not bound to "${why}":`, e); }
   }
   scheduleSweep('seam start'); // the chat already loaded before we wired up
+
+  // The backfill runs FIRST on a chat load: SillyTavern awaits each listener in turn, so the library
+  // holds the chat's backdrops before galgame's own CHAT_CHANGED handler renders the stage. A plain
+  // eventOn registers after galgame's and would run after that render. The listener returns the
+  // backfill's promise so the chain waits for it; a failure is logged, never thrown into the chain.
+  if (te.CHAT_CHANGED) {
+    if (typeof window.eventMakeFirst === 'function') {
+      try { window.eventMakeFirst(te.CHAT_CHANGED, () => backfillChat('chat loaded').catch((e) => log.warn('image-seam: chat-load backfill rejected:', e))); }
+      catch (e) { log.warn('image-seam: eventMakeFirst(CHAT_CHANGED) failed — the chat-load backfill is not bound:', e); }
+    } else {
+      log.warn('image-seam: TavernHelper eventMakeFirst is absent — the chat-load backfill is not bound, so a browser that never saw this chat drawn shows no backdrop for it');
+    }
+  }
+  backfillChat('seam start').catch((e) => log.warn('image-seam: start-up backfill rejected:', e)); // the chat already loaded before we wired up
 
   // The latch lives in a SAVE, so a chat load is when a previous session's stale value first becomes
   // ours to correct. Bound separately from the sweep above: they share a trigger, not a purpose.
