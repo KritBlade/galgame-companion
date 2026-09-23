@@ -1,6 +1,6 @@
 // galgame-companion · menu modal — our own popup shell over galgame's stage. v0.3 (G3)
-// G2 ships the SHELL (mount/close/z-index above galgame's fullscreen overlay). G3 fills it:
-// an iframe of the card's StatusMenu HTML + the TH-globals bridge (status-menu.js).
+// The SHELL (mount/close/z-index above galgame's fullscreen overlay), filled with the card's StatusMenu
+// in a contained frame mvu-helper composes and this companion owns (status-menu.js).
 // We deliberately do NOT depend on galgame's internal showCustomPopupPanel (not a public API).
 //
 // LAYOUT: desktop = centered floating box over a dimmed backdrop. MOBILE (≤768px) = FULLSCREEN
@@ -118,12 +118,12 @@ export function openMenuModal() {
 
   // Mount into the fullscreen element if we're in fullscreen, else body — decided ONCE, at open time.
   // We deliberately do NOT re-parent on a later fullscreenchange: moving an iframe in the DOM RELOADS it,
-  // which discards the menu's document.write content and blanks it. Nor is a re-parent needed — the fullscreen
+  // which restarts the menu from the state it was opened with. Nor is a re-parent needed — the fullscreen
   // TOGGLE button sits behind our backdrop (unreachable while open), and if fullscreen is exited another way
   // (ESC) the galgame overlay we're mounted in stays a visible in-page element, so the modal stays on screen.
   modalParent().appendChild(wrap);
-  // fill the body with the card's StatusMenu (bridged iframe). The iframe — and its 2s
-  // poll interval, which lives INSIDE it — is destroyed when closeMenuModal() removes `wrap`.
-  mountStatusMenu(body);
+  // Fill the body with the card's StatusMenu (a contained frame). The frame — and the menu's own poll,
+  // which lives inside it — is destroyed when closeMenuModal() removes `wrap`.
+  mountStatusMenu(body).catch((e) => log.error('menu-modal: mounting the StatusMenu failed:', e));
   log.info('menu modal opened');
 }

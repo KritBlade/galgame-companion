@@ -1,52 +1,56 @@
-// features/menu/status-menu-core.js — PURE: find the StatusMenu's own HTML document inside whatever
-// the card wraps it in. No host imports (tested by tests/status-menu-core.test.js).
+// galgame-companion · status-menu-core — the pure half of hosting the card's StatusMenu. v0.2
 //
-// WHY (live 2026-09-08): the card's StatusMenu regex script used to BE the menu document. It is now
-// the document wrapped in a platform envelope — an mvu-helper region div, begin/end marker comments,
-// and a MARKDOWN CODE FENCE, which is how the block reaches SillyTavern's own renderer. Written into
-// our iframe whole, the fence shows as literal ``` and the real `<!DOCTYPE html>` lands nested inside
-// a div, so the browser drops the nested document element and the menu rendered as an empty coloured
-// panel. Nothing was wrong with the menu; we were mounting its packaging.
+// The companion does not handle the menu's document any more. mvu-helper lifts a StatusMenu pack's
+// document out of the card's regex rows at install and composes the ONE contained version of it —
+// sandbox tokens, a Content-Security-Policy, the prelude that answers the menu's host calls, and the
+// document — behind `MvuHelper.statusMenuFrameSource()` (mvu-helper plans/statusmenu-containment.md,
+// D7/D11). The companion sets what that returns on a frame it owns, and speaks the frame's published
+// wire: three messages in (height, overlay, error), one out (state).
 //
-// So the mount takes the DOCUMENT, not the wrapper. Located by shape, never by the wrapper's
-// vocabulary: a card is free to change its region class, its marker comments or its fence, and this
-// still finds the same document — which is the only reason a blind adapter can survive its
-// consumers' packaging changing again.
+// Everything a test can hold lives here; status-menu.js keeps only what needs a document.
 
-import { scanTagBalance } from '../../shared/tag-balance-core.js';
-
-// A doctype is invisible to the tag scanner (it is neither a comment nor an element), so it is found
-// with its own search — and it must be KEPT: writing a document without one puts the iframe in quirks
-// mode, where the menu's layout is not the layout it was authored against.
-const RE_DOCTYPE = /<!doctype\b[^>]*>/gi;
+// mvu-helper's published message names (the frame speaks them; so does the companion's host half).
+export const FRAME_STATE_MESSAGE = 'mvu-helper:statusmenu-state';       // host → frame: { mid, statData }
+export const FRAME_HEIGHT_MESSAGE = 'mvu-helper:statusmenu-height';     // frame → host: { height }
+export const FRAME_OVERLAY_MESSAGE = 'mvu-helper:statusmenu-overlay';   // frame → host: { open }
+export const FRAME_ERROR_MESSAGE = 'mvu-helper:statusmenu-error';       // frame → host: { message, source, line }
 
 /**
- * Pull the complete HTML document out of `raw`.
+ * The frame attributes, exactly as mvu-helper composed them — or null when there is nothing to mount.
+ * Passed through UNCHANGED: the sandbox tokens and the document are the containment, and a host that
+ * edited either would be a second containment nobody reviews.
  *
- * @param {string} raw the card's StatusMenu source, wrapped or bare.
- * @returns {{html: string, wrapperChars: number}} `html` = the document (doctype included) when one
- *   is present, otherwise `raw` unchanged — a card whose menu is a bare fragment still mounts, and a
- *   TRUNCATED document (an <html> that never closes) is left alone rather than cut at a guessed
- *   boundary. `wrapperChars` = how much packaging was dropped; 0 means nothing was unwrapped.
+ * @param {*} source what MvuHelper.statusMenuFrameSource() resolved to
+ * @returns {?{sandbox: string, srcdoc: string}}
  */
-export function extractMenuDocument(raw) {
-  const text = String(raw == null ? '' : raw);
-  if (!text) return { html: '', wrapperChars: 0 };
-
-  // The scanner walks <script>/<style> as raw text, so a '</html>' inside the menu's own JS or CSS
-  // cannot be mistaken for the document's close.
-  const open = scanTagBalance(text).events.find(
-    (e) => e.kind === 'open' && e.status === 'matched' && /^html$/i.test(e.tag),
-  );
-  if (!open) return { html: text, wrapperChars: 0 };
-
-  // Start at the doctype that introduces THIS document (the last one before the <html> open).
-  let start = open.at;
-  RE_DOCTYPE.lastIndex = 0;
-  const before = text.slice(0, open.at);
-  let m;
-  while ((m = RE_DOCTYPE.exec(before)) !== null) start = m.index;
-
-  const html = text.slice(start, open.pairEnd);
-  return { html, wrapperChars: text.length - html.length };
+export function frameAttributesFrom(source) {
+  if (!source || typeof source !== 'object') return null;
+  if (typeof source.sandbox !== 'string' || typeof source.srcdoc !== 'string' || !source.srcdoc) return null;
+  return { sandbox: source.sandbox, srcdoc: source.srcdoc };
 }
+
+/**
+ * One message the frame sent, read — or null when it is not one of the three this host answers.
+ * @returns {?({kind:'height', height:number}|{kind:'overlay', open:boolean}|{kind:'error', message:string})}
+ */
+export function readFrameMessage(data) {
+  if (!data || typeof data !== 'object') return null;
+  if (data.type === FRAME_HEIGHT_MESSAGE) {
+    const height = Number(data.height);
+    return Number.isFinite(height) && height >= 0 ? { kind: 'height', height: Math.round(height) } : null;
+  }
+  if (data.type === FRAME_OVERLAY_MESSAGE) {
+    return typeof data.open === 'boolean' ? { kind: 'overlay', open: data.open } : null;
+  }
+  if (data.type === FRAME_ERROR_MESSAGE) {
+    return typeof data.message === 'string' ? { kind: 'error', message: data.message.slice(0, 2000) } : null;
+  }
+  return null;
+}
+
+// The frame at rest (as tall as its content; the modal body scrolls), and while one of the menu's
+// popups is open: a popup covers the FRAME's viewport, so the frame becomes the screen's for as long
+// as it is open. Explicit viewport units because SillyTavern sets a transform on <html>, which would
+// re-root inset:0 (menu-modal.js says the same for the modal itself).
+export const FRAME_STYLE = 'width:100%;height:100%;border:0;display:block;background:#fff;';
+export const FRAME_LIFTED_STYLE = 'position:fixed;top:0;left:0;width:100vw;height:100vh;height:100dvh;border:0;display:block;z-index:2147483600;background:transparent;';

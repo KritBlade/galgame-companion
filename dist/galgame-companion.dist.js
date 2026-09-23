@@ -1,9 +1,9 @@
-// galgame-companion v0.8.11
+// galgame-companion v0.9.0
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.8.11";
-  var BUILD = "e7be97b";
+  var VERSION = "0.9.0";
+  var BUILD = "4ae8e24";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -332,20 +332,6 @@
     flex: 1; min-height: min(22rem, 45vh); resize: vertical;
   }
 }
-
-/* Card StatusMenu popups (quest/item detail, equip picker, image lightbox, portrait editor) — the
-   StatusMenu escapes them from its TH message iframe to the PARENT body so the iframe box can't clip
-   them, with a hardcoded inline z-index of 50000-60000. That wins in plain SillyTavern and loses
-   inside galgame, whose own body-level viewers sit at 99999 (.gal-embedded-viewer): opening a quest
-   from galgame's VIEW panel painted the popup BEHIND the panel — invisible, ✕ unclickable, no way to
-   close it (proven live 2026-08-24). Lift them above galgame AND above our own menu modal
-   (2147483000), keeping the StatusMenu's own relative order (detail/equip < lightbox < portrait) so a
-   lightbox opened from a detail popup still stacks on it. !important because the popup's z-index is
-   inline. Native fullscreen is a separate failure (top layer ignores z-index) — statusmenu-popup-layer.js.
-   Keyed on the StatusMenu's ids: a card without a StatusMenu matches nothing. */
-#detail-modal-overlay, #equip-modal-overlay { z-index: 2147483010 !important; }
-#img-popup-overlay { z-index: 2147483015 !important; }
-#portrait-mode-modal { z-index: 2147483020 !important; }
 
 /* Live meter panel (meter-panel.js) — the genre profile's bars over the stage, in the left column
    under the MENU button (whose chip ends 32px down; galgame's own status pills sit centred at the
@@ -1378,201 +1364,946 @@
     log.info("i18n active" + (HARVEST ? " (harvest mode — run __galI18nDump() when done)" : ""));
   }
 
-  // src/shared/tag-balance-core.js
-  var kMarkupPattern = /<!--[\s\S]*?-->|<(\/?)([a-zA-Z][-.:0-9_a-zA-Z@\xB7\xC0-\xD6\xD8-\xF6\u00F8-\u03A1\u03A3-\u03D9\u03DB-\u03EF\u03F7-\u03FF\u0400-\u04FF\u0500-\u052F\u1D00-\u1D2B\u1D6B-\u1D77\u1D79-\u1D9A\u1E00-\u1E9B\u1F00-\u1F15\u1F18-\u1F1D\u1F20-\u1F45\u1F48-\u1F4D\u1F50-\u1F57\u1F59\u1F5B\u1F5D\u1F5F-\u1F7D\u1F80-\u1FB4\u1FB6-\u1FBC\u1FBE\u1FC2-\u1FC4\u1FC6-\u1FCC\u1FD0-\u1FD3\u1FD6-\u1FDB\u1FE0-\u1FEC\u1FF2-\u1FF4\u1FF6-\u1FFC\u2126\u212A-\u212B\u2132\u214E\u2160-\u2188\u2C60-\u2C7F\uA722-\uA787\uA78B-\uA78E\uA790-\uA7AD\uA7B0-\uA7B7\uA7F7-\uA7FF\uAB30-\uAB5A\uAB5C-\uAB5F\uAB64-\uAB65\uFB00-\uFB06\uFB13-\uFB17\uFF21-\uFF3A\uFF41-\uFF5A\x37F-\u1FFF\u200C-\u200D\u203F-\u2040\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD]*)((?:\s+[^>]*?(?:(?:'[^']*')|(?:"[^"]*"))?)*)\s*(\/?)>/gu;
-  var DEFAULT_VOID_TAGS = ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"];
-  var DEFAULT_RAW_TEXT_TAGS = ["script", "noscript", "style", "pre"];
-  function scanTagBalance(text, options = {}) {
-    const src = String(text || "");
-    const voidTags = new Set((options.voidTags || DEFAULT_VOID_TAGS).map((t) => t.toLowerCase()));
-    const rawTextTags = new Set((options.rawTextTags || DEFAULT_RAW_TEXT_TAGS).map((t) => t.toLowerCase()));
-    const events = [];
-    const stack = [];
-    const re = new RegExp(kMarkupPattern.source, kMarkupPattern.flags);
-    let match;
-    while (match = re.exec(src)) {
-      const { 0: matchText, 1: leadingSlash, 2: tagName, 4: closingSlash } = match;
-      const at = re.lastIndex - matchText.length;
-      const end = re.lastIndex;
-      if (matchText[1] === "!") continue;
-      const lower = tagName.toLowerCase();
-      if (!leadingSlash) {
-        if (closingSlash || voidTags.has(lower)) {
-          events.push({ tag: tagName, kind: closingSlash ? "self" : "void", at, end, status: "matched" });
-          continue;
-        }
-        const ev = { tag: tagName, kind: "open", at, end, status: "unclosed-open" };
-        events.push(ev);
-        stack.push(ev);
-        if (rawTextTags.has(lower)) {
-          const closeMarkup = `</${tagName}>`;
-          const closeIndex = src.toLowerCase().indexOf(closeMarkup.toLowerCase(), re.lastIndex);
-          if (closeIndex !== -1) {
-            const closeEnd = closeIndex + closeMarkup.length;
-            ev.status = "matched";
-            ev.pairAt = closeIndex;
-            ev.pairEnd = closeEnd;
-            events.push({ tag: tagName, kind: "close", at: closeIndex, end: closeEnd, status: "matched", pairAt: at, pairEnd: end });
-            stack.pop();
-            re.lastIndex = closeEnd;
-          }
-        }
-        continue;
-      }
-      let found = -1;
-      for (let i = stack.length - 1; i >= 0; i--) {
-        if (stack[i].tag.toLowerCase() === lower) {
-          found = i;
-          break;
-        }
-      }
-      if (found === -1) {
-        events.push({ tag: tagName, kind: "close", at, end, status: "orphan-close" });
-        continue;
-      }
-      for (let i = stack.length - 1; i > found; i--) stack.pop();
-      const open = stack.pop();
-      open.status = "matched";
-      open.pairAt = at;
-      open.pairEnd = end;
-      events.push({ tag: tagName, kind: "close", at, end, status: "matched", pairAt: open.at, pairEnd: open.end });
+  // src/features/menu/status-menu-core.js
+  var FRAME_STATE_MESSAGE = "mvu-helper:statusmenu-state";
+  var FRAME_HEIGHT_MESSAGE = "mvu-helper:statusmenu-height";
+  var FRAME_OVERLAY_MESSAGE = "mvu-helper:statusmenu-overlay";
+  var FRAME_ERROR_MESSAGE = "mvu-helper:statusmenu-error";
+  function frameAttributesFrom(source) {
+    if (!source || typeof source !== "object") return null;
+    if (typeof source.sandbox !== "string" || typeof source.srcdoc !== "string" || !source.srcdoc) return null;
+    return { sandbox: source.sandbox, srcdoc: source.srcdoc };
+  }
+  function readFrameMessage(data) {
+    if (!data || typeof data !== "object") return null;
+    if (data.type === FRAME_HEIGHT_MESSAGE) {
+      const height = Number(data.height);
+      return Number.isFinite(height) && height >= 0 ? { kind: "height", height: Math.round(height) } : null;
     }
-    return { events, findings: events.filter((e) => e.status !== "matched") };
+    if (data.type === FRAME_OVERLAY_MESSAGE) {
+      return typeof data.open === "boolean" ? { kind: "overlay", open: data.open } : null;
+    }
+    if (data.type === FRAME_ERROR_MESSAGE) {
+      return typeof data.message === "string" ? { kind: "error", message: data.message.slice(0, 2e3) } : null;
+    }
+    return null;
+  }
+  var FRAME_STYLE = "width:100%;height:100%;border:0;display:block;background:#fff;";
+  var FRAME_LIFTED_STYLE = "position:fixed;top:0;left:0;width:100vw;height:100vh;height:100dvh;border:0;display:block;z-index:2147483600;background:transparent;";
+
+  // src/features/galgame-bridge/galgame-mode-core.js
+  var GALGAME_MODE_FLAG_PATH = "galgame_ui_plugin.runtime.enabled";
+  function isGalgameModeFlagOn(characterVariables) {
+    if (!characterVariables || typeof characterVariables !== "object") return false;
+    const plugin = characterVariables.galgame_ui_plugin;
+    if (!plugin || typeof plugin !== "object") return false;
+    const runtime = plugin.runtime;
+    if (!runtime || typeof runtime !== "object") return false;
+    return runtime.enabled === true;
   }
 
-  // src/features/menu/status-menu-core.js
-  var RE_DOCTYPE = /<!doctype\b[^>]*>/gi;
-  function extractMenuDocument(raw) {
-    const text = String(raw == null ? "" : raw);
-    if (!text) return { html: "", wrapperChars: 0 };
-    const open = scanTagBalance(text).events.find(
-      (e) => e.kind === "open" && e.status === "matched" && /^html$/i.test(e.tag)
-    );
-    if (!open) return { html: text, wrapperChars: 0 };
-    let start = open.at;
-    RE_DOCTYPE.lastIndex = 0;
-    const before = text.slice(0, open.at);
+  // src/features/galgame-bridge/choices.js
+  var INJECT_KEY = "galgame-companion-choices";
+  var OPTION_SHEET_KEY = "sheet_gal_companion_options";
+  var OPTION_SHEET_NAME = "选项表";
+  var COL_TEXT = "选项内容";
+  var COL_VALUE = "选项值";
+  var MAX_CHOICES = 6;
+  var CHOICES_INSTRUCTION = [
+    "Also append ONE player-choice block as the very last block of your reply, outside the narration",
+    "tags (after </maintext> / </gametxt>):",
+    '<choices><c v="first-person action text">Verb-first action label</c>...</choices>',
+    "- `v` = what the player does or says, in first person — sent verbatim as the player's next input.",
+    "- Each label is an ACTION the player takes: START WITH A VERB and convey tone + target,",
+    '  e.g. "Tease Mitsuki about her blush", "Coolly brush off Mana", "Pull Aoi aside to apologize".',
+    "  NEVER a bare line of dialogue and never a lone verb — always verb + who/what + how.",
+    "WHICH actions: if another instruction in your context ASSIGNS the options (what each one is, in what",
+    "order), offer exactly those, in that order, as many as it assigns — skip one only when the source it",
+    "names is absent, never because the scene seems not to call for it. Only when nothing assigns them,",
+    "offer 3 to 5 distinct actions — more when the moment genuinely branches, fewer when it does not.",
+    "This rule positions ONLY the choice block and relocates NOTHING else: every other block keeps the",
+    "exact position its own instructions give it. A block that belongs BEFORE the narration (thoughts,",
+    "plans, state) still goes BEFORE the opening narration tag — never moved to the end; a block that",
+    "belongs after the narration stays there. Never move or drop another block because of this rule.",
+    "Omit the choice block ONLY if the scene genuinely allows no meaningful choice."
+  ].join("\n");
+  var RE_CHOICES = /<choices>([\s\S]*?)<\/choices>/i;
+  var RE_C = /<c\b([^>]*)>([\s\S]*?)<\/c>/gi;
+  var RE_V = /\bv\s*=\s*"([^"]*)"/i;
+  function parseChoices(raw) {
+    if (typeof raw !== "string") return [];
+    const block = raw.match(RE_CHOICES);
+    if (!block) return [];
+    const out = [];
     let m;
-    while ((m = RE_DOCTYPE.exec(before)) !== null) start = m.index;
-    const html = text.slice(start, open.pairEnd);
-    return { html, wrapperChars: text.length - html.length };
+    RE_C.lastIndex = 0;
+    while ((m = RE_C.exec(block[1])) !== null) {
+      const text = m[2].replace(/<[^>]+>/g, "").trim();
+      if (!text) continue;
+      const vAttr = (m[1].match(RE_V) || [])[1];
+      const value = (vAttr != null ? vAttr : text).trim();
+      if (value) out.push({ text, value });
+    }
+    return out.slice(0, MAX_CHOICES);
+  }
+  function currentGalMesId() {
+    try {
+      const el = DOC.querySelector("#gal-global-overlay .gal-game-container");
+      const v = el && el.getAttribute("data-mes-id");
+      if (v == null || v === "") return -1;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : -1;
+    } catch (e) {
+      log.warn("choices: reading current gal mes id failed:", e);
+      return -1;
+    }
+  }
+  function rawMessage(id) {
+    try {
+      const arr = window.getChatMessages(id);
+      const msg = Array.isArray(arr) ? arr[0] : arr;
+      if (!msg) return null;
+      if (msg.role && msg.role !== "assistant") return null;
+      return typeof msg.message === "string" ? msg.message : typeof msg.mes === "string" ? msg.mes : null;
+    } catch (e) {
+      log.warn(`choices: getChatMessages(${id}) failed:`, e);
+      return null;
+    }
+  }
+  var _cache = { id: -1, len: -1, sheet: null };
+  function getOptionSheet() {
+    const id = currentGalMesId();
+    if (id < 0) return null;
+    const raw = rawMessage(id);
+    if (raw == null) return null;
+    if (_cache.id === id && _cache.len === raw.length) return _cache.sheet;
+    const parsed = parseChoices(raw);
+    const sheet = parsed.length ? { key: OPTION_SHEET_KEY, sheet: { name: OPTION_SHEET_NAME, content: [[COL_TEXT, COL_VALUE], ...parsed.map((o) => [o.text, o.value])] } } : null;
+    _cache = { id, len: raw.length, sheet };
+    return sheet;
+  }
+  function isGalgameModeOn() {
+    if (!topWindow.galgame) return false;
+    if (typeof window.getVariables !== "function") {
+      log.warn(`choices: getVariables is not on this window — cannot read ${GALGAME_MODE_FLAG_PATH}; treating galgame mode as OFF`);
+      return false;
+    }
+    try {
+      return isGalgameModeFlagOn(window.getVariables({ type: "character" }));
+    } catch (e) {
+      log.warn(`choices: reading ${GALGAME_MODE_FLAG_PATH} threw — treating galgame mode as OFF:`, e);
+      return false;
+    }
+  }
+  var _lastInjectOn = null;
+  function applyInject(dryRun) {
+    if (dryRun) return;
+    let ctx = null;
+    try {
+      ctx = topWindow.SillyTavern && topWindow.SillyTavern.getContext && topWindow.SillyTavern.getContext();
+    } catch (e) {
+      log.warn("choices: getContext threw:", e);
+      return;
+    }
+    if (!ctx || typeof ctx.setExtensionPrompt !== "function") return;
+    const on = isGalgameModeOn();
+    if (on !== _lastInjectOn) {
+      _lastInjectOn = on;
+      log.info(`choices: galgame mode ${on ? "ON" : "OFF"} (${topWindow.galgame ? GALGAME_MODE_FLAG_PATH : "galgame not on the page"}) → choice instruction ${on ? "injected" : "cleared"}`);
+    }
+    try {
+      ctx.setExtensionPrompt(INJECT_KEY, on ? CHOICES_INSTRUCTION : "", 1, 0, false, 0);
+    } catch (e) {
+      log.warn("choices: setExtensionPrompt failed:", e);
+    }
+  }
+  function dismissStaleChoices() {
+    try {
+      const layer = DOC.getElementById("gal-layer-choices");
+      if (layer && layer.classList.contains("active")) {
+        layer.click();
+        log.info("choices: dismissed stale choice panel for new generation (read-gate re-applies)");
+      }
+    } catch (e) {
+      log.warn("choices: dismissStaleChoices failed:", e);
+    }
+  }
+  var USER_OPEN_WINDOW_MS = 1500;
+  var _userOpenedChoicesAt = 0;
+  function enforceButtonOnlyChoices() {
+    try {
+      DOC.addEventListener("click", (e) => {
+        const t = e.target;
+        if (t && t.closest && t.closest('[data-action="show-choices"]')) _userOpenedChoicesAt = Date.now();
+      }, true);
+      const observer2 = new MutationObserver((muts) => {
+        for (const m of muts) {
+          const el = m.target;
+          if (el && el.id === "gal-layer-choices" && el.classList && el.classList.contains("active")) {
+            if (Date.now() - _userOpenedChoicesAt > USER_OPEN_WINDOW_MS) {
+              el.click();
+              log.info("choices: suppressed auto-pop (button-only) — panel dismissed, 剧情选项 button stays");
+            }
+          }
+        }
+      });
+      observer2.observe(DOC, { subtree: true, attributes: true, attributeFilter: ["class"] });
+    } catch (e) {
+      log.warn("choices: enforceButtonOnlyChoices setup failed (auto-pop not suppressed):", e);
+    }
+  }
+  function startChoices() {
+    if (typeof window.getChatMessages !== "function" || typeof window.eventOn !== "function") {
+      log.warn("choices: TH globals (getChatMessages/eventOn) absent — choices provider disabled");
+      return;
+    }
+    enforceButtonOnlyChoices();
+    const te = window.tavern_events || {};
+    if (!te.GENERATION_STARTED) {
+      log.warn("choices: tavern_events.GENERATION_STARTED absent — inject disabled (shim reader still active)");
+    } else {
+      try {
+        window.eventOn(te.GENERATION_STARTED, (_type, _option, dryRun) => {
+          if (!dryRun) dismissStaleChoices();
+          applyInject(dryRun);
+        });
+      } catch (e) {
+        log.warn("choices: bind GENERATION_STARTED failed:", e);
+      }
+    }
+    applyInject(false);
+    log.info("choices active (inject + 选项表 shim reader)");
+  }
+
+  // src/genre/main/main-profile.js
+  var MAIN = Object.freeze({
+    name: "main",
+    clockDate: Object.freeze(["Date"]),
+    clockWeekday: Object.freeze(["Weekday"]),
+    clockTime: Object.freeze(["Time"]),
+    advanceControl: null,
+    meterPanel: null
+  });
+
+  // src/genre/school/school-profile.js
+  var SCHOOL = Object.freeze({
+    name: "school",
+    clockDate: Object.freeze(["Date"]),
+    clockWeekday: Object.freeze(["Weekday"]),
+    clockTime: Object.freeze(["Time"]),
+    advanceControl: Object.freeze({
+      bindPath: "PendingState.BlockDone",
+      label: "Next",
+      title: "Advance one time block — uncheck to cancel (until you send a message)"
+    }),
+    // Live bars over the stage, shown ONLY while an H scene is latched (PendingState.IntimacyActive):
+    // outside one every meter sits at its resting value and the bars would only cover the artwork.
+    // His side is an energy BUDGET — Energy_curr against Energy_max; each sex act drains it, and at 0
+    // he must rest (School models no climax gauge for him: his release is the narrator's to write, his
+    // energy is the only hard limit the engine keeps). Her side is the three meters the engine moves
+    // per act; the gauge reaching 100 is what fires her climax.
+    meterPanel: Object.freeze({
+      showWhen: "PendingState.IntimacyActive",
+      player: Object.freeze({
+        root: "Mainchar",
+        label: "You",
+        bars: Object.freeze([
+          Object.freeze({ key: "energy", label: "Energy", path: "Energy_curr", maxPath: "Energy_max", color: "#60a5fa" })
+        ])
+      }),
+      cast: Object.freeze({
+        root: "Classmate",
+        presentPath: "Is_present",
+        namePath: "Name",
+        bars: Object.freeze([
+          Object.freeze({ key: "energy", label: "Energy", path: "Energy", max: 100, color: "#60a5fa" }),
+          Object.freeze({ key: "arousal", label: "Arousal", path: "Arousal", max: 100, color: "#f472b6" }),
+          Object.freeze({ key: "climax", label: "Climax", path: "ClimaxGauge", max: 100, color: "#fbbf24" })
+        ])
+      })
+    })
+  });
+
+  // src/genre/genre-profile-core.js
+  var PROFILES = Object.freeze({ main: MAIN, school: SCHOOL });
+  function profileFor(engineName2) {
+    const key = String(engineName2 == null ? "" : engineName2).trim().toLowerCase();
+    return PROFILES[key] || MAIN;
+  }
+
+  // src/genre/index.js
+  function engineName() {
+    try {
+      const helper = topWindow.MvuHelper;
+      if (!helper || typeof helper.engineInfo !== "function") return null;
+      const info = helper.engineInfo();
+      return info && info.name || null;
+    } catch (e) {
+      log.warn("genre: reading MvuHelper.engineInfo() threw — falling back to the main profile:", e);
+      return null;
+    }
+  }
+  function activeGenre() {
+    return profileFor(engineName());
+  }
+  function logActiveGenre() {
+    const name = engineName();
+    const profile = profileFor(name);
+    if (!name) {
+      log.info(`genre: no engine has answered yet → profile "${profile.name}" for now (re-resolved on every use, so an engine that loads later is picked up)`);
+      return;
+    }
+    log.info(`genre: engine "${name}" → profile "${profile.name}"` + (profile === MAIN ? " (no profile for that engine — using the default)" : ""));
+  }
+
+  // src/features/galgame-bridge/location-time-core.js
+  function displayValue(path, val, statData, renderLabel, onError) {
+    const raw = String(val == null ? "" : val).trim();
+    if (!raw || typeof renderLabel !== "function") return raw;
+    try {
+      const shown2 = renderLabel(path, raw, statData);
+      if (shown2 && typeof shown2.then === "function") {
+        if (typeof onError === "function") onError('i18nLabel("' + path + '") returned a Promise — a label must be synchronous here; showing the raw value', new Error("async labeler"));
+        return raw;
+      }
+      return shown2 == null || String(shown2) === "" ? raw : String(shown2);
+    } catch (e) {
+      if (typeof onError === "function") onError('i18nLabel("' + path + '") threw — showing the raw value', e);
+      return raw;
+    }
+  }
+  function mvuVal(x) {
+    return Array.isArray(x) ? x[0] : x;
+  }
+  var PLAIN_CLOCK = { clockDate: ["Date"], clockWeekday: ["Weekday"], clockTime: ["Time"] };
+  function pillStrings(statData, renderLabel, onError, genre) {
+    const W = statData && statData.World;
+    if (!W) return null;
+    const clock = genre || PLAIN_CLOCK;
+    const location = displayValue("World.Location", mvuVal(W.Location), statData, renderLabel, onError);
+    const fromCandidates = (names) => {
+      const list = Array.isArray(names) && names.length ? names : ["Date"];
+      for (const key of list) {
+        const v = mvuVal(W[key]);
+        if (v != null && String(v).trim() !== "") {
+          return displayValue("World." + key, v, statData, renderLabel, onError);
+        }
+      }
+      return "";
+    };
+    const weekday = fromCandidates(clock.clockWeekday);
+    const weather = displayValue("World.Weather", mvuVal(W.Weather), statData, renderLabel, onError);
+    const date = fromCandidates(clock.clockDate);
+    const time = fromCandidates(clock.clockTime);
+    const parts = [];
+    if (date) parts.push(weekday ? `${date} (${weekday})` : date);
+    if (time) parts.push(time);
+    let timeStr = parts.join(" ");
+    if (weather) timeStr += (timeStr ? " · " : "") + weather;
+    return { location, time: timeStr };
+  }
+
+  // src/features/galgame-bridge/live-stat-data.js
+  var FLOOR_LOOKBACK = 30;
+  function newestMessageId() {
+    try {
+      const n = Number(window.getLastMessageId ? window.getLastMessageId() : NaN);
+      if (Number.isFinite(n) && n >= 0) return n;
+    } catch (e) {
+      log.warn("live-stat-data: getLastMessageId threw — reading the chat length instead:", e);
+    }
+    try {
+      const chat = topWindow.SillyTavern && topWindow.SillyTavern.getContext && topWindow.SillyTavern.getContext().chat;
+      if (Array.isArray(chat)) return chat.length - 1;
+    } catch (e) {
+      log.warn("live-stat-data: reading the chat length threw — no floor can be resolved right now:", e);
+    }
+    return -1;
+  }
+  function statDataOf(id) {
+    if (typeof window.getVariables === "function") {
+      const v = window.getVariables({ type: "message", message_id: id });
+      return v && v.stat_data;
+    }
+    const Mvu = topWindow.Mvu;
+    if (Mvu && typeof Mvu.getMvuData === "function") {
+      const d = Mvu.getMvuData({ type: "message", message_id: id });
+      return d && d.stat_data;
+    }
+    return null;
+  }
+  function latestStatData({ from, accept } = {}) {
+    const top = Number.isFinite(from) && from >= 0 ? Math.floor(from) : newestMessageId();
+    if (top < 0) return null;
+    const ok = typeof accept === "function" ? accept : () => true;
+    let firstError = null;
+    for (let id = top; id >= 0 && id > top - FLOOR_LOOKBACK; id--) {
+      let sd = null;
+      try {
+        sd = statDataOf(id);
+      } catch (e) {
+        if (!firstError) firstError = { id, e };
+        continue;
+      }
+      if (sd && typeof sd === "object" && ok(sd)) return { statData: sd, floor: id };
+    }
+    if (firstError) log.warn(`live-stat-data: reading floor ${firstError.id} threw (and no floor qualified):`, firstError.e);
+    return null;
+  }
+
+  // src/features/galgame-bridge/location-time-bridge.js
+  var SHEET_UID = "sheet_global_data";
+  var SHEET_NAME = "全局数据表";
+  var COL_LOCATION = "当前详细地点";
+  var COL_TIME = "当前时间";
+  var labelCache = /* @__PURE__ */ new Map();
+  var labelPending = /* @__PURE__ */ new Set();
+  function engineLabeler() {
+    let engine = null;
+    try {
+      engine = topWindow.LogicEngine;
+    } catch (e) {
+      log.warn("location-time-bridge: reading LogicEngine threw — pills fall back to raw stored values:", e);
+      return null;
+    }
+    if (!engine || typeof engine.i18nLabel !== "function") return null;
+    return (path, value, statData) => {
+      let lang = "";
+      try {
+        const L = statData && statData.Preferences && statData.Preferences.Lang;
+        lang = String((Array.isArray(L) ? L[0] : L) || "");
+      } catch (e) {
+      }
+      const key = lang + "|" + path + "|" + value;
+      if (labelCache.has(key)) return labelCache.get(key);
+      let result;
+      try {
+        result = engine.i18nLabel(path, value, statData);
+      } catch (e) {
+        log.warn('location-time-bridge: i18nLabel("' + path + '") threw — showing the raw value:', e);
+        labelCache.set(key, value);
+        return value;
+      }
+      if (!result || typeof result.then !== "function") {
+        labelCache.set(key, result == null || result === "" ? value : String(result));
+        return labelCache.get(key);
+      }
+      if (!labelPending.has(key)) {
+        labelPending.add(key);
+        Promise.resolve(result).then(
+          (v) => {
+            labelCache.set(key, v == null || v === "" ? value : String(v));
+          },
+          (e) => {
+            labelCache.set(key, value);
+            log.warn('location-time-bridge: i18nLabel("' + path + '") rejected — keeping the raw value:', e);
+          }
+        ).finally(() => {
+          labelPending.delete(key);
+          refreshLocationTimePills();
+        });
+      }
+      return value;
+    };
+  }
+  function pills() {
+    const found = latestStatData({ accept: (sd2) => !!sd2.World });
+    const sd = found && found.statData;
+    if (!sd) return null;
+    return pillStrings(sd, engineLabeler(), (msg, e) => log.warn("location-time-bridge: " + msg, e), activeGenre());
+  }
+  function refreshLocationTimePills() {
+    try {
+      const p = pills();
+      if (!p) return false;
+      const doc = topWindow.document;
+      if (!doc) return false;
+      const locText = doc.querySelector("#gal-location-text");
+      const timeText = doc.querySelector("#gal-time-text");
+      const locBar = doc.querySelector("#gal-location-bar");
+      const timeBar = doc.querySelector("#gal-time-bar");
+      const locStr = p.location || "未知地点";
+      const timeStr = p.time || "--";
+      if (locText) locText.textContent = locStr;
+      if (timeText) timeText.textContent = timeStr;
+      if (locBar) locBar.setAttribute("title", locStr);
+      if (timeBar) timeBar.setAttribute("title", timeStr);
+      return !!(p.location || p.time);
+    } catch (e) {
+      log.warn("location-time-bridge: refreshLocationTimePills failed:", e);
+      return false;
+    }
+  }
+  function startLocationTimeBridge() {
+    let existing = null;
+    try {
+      existing = topWindow.AutoCardUpdaterAPI;
+    } catch (e) {
+      log.warn("location-time-bridge: reading AutoCardUpdaterAPI threw — skipping shim:", e);
+      return;
+    }
+    if (existing && typeof existing.exportTableAsJson === "function") {
+      log.info("location-time-bridge: AutoCardUpdaterAPI already present — not shimming (respecting the real one).");
+      return;
+    }
+    try {
+      topWindow.AutoCardUpdaterAPI = {
+        // galgame reads content[0]=headers, content[1]=dataRow and maps 当前详细地点→detailedLocation,
+        // 当前时间→currentTime. Return {} while there's no World so galgame's isEmpty retry keeps polling.
+        exportTableAsJson() {
+          try {
+            const out = {};
+            const p = pills();
+            if (p && (p.location || p.time)) {
+              out.global = { uid: SHEET_UID, name: SHEET_NAME, content: [[COL_LOCATION, COL_TIME], [p.location, p.time]] };
+            }
+            const opt = getOptionSheet();
+            if (opt) out[opt.key] = opt.sheet;
+            return out;
+          } catch (e) {
+            log.warn("location-time-bridge: exportTableAsJson failed:", e);
+            return {};
+          }
+        }
+      };
+      log.info("location-time-bridge: AutoCardUpdaterAPI shim installed (galgame location/time pills ← stat_data.World).");
+    } catch (e) {
+      log.error("location-time-bridge: could not install AutoCardUpdaterAPI shim:", e);
+    }
+  }
+
+  // src/features/galgame-bridge/html-escape-core.js
+  function escapeHtml(text) {
+    return String(text == null ? "" : text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+
+  // src/features/galgame-bridge/next-block-core.js
+  var WRAP_CLASS = "school-nextblock";
+  var CB_CLASS = "school-nextblock-cb";
+  var LABEL_CLASS = "school-nextblock-label";
+  var PATH_ATTR = "data-advance-path";
+  var DEFAULT_LABEL = "Next";
+  var DEFAULT_TITLE = "Advance to the next segment — uncheck to cancel (until you send a message)";
+  function advanceControlFor(genre) {
+    const control2 = genre && genre.advanceControl;
+    if (!control2) return null;
+    const bindPath = String(control2.bindPath == null ? "" : control2.bindPath).trim();
+    if (!bindPath) return null;
+    const label = String(control2.label == null ? "" : control2.label).trim() || DEFAULT_LABEL;
+    const title = String(control2.title == null ? "" : control2.title).trim() || DEFAULT_TITLE;
+    return { bindPath, label, title };
+  }
+  function chipHtml(control2) {
+    const title = escapeHtml(control2.title);
+    return `<label class="${WRAP_CLASS}" ${PATH_ATTR}="${escapeHtml(control2.bindPath)}" title="${title}"><span class="${LABEL_CLASS}">${escapeHtml(control2.label)}</span><input type="checkbox" class="${CB_CLASS}" aria-label="${title}" /></label>`;
+  }
+  function flagFromStatData(statData, bindPath) {
+    let cur = statData;
+    for (const seg of String(bindPath || "").split(".").filter(Boolean)) {
+      if (cur == null || typeof cur !== "object") return false;
+      cur = cur[seg];
+    }
+    const raw = Array.isArray(cur) && cur.length >= 2 && typeof cur[1] === "string" ? cur[0] : cur;
+    return Boolean(raw);
+  }
+  var MENU_ACTION_MESSAGE = "mvu-statusmenu-action";
+  function flagActionRequest(bindPath, want, requestId) {
+    return { type: MENU_ACTION_MESSAGE, requestId: String(requestId), action: "setValue", args: { path: String(bindPath), value: Boolean(want), scopePath: "" } };
+  }
+
+  // src/features/galgame-bridge/next-block.js
+  var OVERLAY_SEL = "#gal-global-overlay";
+  function control() {
+    return advanceControlFor(activeGenre());
+  }
+  function readFlag() {
+    const active = control();
+    if (!active) return false;
+    const live = latestStatData();
+    return flagFromStatData(live && live.statData, active.bindPath);
+  }
+  function nudgePills() {
+    [250, 700, 1400].forEach((ms) => setTimeout(() => {
+      try {
+        refreshLocationTimePills();
+      } catch (e) {
+        log.warn("next-block: pill refresh failed:", e);
+      }
+    }, ms));
+  }
+  var ACTION_TIMEOUT_MS = 8e3;
+  var actionSeq = 0;
+  function setFlag(want) {
+    const active = control();
+    if (!active) {
+      log.warn("next-block: this genre declares no manual advance — nothing to set");
+      return Promise.resolve(false);
+    }
+    return new Promise((resolve) => {
+      const request = flagActionRequest(active.bindPath, want, "next-block-" + ++actionSeq + "-" + Date.now());
+      const done = (achieved, why) => {
+        clearTimeout(timer);
+        window.removeEventListener("message", onReply);
+        if (why) log.warn(`next-block: ${active.bindPath} flag NOT ${want ? "set" : "cleared"} — ${why}`);
+        else log.info(`next-block: ${active.bindPath} flag ` + (want ? "SET (will advance at reply-end; the engine previews it)" : "cleared"));
+        nudgePills();
+        resolve(achieved);
+      };
+      const timer = setTimeout(() => done(readFlag(), "mvu-helper did not answer within " + ACTION_TIMEOUT_MS / 1e3 + "s (is it installed and enabled?)"), ACTION_TIMEOUT_MS);
+      function onReply(event) {
+        const data = event && event.data;
+        if (!data || data.type !== MENU_ACTION_MESSAGE + "-result" || data.requestId !== request.requestId) return;
+        if (data.ok) done(want, "");
+        else done(readFlag(), data.reason || "refused");
+      }
+      window.addEventListener("message", onReply);
+      topWindow.postMessage(request, "*");
+    });
+  }
+  var announced = "";
+  function injectInto() {
+    const overlay = DOC.querySelector(OVERLAY_SEL);
+    if (!overlay) return false;
+    const active = control();
+    const existing = overlay.querySelector(`.${WRAP_CLASS}`);
+    if (!active) {
+      if (existing) {
+        existing.remove();
+        log.info("next-block: this genre declares no manual advance — chip removed");
+      }
+      return false;
+    }
+    if (existing) {
+      if (existing.getAttribute(PATH_ATTR) === active.bindPath) return false;
+      existing.remove();
+    }
+    overlay.insertAdjacentHTML("beforeend", chipHtml(active));
+    const chip = overlay.querySelector(`.${WRAP_CLASS}`);
+    if (chip) chip.addEventListener("click", (e) => e.stopPropagation());
+    const cb = chip && chip.querySelector(`.${CB_CLASS}`);
+    if (cb) cb.checked = readFlag();
+    if (announced !== active.bindPath) {
+      announced = active.bindPath;
+      log.info(`next-block: advance chip rendered for genre "${activeGenre().name}" (flag model, ${active.bindPath})`);
+    }
+    return true;
+  }
+  function startNextBlock() {
+    if (!DOC || !DOC.body) return setTimeout(startNextBlock, 200);
+    DOC.addEventListener("change", (e) => {
+      const cb = e.target && e.target.classList && e.target.classList.contains(CB_CLASS) ? e.target : null;
+      if (!cb) return;
+      const want = cb.checked;
+      cb.disabled = true;
+      setFlag(want).then((got) => {
+        cb.checked = got;
+      }).catch((err) => {
+        log.error("next-block: flag toggle failed:", err);
+        cb.checked = readFlag();
+      }).finally(() => {
+        cb.disabled = false;
+      });
+    });
+    let scheduled3 = false;
+    const observer2 = new MutationObserver(() => {
+      if (scheduled3) return;
+      scheduled3 = true;
+      requestAnimationFrame(() => {
+        scheduled3 = false;
+        injectInto();
+      });
+    });
+    observer2.observe(DOC.body, { childList: true, subtree: true });
+    injectInto();
+    log.info("next-block watching (the chip appears once a genre declaring a manual advance is loaded)");
+  }
+
+  // src/features/galgame-bridge/meter-panel-core.js
+  var PANEL_CLASS = "companion-meters";
+  var GROUP_CLASS = "companion-meter-group";
+  var TITLE_CLASS = "companion-meter-title";
+  var BAR_CLASS = "companion-meter";
+  var LABEL_CLASS2 = "companion-meter-label";
+  var VALUE_CLASS = "companion-meter-value";
+  var TRACK_CLASS = "companion-meter-track";
+  var FILL_CLASS = "companion-meter-fill";
+  var SIGNATURE_ATTR = "data-meter-signature";
+  var RE_COLOR = /^(#[0-9a-f]{3,8}|rgba?\([\d.,\s%]+\)|hsla?\([\d.,\s%]+\))$/i;
+  var DEFAULT_COLOR = "#9ca3af";
+  function readPath(root, path) {
+    const segments = String(path == null ? "" : path).split(".").filter(Boolean);
+    let node = root;
+    for (const segment of segments) {
+      if (node == null || typeof node !== "object") return void 0;
+      node = node[segment];
+    }
+    return mvuVal(node);
+  }
+  function finiteNumber(x) {
+    const n = Number(x);
+    return Number.isFinite(n) ? n : null;
+  }
+  function readBar(node, bar, where, onError) {
+    const rawValue = readPath(node, bar.path);
+    let value = finiteNumber(rawValue);
+    if (value === null) {
+      onError(`meter "${bar.label}": ${where}.${bar.path} is ${rawValue === void 0 ? "absent" : "not a number"} — drawn as 0`);
+      value = 0;
+    }
+    let max;
+    if (bar.maxPath) {
+      const rawMax = readPath(node, bar.maxPath);
+      max = finiteNumber(rawMax);
+      if (max === null || max <= 0) {
+        onError(`meter "${bar.label}": ${where}.${bar.maxPath} is ${rawMax === void 0 ? "absent" : "not a positive number"} — scale drawn as 100`);
+        max = 100;
+      }
+    } else {
+      max = finiteNumber(bar.max);
+      if (max === null || max <= 0) {
+        onError(`meter "${bar.label}": the profile declares no usable max — scale drawn as 100`);
+        max = 100;
+      }
+    }
+    const pct = Math.max(0, Math.min(100, Math.round(value / max * 100)));
+    const color = RE_COLOR.test(String(bar.color || "")) ? String(bar.color) : DEFAULT_COLOR;
+    return { key: String(bar.key || bar.path), label: String(bar.label || bar.path), value, max, pct, color };
+  }
+  function meterPanelModel(statData, spec, onError = () => {
+  }) {
+    if (!spec || !statData || typeof statData !== "object") return null;
+    if (spec.showWhen && readPath(statData, spec.showWhen) !== true) return null;
+    let player = null;
+    if (spec.player && spec.player.root) {
+      const node = statData[spec.player.root];
+      if (node && typeof node === "object") {
+        player = {
+          label: String(spec.player.label || spec.player.root),
+          bars: (spec.player.bars || []).map((bar) => readBar(node, bar, spec.player.root, onError))
+        };
+      } else {
+        onError(`meter panel: ${spec.player.root} is absent from stat_data — the player's bars are not drawn`);
+      }
+    }
+    const cast = [];
+    if (spec.cast && spec.cast.root) {
+      const roster = statData[spec.cast.root];
+      if (roster && typeof roster === "object") {
+        for (const key of Object.keys(roster)) {
+          const member = roster[key];
+          if (!member || typeof member !== "object") continue;
+          if (readPath(member, spec.cast.presentPath) !== true) continue;
+          const rawName = readPath(member, spec.cast.namePath);
+          const name = String(rawName == null ? "" : rawName).trim() || key;
+          cast.push({ key, name, bars: (spec.cast.bars || []).map((bar) => readBar(member, bar, `${spec.cast.root}.${key}`, onError)) });
+        }
+      } else {
+        onError(`meter panel: ${spec.cast.root} is absent from stat_data — no cast bars are drawn`);
+      }
+    }
+    if (!player && !cast.length) return null;
+    return { player, cast };
+  }
+  function modelSignature(model) {
+    const bars = (list) => list.map((b) => `${b.key}=${b.value}/${b.max}`).join(",");
+    const groups = [];
+    if (model.player) groups.push(`${model.player.label}:${bars(model.player.bars)}`);
+    for (const member of model.cast) groups.push(`${member.key}:${member.name}:${bars(member.bars)}`);
+    return groups.join("|");
+  }
+  function barHtml(bar) {
+    return `<div class="${BAR_CLASS}" data-meter="${escapeHtml(bar.key)}"><span class="${LABEL_CLASS2}">${escapeHtml(bar.label)}</span><span class="${VALUE_CLASS}">${escapeHtml(bar.value)}/${escapeHtml(bar.max)}</span><div class="${TRACK_CLASS}"><div class="${FILL_CLASS}" style="width:${bar.pct}%;background:${escapeHtml(bar.color)}"></div></div></div>`;
+  }
+  function groupHtml(title, bars) {
+    return `<div class="${GROUP_CLASS}"><div class="${TITLE_CLASS}">${escapeHtml(title)}</div>${bars.map(barHtml).join("")}</div>`;
+  }
+  function panelHtml(model) {
+    const groups = [];
+    if (model.player) groups.push(groupHtml(model.player.label, model.player.bars));
+    for (const member of model.cast) groups.push(groupHtml(member.name, member.bars));
+    return `<div class="${PANEL_CLASS}" ${SIGNATURE_ATTR}="${escapeHtml(modelSignature(model))}">${groups.join("")}</div>`;
+  }
+
+  // src/features/galgame-bridge/meter-panel.js
+  var OVERLAY_SEL2 = "#gal-global-overlay";
+  var STAGE_SEL = "#gal-global-overlay .gal-game-container";
+  var MVU_UPDATE_ENDED = "mag_variable_update_ended";
+  function displayedFloor() {
+    const stage = DOC.querySelector(STAGE_SEL);
+    const raw = stage && stage.getAttribute("data-mes-id");
+    if (raw == null || raw === "") return -1;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : -1;
+  }
+  var reported = /* @__PURE__ */ new Set();
+  function reportOnce(message) {
+    if (reported.has(message)) return;
+    reported.add(message);
+    log.warn("meter-panel: " + message);
+  }
+  var shown = false;
+  function redraw() {
+    const overlay = DOC.querySelector(OVERLAY_SEL2);
+    if (!overlay) return;
+    const spec = activeGenre().meterPanel;
+    const existing = overlay.querySelector(`.${PANEL_CLASS}`);
+    if (!spec) {
+      if (existing) {
+        existing.remove();
+        log.info("meter-panel: this genre declares no meters — panel removed");
+      }
+      shown = false;
+      return;
+    }
+    const from = displayedFloor();
+    const found = latestStatData(from >= 0 ? { from } : {});
+    const model = found ? meterPanelModel(found.statData, spec, reportOnce) : null;
+    if (!model) {
+      if (existing) existing.remove();
+      if (shown) {
+        shown = false;
+        log.info(`meter-panel: hidden — ${spec.showWhen || "nothing"} no longer reads true`);
+      }
+      return;
+    }
+    const html = panelHtml(model);
+    const signature = /data-meter-signature="([^"]*)"/.exec(html);
+    if (existing && signature && existing.getAttribute(SIGNATURE_ATTR) === signature[1]) return;
+    if (existing) existing.outerHTML = html;
+    else overlay.insertAdjacentHTML("beforeend", html);
+    if (!shown) {
+      shown = true;
+      log.info(`meter-panel: shown for genre "${activeGenre().name}" (${spec.showWhen} reads true on floor ${found.floor}) — ${model.player ? 1 : 0} player group, ${model.cast.length} cast group(s)`);
+    }
+  }
+  var scheduled2 = false;
+  function schedule() {
+    if (scheduled2) return;
+    scheduled2 = true;
+    requestAnimationFrame(() => {
+      scheduled2 = false;
+      try {
+        redraw();
+      } catch (e) {
+        log.error("meter-panel: redraw failed:", e);
+      }
+    });
+  }
+  function startMeterPanel() {
+    if (!DOC || !DOC.body) return setTimeout(startMeterPanel, 200);
+    const te = window.tavern_events || {};
+    const names = [te.MESSAGE_RECEIVED, te.MESSAGE_UPDATED, te.MESSAGE_SWIPED, te.MESSAGE_EDITED, te.MESSAGE_DELETED, te.CHAT_CHANGED, MVU_UPDATE_ENDED];
+    if (typeof window.eventOn === "function") {
+      for (const name of names) {
+        if (!name) continue;
+        try {
+          window.eventOn(name, schedule);
+        } catch (e) {
+          log.warn(`meter-panel: eventOn(${name}) failed — that trigger will not redraw the bars:`, e);
+        }
+      }
+    } else {
+      log.warn("meter-panel: eventOn is not on this window — the bars redraw only on stage rebuilds");
+    }
+    const observer2 = new MutationObserver(schedule);
+    observer2.observe(DOC.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-mes-id"] });
+    schedule();
+    log.info("meter-panel watching (the bars appear once a genre declaring meters is loaded and its gate reads true)");
   }
 
   // src/features/menu/status-menu.js
-  var MENU_MARKER = "VARIABLE_UPDATE_ENDED";
-  function pickMenuScript(scripts) {
-    const markers = scripts.filter((s) => (s.replaceString || "").includes(MENU_MARKER));
-    if (!markers.length) return null;
-    return markers.find((s) => /status/i.test(s.scriptName)) || markers.find((s) => !/start|开始|newgame|new game/i.test(s.scriptName)) || markers.slice().sort((a, b) => b.replaceString.length - a.replaceString.length)[0];
-  }
-  function loadMenuHtml() {
-    try {
-      const ctx = (window.SillyTavern || DOC.defaultView?.SillyTavern)?.getContext?.();
-      if (!ctx) {
-        log.warn("status-menu: no SillyTavern context");
-        return null;
+  var MVU_UPDATE_ENDED2 = "mag_variable_update_ended";
+  var current = null;
+  function onFrameMessage(event) {
+    if (!current || !current.frame.isConnected || event.source !== current.frame.contentWindow) return;
+    const msg = readFrameMessage(event.data);
+    if (!msg) return;
+    if (msg.kind === "height") {
+      current.height = msg.height;
+      if (!current.lifted) current.frame.style.height = msg.height + "px";
+    } else if (msg.kind === "overlay") {
+      if (msg.open && !current.lifted) {
+        current.savedStyle = current.frame.style.cssText;
+        current.frame.style.cssText = FRAME_LIFTED_STYLE;
+        current.lifted = true;
+      } else if (!msg.open && current.lifted) {
+        current.frame.style.cssText = current.savedStyle;
+        current.lifted = false;
       }
-      const char = ctx.characters?.[ctx.characterId];
-      const scripts = char?.data?.extensions?.regex_scripts || [];
-      const menu = pickMenuScript(scripts);
-      if (!menu) {
-        log.warn(`status-menu: no StatusMenu regex script on "${char?.name}"`);
-        return null;
-      }
-      const { html, wrapperChars } = extractMenuDocument(menu.replaceString);
-      log.info(
-        `status-menu: loaded "${menu.scriptName}" (${html.length} chars${wrapperChars ? `, unwrapped from ${wrapperChars} chars of card/platform packaging` : ""})`
-      );
-      return html;
-    } catch (e) {
-      log.error("status-menu: loadMenuHtml failed:", e);
-      return null;
+    } else {
+      log.warn("status-menu: the StatusMenu frame threw: " + msg.message);
     }
   }
-  var FLOOR_LOOKBACK = 30;
-  function latestMessageId() {
-    let last = -1;
-    try {
-      const n = Number(window.getLastMessageId ? window.getLastMessageId() : NaN);
-      if (Number.isFinite(n) && n >= 0) last = n;
-    } catch (e) {
-    }
-    if (last < 0) {
+  var pushTimer = null;
+  function schedulePush() {
+    if (!current) return;
+    clearTimeout(pushTimer);
+    pushTimer = setTimeout(() => {
+      if (!current || !current.frame.isConnected) {
+        current = null;
+        return;
+      }
+      const live = latestStatData();
+      if (!live) return;
       try {
-        const chat = (window.parent?.SillyTavern || window.SillyTavern)?.getContext?.()?.chat;
-        if (Array.isArray(chat)) last = chat.length - 1;
+        current.frame.contentWindow.postMessage({ type: FRAME_STATE_MESSAGE, mid: live.floor, statData: live.statData }, "*");
       } catch (e) {
+        log.warn("status-menu: could not push state to the StatusMenu frame:", e);
       }
-    }
-    if (last < 0) return -1;
-    const gv = typeof window.getVariables === "function" ? window.getVariables : null;
-    if (gv) {
-      for (let id = last; id >= 0 && id > last - FLOOR_LOOKBACK; id--) {
-        try {
-          const v = gv({ type: "message", message_id: id });
-          if (v && v.stat_data) return id;
-        } catch (e) {
-        }
-      }
-    }
-    return last;
+    }, 150);
   }
-  function bridgeGlobals(iw) {
-    const bridged = [];
-    for (const k of ["SillyTavern", "TavernHelper"]) {
-      if (typeof window[k] !== "undefined") {
-        iw[k] = window[k];
-        bridged.push(k);
+  var wired = false;
+  function wireOnce() {
+    if (wired) return;
+    wired = true;
+    topWindow.addEventListener("message", onFrameMessage);
+    const te = window.tavern_events || {};
+    if (typeof window.eventOn !== "function") {
+      log.warn("status-menu: eventOn is not on this window — the open menu shows the state it was opened with until it is reopened");
+      return;
+    }
+    for (const name of [te.MESSAGE_RECEIVED, te.MESSAGE_UPDATED, te.MESSAGE_SWIPED, te.CHAT_CHANGED, MVU_UPDATE_ENDED2]) {
+      if (!name) continue;
+      try {
+        window.eventOn(name, schedulePush);
+      } catch (e) {
+        log.warn(`status-menu: eventOn(${name}) failed — that trigger will not refresh the open menu:`, e);
       }
     }
-    let copied = 0;
-    for (const k of Object.keys(window.TavernHelper || {})) {
-      if (typeof window[k] === "function") {
-        iw[k] = window[k];
-        copied++;
-      }
+  }
+  async function mountStatusMenu(bodyEl) {
+    const helper = topWindow.MvuHelper;
+    if (!helper || typeof helper.statusMenuFrameSource !== "function") {
+      bodyEl.textContent = "The StatusMenu needs mvu-helper 0.3.290 or later.";
+      log.warn("status-menu: MvuHelper.statusMenuFrameSource is not on the page — mvu-helper is missing, disabled, or older than the contained menu");
+      return null;
     }
-    if (copied) bridged.push(`${copied} TavernHelper functions`);
-    else log.error("status-menu: no TavernHelper functions found on this window — is the companion running inside a TH script iframe? The menu will render blank");
-    iw.getCurrentMessageId = latestMessageId;
-    bridged.push("getCurrentMessageId(shim)");
+    const live = latestStatData();
+    let source = null;
     try {
-      const topMvu2 = window.parent && window.parent.Mvu;
-      if (topMvu2) {
-        iw.Mvu = topMvu2;
-        bridged.push("Mvu");
-      } else log.warn("status-menu: Mvu not found on parent window (menu falls back to 2s polling)");
+      source = frameAttributesFrom(await helper.statusMenuFrameSource({ mid: live ? live.floor : -1, statData: live ? live.statData : null }));
     } catch (e) {
-      log.warn("status-menu: could not reach parent Mvu:", e);
+      log.error("status-menu: MvuHelper.statusMenuFrameSource failed:", e);
+      bodyEl.textContent = "Failed to load the StatusMenu (see console).";
+      return null;
     }
-    if (typeof iw.getVariables !== "function") {
-      log.error("status-menu: getVariables NOT bridged even after the namespace copy — menu will render blank");
-    }
-    return bridged;
-  }
-  function mountStatusMenu(bodyEl) {
-    const html = loadMenuHtml();
-    if (!html) {
+    if (!source) {
       bodyEl.textContent = "This card has no StatusMenu.";
+      log.info("status-menu: mvu-helper reports no contained StatusMenu on this card — none is installed, or it was installed before the lift (re-activate the StatusMenu pack)");
       return null;
     }
+    if (!bodyEl.isConnected) return null;
+    wireOnce();
     bodyEl.textContent = "";
-    bodyEl.style.cssText = "flex:1 1 auto;display:block;padding:0;overflow:hidden;";
+    bodyEl.style.cssText = "flex:1 1 auto;display:block;padding:0;overflow:auto;";
     const frame = DOC.createElement("iframe");
-    frame.style.cssText = "width:100%;height:100%;border:0;display:block;background:#fff;";
+    frame.setAttribute("sandbox", source.sandbox);
+    frame.setAttribute("title", "StatusMenu");
+    frame.style.cssText = FRAME_STYLE;
+    frame.srcdoc = source.srcdoc;
     bodyEl.appendChild(frame);
-    const iw = frame.contentWindow;
-    const bridged = bridgeGlobals(iw);
-    log.info(`status-menu: bridged [${bridged.join(", ")}]`);
-    try {
-      iw.document.open();
-      iw.document.write(html);
-      iw.document.close();
-    } catch (e) {
-      log.error("status-menu: writing menu HTML failed:", e);
-      bodyEl.textContent = "Failed to render StatusMenu (see console).";
-      return null;
-    }
+    current = { frame, height: 0, lifted: false, savedStyle: "" };
+    log.info(`status-menu: mounted the contained StatusMenu (${source.srcdoc.length} chars, sandbox="${source.sandbox}")`);
     return frame;
   }
 
@@ -1612,7 +2343,7 @@
 
   // src/features/galgame-quirks/generating-indicator.js
   var INDICATOR_ID = "gal-generating-indicator";
-  var OVERLAY_SEL = "#gal-global-overlay";
+  var OVERLAY_SEL3 = "#gal-global-overlay";
   var POLL_MS = 750;
   var TURN_PHASE_EVENT = "mvu_helper_turn_phase";
   var PHASE_MAX_MS = 3e5;
@@ -1646,7 +2377,7 @@
     return false;
   }
   function overlayPresent() {
-    const overlay = DOC.querySelector(OVERLAY_SEL);
+    const overlay = DOC.querySelector(OVERLAY_SEL3);
     return Boolean(overlay && overlay.classList.contains("active"));
   }
   var classObserver = null;
@@ -1819,26 +2550,26 @@
       DOC.removeEventListener("keydown", onKey);
     };
     modalParent().appendChild(wrap);
-    mountStatusMenu(body);
+    mountStatusMenu(body).catch((e) => log.error("menu-modal: mounting the StatusMenu failed:", e));
     log.info("menu modal opened");
   }
 
   // src/features/menu/toolbar.js
   var ACTION = "school-stats";
-  var OVERLAY_SEL2 = "#gal-global-overlay";
+  var OVERLAY_SEL4 = "#gal-global-overlay";
   var MOBILE_MENU_SEL = "#gal-global-overlay #gal-mobile-menu";
   var CORNER_CLASS = "school-corner-btn";
   var CORNER_BTN_HTML = `<button class="gal-footer-btn ${CORNER_CLASS}" data-action="${ACTION}" title="School Menu"><i class="fa-solid fa-users"></i> <span class="gal-btn-text">MENU</span></button>`;
   var MOBILE_BTN_HTML = `<button class="gal-menu-btn" data-action="${ACTION}"><i class="fa-solid fa-users"></i> Menu</button>`;
-  function injectInto(containerSel, existsSel, html) {
+  function injectInto2(containerSel, existsSel, html) {
     const c = DOC.querySelector(containerSel);
     if (!c || c.querySelector(existsSel)) return false;
     c.insertAdjacentHTML("beforeend", html);
     return true;
   }
   function injectAll() {
-    const a = injectInto(OVERLAY_SEL2, `.${CORNER_CLASS}`, CORNER_BTN_HTML);
-    const b = injectInto(MOBILE_MENU_SEL, `[data-action="${ACTION}"]`, MOBILE_BTN_HTML);
+    const a = injectInto2(OVERLAY_SEL4, `.${CORNER_CLASS}`, CORNER_BTN_HTML);
+    const b = injectInto2(MOBILE_MENU_SEL, `[data-action="${ACTION}"]`, MOBILE_BTN_HTML);
     if (a || b) log.info(`button injected (corner=${a}, mobile=${b})`);
   }
   function startToolbar() {
@@ -1868,36 +2599,66 @@
     log.info("toolbar watcher active");
   }
 
-  // src/features/menu/statusmenu-popup-layer.js
-  var POPUP_IDS = ["detail-modal-overlay", "img-popup-overlay", "portrait-mode-modal", "equip-modal-overlay"];
-  function relocate(el) {
-    const target = currentFullscreenEl() || DOC.body;
-    if (!target || el.parentElement === target) return;
-    target.appendChild(el);
-    log.info(`statusmenu-popup-layer: moved #${el.id} into ${target === DOC.body ? "body" : "the fullscreen layer"}`);
-  }
-  function sweep2() {
-    for (const id of POPUP_IDS) {
-      const el = DOC.getElementById(id);
-      if (el) relocate(el);
-    }
-  }
-  function startStatusMenuPopupLayer() {
-    if (!DOC || !DOC.body) {
-      log.warn("statusmenu-popup-layer: no parent document body — skipping");
-      return;
-    }
-    const observer2 = new MutationObserver((records) => {
-      if (!currentFullscreenEl()) return;
-      for (const record of records) {
-        for (const node of record.addedNodes) {
-          if (node.nodeType === 1 && POPUP_IDS.includes(node.id)) relocate(node);
+  // src/shared/tag-balance-core.js
+  var kMarkupPattern = /<!--[\s\S]*?-->|<(\/?)([a-zA-Z][-.:0-9_a-zA-Z@\xB7\xC0-\xD6\xD8-\xF6\u00F8-\u03A1\u03A3-\u03D9\u03DB-\u03EF\u03F7-\u03FF\u0400-\u04FF\u0500-\u052F\u1D00-\u1D2B\u1D6B-\u1D77\u1D79-\u1D9A\u1E00-\u1E9B\u1F00-\u1F15\u1F18-\u1F1D\u1F20-\u1F45\u1F48-\u1F4D\u1F50-\u1F57\u1F59\u1F5B\u1F5D\u1F5F-\u1F7D\u1F80-\u1FB4\u1FB6-\u1FBC\u1FBE\u1FC2-\u1FC4\u1FC6-\u1FCC\u1FD0-\u1FD3\u1FD6-\u1FDB\u1FE0-\u1FEC\u1FF2-\u1FF4\u1FF6-\u1FFC\u2126\u212A-\u212B\u2132\u214E\u2160-\u2188\u2C60-\u2C7F\uA722-\uA787\uA78B-\uA78E\uA790-\uA7AD\uA7B0-\uA7B7\uA7F7-\uA7FF\uAB30-\uAB5A\uAB5C-\uAB5F\uAB64-\uAB65\uFB00-\uFB06\uFB13-\uFB17\uFF21-\uFF3A\uFF41-\uFF5A\x37F-\u1FFF\u200C-\u200D\u203F-\u2040\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD]*)((?:\s+[^>]*?(?:(?:'[^']*')|(?:"[^"]*"))?)*)\s*(\/?)>/gu;
+  var DEFAULT_VOID_TAGS = ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"];
+  var DEFAULT_RAW_TEXT_TAGS = ["script", "noscript", "style", "pre"];
+  function scanTagBalance(text, options = {}) {
+    const src = String(text || "");
+    const voidTags = new Set((options.voidTags || DEFAULT_VOID_TAGS).map((t) => t.toLowerCase()));
+    const rawTextTags = new Set((options.rawTextTags || DEFAULT_RAW_TEXT_TAGS).map((t) => t.toLowerCase()));
+    const events = [];
+    const stack = [];
+    const re = new RegExp(kMarkupPattern.source, kMarkupPattern.flags);
+    let match;
+    while (match = re.exec(src)) {
+      const { 0: matchText, 1: leadingSlash, 2: tagName, 4: closingSlash } = match;
+      const at = re.lastIndex - matchText.length;
+      const end = re.lastIndex;
+      if (matchText[1] === "!") continue;
+      const lower = tagName.toLowerCase();
+      if (!leadingSlash) {
+        if (closingSlash || voidTags.has(lower)) {
+          events.push({ tag: tagName, kind: closingSlash ? "self" : "void", at, end, status: "matched" });
+          continue;
+        }
+        const ev = { tag: tagName, kind: "open", at, end, status: "unclosed-open" };
+        events.push(ev);
+        stack.push(ev);
+        if (rawTextTags.has(lower)) {
+          const closeMarkup = `</${tagName}>`;
+          const closeIndex = src.toLowerCase().indexOf(closeMarkup.toLowerCase(), re.lastIndex);
+          if (closeIndex !== -1) {
+            const closeEnd = closeIndex + closeMarkup.length;
+            ev.status = "matched";
+            ev.pairAt = closeIndex;
+            ev.pairEnd = closeEnd;
+            events.push({ tag: tagName, kind: "close", at: closeIndex, end: closeEnd, status: "matched", pairAt: at, pairEnd: end });
+            stack.pop();
+            re.lastIndex = closeEnd;
+          }
+        }
+        continue;
+      }
+      let found = -1;
+      for (let i = stack.length - 1; i >= 0; i--) {
+        if (stack[i].tag.toLowerCase() === lower) {
+          found = i;
+          break;
         }
       }
-    });
-    observer2.observe(DOC.body, { childList: true });
-    ["fullscreenchange", "webkitfullscreenchange", "mozfullscreenchange", "MSFullscreenChange"].forEach((evt) => DOC.addEventListener(evt, sweep2));
-    log.info("statusmenu-popup-layer active");
+      if (found === -1) {
+        events.push({ tag: tagName, kind: "close", at, end, status: "orphan-close" });
+        continue;
+      }
+      for (let i = stack.length - 1; i > found; i--) stack.pop();
+      const open = stack.pop();
+      open.status = "matched";
+      open.pairAt = at;
+      open.pairEnd = end;
+      events.push({ tag: tagName, kind: "close", at, end, status: "matched", pairAt: open.at, pairEnd: open.end });
+    }
+    return { events, findings: events.filter((e) => e.status !== "matched") };
   }
 
   // src/features/beat-shaper/beat-shaper-core.js
@@ -1979,7 +2740,7 @@
     Failure: "⚠️",
     CritFail: "💀"
   };
-  function escapeHtml(s) {
+  function escapeHtml2(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
   function parseCombatLog(text) {
@@ -1995,7 +2756,7 @@
   }
   function renderRollText(roll, prefix = ROLL_PREFIX) {
     const mark = OUTCOME_MARK[roll.outcome] || "•";
-    return `${prefix}${mark} ${escapeHtml(roll.line)}`;
+    return `${prefix}${mark} ${escapeHtml2(roll.line)}`;
   }
   function stripRollText(inner, rolls) {
     let out = String(inner);
@@ -2315,7 +3076,7 @@ ${inner.replace(/^\n+/, "")}`;
   function mintUidForCurrentChat() {
     return sceneUid(currentChatKey() || UNKNOWN_CHAT_KEY, randomToken());
   }
-  function rawMessage(id) {
+  function rawMessage2(id) {
     try {
       const arr = window.getChatMessages(id);
       const msg = Array.isArray(arr) ? arr[0] : arr;
@@ -2355,7 +3116,7 @@ ${cot}` : cot;
     if (!Number.isFinite(id) || id < 0) return;
     if (inFlight.has(id)) return;
     if (!topWindow.galgame) return;
-    const raw = rawMessage(id);
+    const raw = rawMessage2(id);
     if (raw === null) return;
     if (!isTurnBusy()) {
       const reason = incompleteReplyReason(raw, id);
@@ -2668,7 +3429,7 @@ ${cot}` : cot;
       }
     }
   }
-  function rawMessage2(id) {
+  function rawMessage3(id) {
     try {
       const arr = window.getChatMessages(id);
       const msg = Array.isArray(arr) ? arr[0] : arr;
@@ -2690,7 +3451,7 @@ ${cot}` : cot;
     return deleted ? deleted.length : 0;
   }
   async function processMessage(id) {
-    const raw = rawMessage2(id);
+    const raw = rawMessage3(id);
     if (!raw) return;
     const scan = pairImagesToScenes(raw);
     const { pairs } = scan;
@@ -2991,7 +3752,7 @@ ${cot}` : cot;
   }
 
   // src/features/image/image-viewer.js
-  var OVERLAY_SEL3 = "#gal-global-overlay";
+  var OVERLAY_SEL5 = "#gal-global-overlay";
   var BTN_CLASS = "school-imgview-btn";
   var MODAL_ID2 = "school-imgview-modal";
   var Z_INDEX2 = 2147483e3;
@@ -2999,7 +3760,7 @@ ${cot}` : cot;
     return currentFullscreenEl() || DOC.body;
   }
   function currentBgUrl() {
-    const ov = DOC.querySelector(OVERLAY_SEL3);
+    const ov = DOC.querySelector(OVERLAY_SEL5);
     if (!ov) return null;
     for (const sel of [".gal-bg-front", ".gal-bg-base"]) {
       const el = ov.querySelector(sel);
@@ -3060,7 +3821,7 @@ ${cot}` : cot;
     log.image("image-viewer: opened (" + (url ? "showing current backdrop" : "no image") + ")");
   }
   function injectButton() {
-    const overlay = DOC.querySelector(OVERLAY_SEL3);
+    const overlay = DOC.querySelector(OVERLAY_SEL5);
     if (!overlay || overlay.querySelector("." + BTN_CLASS)) return false;
     const btn = DOC.createElement("button");
     btn.type = "button";
@@ -3092,7 +3853,7 @@ ${cot}` : cot;
   }
 
   // src/features/image/image-regen.js
-  var OVERLAY_SEL4 = "#gal-global-overlay";
+  var OVERLAY_SEL6 = "#gal-global-overlay";
   var BTN_CLASS2 = "school-imgregen-btn";
   function basename(u) {
     return (u || "").split("/").pop().split("?")[0];
@@ -3137,7 +3898,7 @@ ${cot}` : cot;
     return true;
   }
   function injectButton2() {
-    const overlay = DOC.querySelector(OVERLAY_SEL4);
+    const overlay = DOC.querySelector(OVERLAY_SEL6);
     if (!overlay || overlay.querySelector("." + BTN_CLASS2)) return false;
     const btn = DOC.createElement("button");
     btn.type = "button";
@@ -3202,7 +3963,7 @@ ${cot}` : cot;
   var SELECTING_CLASS = "companion-bg-selecting";
   var PICKED_CLASS = "companion-bg-picked";
   var TOGGLE_CLASS = "companion-bg-select-toggle";
-  var BAR_CLASS = "companion-bg-selectbar";
+  var BAR_CLASS2 = "companion-bg-selectbar";
   var COUNT_CLASS = "companion-bg-selected-count";
   function cardsIn(pane) {
     return Array.from(pane.querySelectorAll(CARD_SEL));
@@ -3284,7 +4045,7 @@ ${cot}` : cot;
   }
   function buildSelectBar(pane) {
     const bar = DOC.createElement("div");
-    bar.className = BAR_CLASS;
+    bar.className = BAR_CLASS2;
     const count = DOC.createElement("span");
     count.className = COUNT_CLASS;
     count.textContent = "0 selected";
@@ -3381,811 +4142,6 @@ ${cot}` : cot;
     log.image("background-manager active");
   }
 
-  // src/features/galgame-bridge/galgame-mode-core.js
-  var GALGAME_MODE_FLAG_PATH = "galgame_ui_plugin.runtime.enabled";
-  function isGalgameModeFlagOn(characterVariables) {
-    if (!characterVariables || typeof characterVariables !== "object") return false;
-    const plugin = characterVariables.galgame_ui_plugin;
-    if (!plugin || typeof plugin !== "object") return false;
-    const runtime = plugin.runtime;
-    if (!runtime || typeof runtime !== "object") return false;
-    return runtime.enabled === true;
-  }
-
-  // src/features/galgame-bridge/choices.js
-  var INJECT_KEY = "galgame-companion-choices";
-  var OPTION_SHEET_KEY = "sheet_gal_companion_options";
-  var OPTION_SHEET_NAME = "选项表";
-  var COL_TEXT = "选项内容";
-  var COL_VALUE = "选项值";
-  var MAX_CHOICES = 6;
-  var CHOICES_INSTRUCTION = [
-    "Also append ONE player-choice block as the very last block of your reply, outside the narration",
-    "tags (after </maintext> / </gametxt>):",
-    '<choices><c v="first-person action text">Verb-first action label</c>...</choices>',
-    "- `v` = what the player does or says, in first person — sent verbatim as the player's next input.",
-    "- Each label is an ACTION the player takes: START WITH A VERB and convey tone + target,",
-    '  e.g. "Tease Mitsuki about her blush", "Coolly brush off Mana", "Pull Aoi aside to apologize".',
-    "  NEVER a bare line of dialogue and never a lone verb — always verb + who/what + how.",
-    "WHICH actions: if another instruction in your context ASSIGNS the options (what each one is, in what",
-    "order), offer exactly those, in that order, as many as it assigns — skip one only when the source it",
-    "names is absent, never because the scene seems not to call for it. Only when nothing assigns them,",
-    "offer 3 to 5 distinct actions — more when the moment genuinely branches, fewer when it does not.",
-    "This rule positions ONLY the choice block and relocates NOTHING else: every other block keeps the",
-    "exact position its own instructions give it. A block that belongs BEFORE the narration (thoughts,",
-    "plans, state) still goes BEFORE the opening narration tag — never moved to the end; a block that",
-    "belongs after the narration stays there. Never move or drop another block because of this rule.",
-    "Omit the choice block ONLY if the scene genuinely allows no meaningful choice."
-  ].join("\n");
-  var RE_CHOICES = /<choices>([\s\S]*?)<\/choices>/i;
-  var RE_C = /<c\b([^>]*)>([\s\S]*?)<\/c>/gi;
-  var RE_V = /\bv\s*=\s*"([^"]*)"/i;
-  function parseChoices(raw) {
-    if (typeof raw !== "string") return [];
-    const block = raw.match(RE_CHOICES);
-    if (!block) return [];
-    const out = [];
-    let m;
-    RE_C.lastIndex = 0;
-    while ((m = RE_C.exec(block[1])) !== null) {
-      const text = m[2].replace(/<[^>]+>/g, "").trim();
-      if (!text) continue;
-      const vAttr = (m[1].match(RE_V) || [])[1];
-      const value = (vAttr != null ? vAttr : text).trim();
-      if (value) out.push({ text, value });
-    }
-    return out.slice(0, MAX_CHOICES);
-  }
-  function currentGalMesId() {
-    try {
-      const el = DOC.querySelector("#gal-global-overlay .gal-game-container");
-      const v = el && el.getAttribute("data-mes-id");
-      if (v == null || v === "") return -1;
-      const n = Number(v);
-      return Number.isFinite(n) ? n : -1;
-    } catch (e) {
-      log.warn("choices: reading current gal mes id failed:", e);
-      return -1;
-    }
-  }
-  function rawMessage3(id) {
-    try {
-      const arr = window.getChatMessages(id);
-      const msg = Array.isArray(arr) ? arr[0] : arr;
-      if (!msg) return null;
-      if (msg.role && msg.role !== "assistant") return null;
-      return typeof msg.message === "string" ? msg.message : typeof msg.mes === "string" ? msg.mes : null;
-    } catch (e) {
-      log.warn(`choices: getChatMessages(${id}) failed:`, e);
-      return null;
-    }
-  }
-  var _cache = { id: -1, len: -1, sheet: null };
-  function getOptionSheet() {
-    const id = currentGalMesId();
-    if (id < 0) return null;
-    const raw = rawMessage3(id);
-    if (raw == null) return null;
-    if (_cache.id === id && _cache.len === raw.length) return _cache.sheet;
-    const parsed = parseChoices(raw);
-    const sheet = parsed.length ? { key: OPTION_SHEET_KEY, sheet: { name: OPTION_SHEET_NAME, content: [[COL_TEXT, COL_VALUE], ...parsed.map((o) => [o.text, o.value])] } } : null;
-    _cache = { id, len: raw.length, sheet };
-    return sheet;
-  }
-  function isGalgameModeOn() {
-    if (!topWindow.galgame) return false;
-    if (typeof window.getVariables !== "function") {
-      log.warn(`choices: getVariables is not on this window — cannot read ${GALGAME_MODE_FLAG_PATH}; treating galgame mode as OFF`);
-      return false;
-    }
-    try {
-      return isGalgameModeFlagOn(window.getVariables({ type: "character" }));
-    } catch (e) {
-      log.warn(`choices: reading ${GALGAME_MODE_FLAG_PATH} threw — treating galgame mode as OFF:`, e);
-      return false;
-    }
-  }
-  var _lastInjectOn = null;
-  function applyInject(dryRun) {
-    if (dryRun) return;
-    let ctx = null;
-    try {
-      ctx = topWindow.SillyTavern && topWindow.SillyTavern.getContext && topWindow.SillyTavern.getContext();
-    } catch (e) {
-      log.warn("choices: getContext threw:", e);
-      return;
-    }
-    if (!ctx || typeof ctx.setExtensionPrompt !== "function") return;
-    const on = isGalgameModeOn();
-    if (on !== _lastInjectOn) {
-      _lastInjectOn = on;
-      log.info(`choices: galgame mode ${on ? "ON" : "OFF"} (${topWindow.galgame ? GALGAME_MODE_FLAG_PATH : "galgame not on the page"}) → choice instruction ${on ? "injected" : "cleared"}`);
-    }
-    try {
-      ctx.setExtensionPrompt(INJECT_KEY, on ? CHOICES_INSTRUCTION : "", 1, 0, false, 0);
-    } catch (e) {
-      log.warn("choices: setExtensionPrompt failed:", e);
-    }
-  }
-  function dismissStaleChoices() {
-    try {
-      const layer = DOC.getElementById("gal-layer-choices");
-      if (layer && layer.classList.contains("active")) {
-        layer.click();
-        log.info("choices: dismissed stale choice panel for new generation (read-gate re-applies)");
-      }
-    } catch (e) {
-      log.warn("choices: dismissStaleChoices failed:", e);
-    }
-  }
-  var USER_OPEN_WINDOW_MS = 1500;
-  var _userOpenedChoicesAt = 0;
-  function enforceButtonOnlyChoices() {
-    try {
-      DOC.addEventListener("click", (e) => {
-        const t = e.target;
-        if (t && t.closest && t.closest('[data-action="show-choices"]')) _userOpenedChoicesAt = Date.now();
-      }, true);
-      const observer2 = new MutationObserver((muts) => {
-        for (const m of muts) {
-          const el = m.target;
-          if (el && el.id === "gal-layer-choices" && el.classList && el.classList.contains("active")) {
-            if (Date.now() - _userOpenedChoicesAt > USER_OPEN_WINDOW_MS) {
-              el.click();
-              log.info("choices: suppressed auto-pop (button-only) — panel dismissed, 剧情选项 button stays");
-            }
-          }
-        }
-      });
-      observer2.observe(DOC, { subtree: true, attributes: true, attributeFilter: ["class"] });
-    } catch (e) {
-      log.warn("choices: enforceButtonOnlyChoices setup failed (auto-pop not suppressed):", e);
-    }
-  }
-  function startChoices() {
-    if (typeof window.getChatMessages !== "function" || typeof window.eventOn !== "function") {
-      log.warn("choices: TH globals (getChatMessages/eventOn) absent — choices provider disabled");
-      return;
-    }
-    enforceButtonOnlyChoices();
-    const te = window.tavern_events || {};
-    if (!te.GENERATION_STARTED) {
-      log.warn("choices: tavern_events.GENERATION_STARTED absent — inject disabled (shim reader still active)");
-    } else {
-      try {
-        window.eventOn(te.GENERATION_STARTED, (_type, _option, dryRun) => {
-          if (!dryRun) dismissStaleChoices();
-          applyInject(dryRun);
-        });
-      } catch (e) {
-        log.warn("choices: bind GENERATION_STARTED failed:", e);
-      }
-    }
-    applyInject(false);
-    log.info("choices active (inject + 选项表 shim reader)");
-  }
-
-  // src/genre/main/main-profile.js
-  var MAIN = Object.freeze({
-    name: "main",
-    clockDate: Object.freeze(["Date"]),
-    clockWeekday: Object.freeze(["Weekday"]),
-    clockTime: Object.freeze(["Time"]),
-    advanceControl: null,
-    meterPanel: null
-  });
-
-  // src/genre/school/school-profile.js
-  var SCHOOL = Object.freeze({
-    name: "school",
-    clockDate: Object.freeze(["Date"]),
-    clockWeekday: Object.freeze(["Weekday"]),
-    clockTime: Object.freeze(["Time"]),
-    advanceControl: Object.freeze({
-      bindPath: "PendingState.BlockDone",
-      label: "Next",
-      title: "Advance one time block — uncheck to cancel (until you send a message)"
-    }),
-    // Live bars over the stage, shown ONLY while an H scene is latched (PendingState.IntimacyActive):
-    // outside one every meter sits at its resting value and the bars would only cover the artwork.
-    // His side is an energy BUDGET — Energy_curr against Energy_max; each sex act drains it, and at 0
-    // he must rest (School models no climax gauge for him: his release is the narrator's to write, his
-    // energy is the only hard limit the engine keeps). Her side is the three meters the engine moves
-    // per act; the gauge reaching 100 is what fires her climax.
-    meterPanel: Object.freeze({
-      showWhen: "PendingState.IntimacyActive",
-      player: Object.freeze({
-        root: "Mainchar",
-        label: "You",
-        bars: Object.freeze([
-          Object.freeze({ key: "energy", label: "Energy", path: "Energy_curr", maxPath: "Energy_max", color: "#60a5fa" })
-        ])
-      }),
-      cast: Object.freeze({
-        root: "Classmate",
-        presentPath: "Is_present",
-        namePath: "Name",
-        bars: Object.freeze([
-          Object.freeze({ key: "energy", label: "Energy", path: "Energy", max: 100, color: "#60a5fa" }),
-          Object.freeze({ key: "arousal", label: "Arousal", path: "Arousal", max: 100, color: "#f472b6" }),
-          Object.freeze({ key: "climax", label: "Climax", path: "ClimaxGauge", max: 100, color: "#fbbf24" })
-        ])
-      })
-    })
-  });
-
-  // src/genre/genre-profile-core.js
-  var PROFILES = Object.freeze({ main: MAIN, school: SCHOOL });
-  function profileFor(engineName2) {
-    const key = String(engineName2 == null ? "" : engineName2).trim().toLowerCase();
-    return PROFILES[key] || MAIN;
-  }
-
-  // src/genre/index.js
-  function engineName() {
-    try {
-      const helper = topWindow.MvuHelper;
-      if (!helper || typeof helper.engineInfo !== "function") return null;
-      const info = helper.engineInfo();
-      return info && info.name || null;
-    } catch (e) {
-      log.warn("genre: reading MvuHelper.engineInfo() threw — falling back to the main profile:", e);
-      return null;
-    }
-  }
-  function activeGenre() {
-    return profileFor(engineName());
-  }
-  function logActiveGenre() {
-    const name = engineName();
-    const profile = profileFor(name);
-    if (!name) {
-      log.info(`genre: no engine has answered yet → profile "${profile.name}" for now (re-resolved on every use, so an engine that loads later is picked up)`);
-      return;
-    }
-    log.info(`genre: engine "${name}" → profile "${profile.name}"` + (profile === MAIN ? " (no profile for that engine — using the default)" : ""));
-  }
-
-  // src/features/galgame-bridge/location-time-core.js
-  function displayValue(path, val, statData, renderLabel, onError) {
-    const raw = String(val == null ? "" : val).trim();
-    if (!raw || typeof renderLabel !== "function") return raw;
-    try {
-      const shown2 = renderLabel(path, raw, statData);
-      if (shown2 && typeof shown2.then === "function") {
-        if (typeof onError === "function") onError('i18nLabel("' + path + '") returned a Promise — a label must be synchronous here; showing the raw value', new Error("async labeler"));
-        return raw;
-      }
-      return shown2 == null || String(shown2) === "" ? raw : String(shown2);
-    } catch (e) {
-      if (typeof onError === "function") onError('i18nLabel("' + path + '") threw — showing the raw value', e);
-      return raw;
-    }
-  }
-  function mvuVal(x) {
-    return Array.isArray(x) ? x[0] : x;
-  }
-  var PLAIN_CLOCK = { clockDate: ["Date"], clockWeekday: ["Weekday"], clockTime: ["Time"] };
-  function pillStrings(statData, renderLabel, onError, genre) {
-    const W = statData && statData.World;
-    if (!W) return null;
-    const clock = genre || PLAIN_CLOCK;
-    const location = displayValue("World.Location", mvuVal(W.Location), statData, renderLabel, onError);
-    const fromCandidates = (names) => {
-      const list = Array.isArray(names) && names.length ? names : ["Date"];
-      for (const key of list) {
-        const v = mvuVal(W[key]);
-        if (v != null && String(v).trim() !== "") {
-          return displayValue("World." + key, v, statData, renderLabel, onError);
-        }
-      }
-      return "";
-    };
-    const weekday = fromCandidates(clock.clockWeekday);
-    const weather = displayValue("World.Weather", mvuVal(W.Weather), statData, renderLabel, onError);
-    const date = fromCandidates(clock.clockDate);
-    const time = fromCandidates(clock.clockTime);
-    const parts = [];
-    if (date) parts.push(weekday ? `${date} (${weekday})` : date);
-    if (time) parts.push(time);
-    let timeStr = parts.join(" ");
-    if (weather) timeStr += (timeStr ? " · " : "") + weather;
-    return { location, time: timeStr };
-  }
-
-  // src/features/galgame-bridge/live-stat-data.js
-  var FLOOR_LOOKBACK3 = 30;
-  function newestMessageId() {
-    try {
-      const n = Number(window.getLastMessageId ? window.getLastMessageId() : NaN);
-      if (Number.isFinite(n) && n >= 0) return n;
-    } catch (e) {
-      log.warn("live-stat-data: getLastMessageId threw — reading the chat length instead:", e);
-    }
-    try {
-      const chat = topWindow.SillyTavern && topWindow.SillyTavern.getContext && topWindow.SillyTavern.getContext().chat;
-      if (Array.isArray(chat)) return chat.length - 1;
-    } catch (e) {
-      log.warn("live-stat-data: reading the chat length threw — no floor can be resolved right now:", e);
-    }
-    return -1;
-  }
-  function statDataOf(id) {
-    if (typeof window.getVariables === "function") {
-      const v = window.getVariables({ type: "message", message_id: id });
-      return v && v.stat_data;
-    }
-    const Mvu = topWindow.Mvu;
-    if (Mvu && typeof Mvu.getMvuData === "function") {
-      const d = Mvu.getMvuData({ type: "message", message_id: id });
-      return d && d.stat_data;
-    }
-    return null;
-  }
-  function latestStatData({ from, accept } = {}) {
-    const top = Number.isFinite(from) && from >= 0 ? Math.floor(from) : newestMessageId();
-    if (top < 0) return null;
-    const ok = typeof accept === "function" ? accept : () => true;
-    let firstError = null;
-    for (let id = top; id >= 0 && id > top - FLOOR_LOOKBACK3; id--) {
-      let sd = null;
-      try {
-        sd = statDataOf(id);
-      } catch (e) {
-        if (!firstError) firstError = { id, e };
-        continue;
-      }
-      if (sd && typeof sd === "object" && ok(sd)) return { statData: sd, floor: id };
-    }
-    if (firstError) log.warn(`live-stat-data: reading floor ${firstError.id} threw (and no floor qualified):`, firstError.e);
-    return null;
-  }
-
-  // src/features/galgame-bridge/location-time-bridge.js
-  var SHEET_UID = "sheet_global_data";
-  var SHEET_NAME = "全局数据表";
-  var COL_LOCATION = "当前详细地点";
-  var COL_TIME = "当前时间";
-  var labelCache = /* @__PURE__ */ new Map();
-  var labelPending = /* @__PURE__ */ new Set();
-  function engineLabeler() {
-    let engine = null;
-    try {
-      engine = topWindow.LogicEngine;
-    } catch (e) {
-      log.warn("location-time-bridge: reading LogicEngine threw — pills fall back to raw stored values:", e);
-      return null;
-    }
-    if (!engine || typeof engine.i18nLabel !== "function") return null;
-    return (path, value, statData) => {
-      let lang = "";
-      try {
-        const L = statData && statData.Preferences && statData.Preferences.Lang;
-        lang = String((Array.isArray(L) ? L[0] : L) || "");
-      } catch (e) {
-      }
-      const key = lang + "|" + path + "|" + value;
-      if (labelCache.has(key)) return labelCache.get(key);
-      let result;
-      try {
-        result = engine.i18nLabel(path, value, statData);
-      } catch (e) {
-        log.warn('location-time-bridge: i18nLabel("' + path + '") threw — showing the raw value:', e);
-        labelCache.set(key, value);
-        return value;
-      }
-      if (!result || typeof result.then !== "function") {
-        labelCache.set(key, result == null || result === "" ? value : String(result));
-        return labelCache.get(key);
-      }
-      if (!labelPending.has(key)) {
-        labelPending.add(key);
-        Promise.resolve(result).then(
-          (v) => {
-            labelCache.set(key, v == null || v === "" ? value : String(v));
-          },
-          (e) => {
-            labelCache.set(key, value);
-            log.warn('location-time-bridge: i18nLabel("' + path + '") rejected — keeping the raw value:', e);
-          }
-        ).finally(() => {
-          labelPending.delete(key);
-          refreshLocationTimePills();
-        });
-      }
-      return value;
-    };
-  }
-  function pills() {
-    const found = latestStatData({ accept: (sd2) => !!sd2.World });
-    const sd = found && found.statData;
-    if (!sd) return null;
-    return pillStrings(sd, engineLabeler(), (msg, e) => log.warn("location-time-bridge: " + msg, e), activeGenre());
-  }
-  function refreshLocationTimePills() {
-    try {
-      const p = pills();
-      if (!p) return false;
-      const doc = topWindow.document;
-      if (!doc) return false;
-      const locText = doc.querySelector("#gal-location-text");
-      const timeText = doc.querySelector("#gal-time-text");
-      const locBar = doc.querySelector("#gal-location-bar");
-      const timeBar = doc.querySelector("#gal-time-bar");
-      const locStr = p.location || "未知地点";
-      const timeStr = p.time || "--";
-      if (locText) locText.textContent = locStr;
-      if (timeText) timeText.textContent = timeStr;
-      if (locBar) locBar.setAttribute("title", locStr);
-      if (timeBar) timeBar.setAttribute("title", timeStr);
-      return !!(p.location || p.time);
-    } catch (e) {
-      log.warn("location-time-bridge: refreshLocationTimePills failed:", e);
-      return false;
-    }
-  }
-  function startLocationTimeBridge() {
-    let existing = null;
-    try {
-      existing = topWindow.AutoCardUpdaterAPI;
-    } catch (e) {
-      log.warn("location-time-bridge: reading AutoCardUpdaterAPI threw — skipping shim:", e);
-      return;
-    }
-    if (existing && typeof existing.exportTableAsJson === "function") {
-      log.info("location-time-bridge: AutoCardUpdaterAPI already present — not shimming (respecting the real one).");
-      return;
-    }
-    try {
-      topWindow.AutoCardUpdaterAPI = {
-        // galgame reads content[0]=headers, content[1]=dataRow and maps 当前详细地点→detailedLocation,
-        // 当前时间→currentTime. Return {} while there's no World so galgame's isEmpty retry keeps polling.
-        exportTableAsJson() {
-          try {
-            const out = {};
-            const p = pills();
-            if (p && (p.location || p.time)) {
-              out.global = { uid: SHEET_UID, name: SHEET_NAME, content: [[COL_LOCATION, COL_TIME], [p.location, p.time]] };
-            }
-            const opt = getOptionSheet();
-            if (opt) out[opt.key] = opt.sheet;
-            return out;
-          } catch (e) {
-            log.warn("location-time-bridge: exportTableAsJson failed:", e);
-            return {};
-          }
-        }
-      };
-      log.info("location-time-bridge: AutoCardUpdaterAPI shim installed (galgame location/time pills ← stat_data.World).");
-    } catch (e) {
-      log.error("location-time-bridge: could not install AutoCardUpdaterAPI shim:", e);
-    }
-  }
-
-  // src/features/galgame-bridge/html-escape-core.js
-  function escapeHtml2(text) {
-    return String(text == null ? "" : text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-  }
-
-  // src/features/galgame-bridge/next-block-core.js
-  var WRAP_CLASS = "school-nextblock";
-  var CB_CLASS = "school-nextblock-cb";
-  var LABEL_CLASS = "school-nextblock-label";
-  var PATH_ATTR = "data-advance-path";
-  var DEFAULT_LABEL = "Next";
-  var DEFAULT_TITLE = "Advance to the next segment — uncheck to cancel (until you send a message)";
-  function advanceControlFor(genre) {
-    const control2 = genre && genre.advanceControl;
-    if (!control2) return null;
-    const bindPath = String(control2.bindPath == null ? "" : control2.bindPath).trim();
-    if (!bindPath) return null;
-    const label = String(control2.label == null ? "" : control2.label).trim() || DEFAULT_LABEL;
-    const title = String(control2.title == null ? "" : control2.title).trim() || DEFAULT_TITLE;
-    return { bindPath, label, title };
-  }
-  function chipHtml(control2) {
-    const title = escapeHtml2(control2.title);
-    return `<label class="${WRAP_CLASS}" ${PATH_ATTR}="${escapeHtml2(control2.bindPath)}" title="${title}"><span class="${LABEL_CLASS}">${escapeHtml2(control2.label)}</span><input type="checkbox" class="${CB_CLASS}" aria-label="${title}" /></label>`;
-  }
-
-  // src/features/galgame-bridge/next-block.js
-  var OVERLAY_SEL5 = "#gal-global-overlay";
-  function control() {
-    return advanceControlFor(activeGenre());
-  }
-  function findRealCb() {
-    const active = control();
-    if (!active) return null;
-    const doc = topWindow && topWindow.document || DOC;
-    const frames = [...doc.querySelectorAll('iframe[id^="TH-message--"]')].map((f) => {
-      const m = /^TH-message--(\d+)--/.exec(f.id);
-      return { f, n: m ? Number(m[1]) : -1 };
-    }).filter((x) => x.n >= 0).sort((a, b) => b.n - a.n);
-    for (const { f } of frames) {
-      try {
-        const cb = f.contentDocument && f.contentDocument.querySelector(`input[type="checkbox"][data-bind-checked="${active.bindPath}"]`);
-        if (cb) return cb;
-      } catch (e) {
-      }
-    }
-    return null;
-  }
-  function readFlag() {
-    const cb = findRealCb();
-    return !!(cb && cb.checked);
-  }
-  function nudgePills() {
-    [250, 700, 1400].forEach((ms) => setTimeout(() => {
-      try {
-        refreshLocationTimePills();
-      } catch (e) {
-        log.warn("next-block: pill refresh failed:", e);
-      }
-    }, ms));
-  }
-  function setFlag(want) {
-    const active = control();
-    const cb = findRealCb();
-    if (!cb) {
-      log.warn(`next-block: real ${active ? active.bindPath : "(no advance control for this genre)"} checkbox not found — cannot set the flag`);
-      return false;
-    }
-    if (cb.checked !== want) {
-      cb.checked = !want;
-      cb.click();
-    }
-    log.info(`next-block: ${active.bindPath} flag ` + (want ? "SET (will advance at reply-end; the engine previews it)" : "cleared"));
-    nudgePills();
-    return want;
-  }
-  var announced = "";
-  function injectInto2() {
-    const overlay = DOC.querySelector(OVERLAY_SEL5);
-    if (!overlay) return false;
-    const active = control();
-    const existing = overlay.querySelector(`.${WRAP_CLASS}`);
-    if (!active) {
-      if (existing) {
-        existing.remove();
-        log.info("next-block: this genre declares no manual advance — chip removed");
-      }
-      return false;
-    }
-    if (existing) {
-      if (existing.getAttribute(PATH_ATTR) === active.bindPath) return false;
-      existing.remove();
-    }
-    overlay.insertAdjacentHTML("beforeend", chipHtml(active));
-    const chip = overlay.querySelector(`.${WRAP_CLASS}`);
-    if (chip) chip.addEventListener("click", (e) => e.stopPropagation());
-    const cb = chip && chip.querySelector(`.${CB_CLASS}`);
-    if (cb) cb.checked = readFlag();
-    if (announced !== active.bindPath) {
-      announced = active.bindPath;
-      log.info(`next-block: advance chip rendered for genre "${activeGenre().name}" (flag model, ${active.bindPath})`);
-    }
-    return true;
-  }
-  function startNextBlock() {
-    if (!DOC || !DOC.body) return setTimeout(startNextBlock, 200);
-    DOC.addEventListener("change", (e) => {
-      const cb = e.target && e.target.classList && e.target.classList.contains(CB_CLASS) ? e.target : null;
-      if (!cb) return;
-      let got = false;
-      try {
-        got = setFlag(cb.checked);
-      } catch (err) {
-        log.error("next-block: flag toggle failed:", err);
-      }
-      cb.checked = got;
-    });
-    let scheduled3 = false;
-    const observer2 = new MutationObserver(() => {
-      if (scheduled3) return;
-      scheduled3 = true;
-      requestAnimationFrame(() => {
-        scheduled3 = false;
-        injectInto2();
-      });
-    });
-    observer2.observe(DOC.body, { childList: true, subtree: true });
-    injectInto2();
-    log.info("next-block watching (the chip appears once a genre declaring a manual advance is loaded)");
-  }
-
-  // src/features/galgame-bridge/meter-panel-core.js
-  var PANEL_CLASS = "companion-meters";
-  var GROUP_CLASS = "companion-meter-group";
-  var TITLE_CLASS = "companion-meter-title";
-  var BAR_CLASS2 = "companion-meter";
-  var LABEL_CLASS2 = "companion-meter-label";
-  var VALUE_CLASS = "companion-meter-value";
-  var TRACK_CLASS = "companion-meter-track";
-  var FILL_CLASS = "companion-meter-fill";
-  var SIGNATURE_ATTR = "data-meter-signature";
-  var RE_COLOR = /^(#[0-9a-f]{3,8}|rgba?\([\d.,\s%]+\)|hsla?\([\d.,\s%]+\))$/i;
-  var DEFAULT_COLOR = "#9ca3af";
-  function readPath(root, path) {
-    const segments = String(path == null ? "" : path).split(".").filter(Boolean);
-    let node = root;
-    for (const segment of segments) {
-      if (node == null || typeof node !== "object") return void 0;
-      node = node[segment];
-    }
-    return mvuVal(node);
-  }
-  function finiteNumber(x) {
-    const n = Number(x);
-    return Number.isFinite(n) ? n : null;
-  }
-  function readBar(node, bar, where, onError) {
-    const rawValue = readPath(node, bar.path);
-    let value = finiteNumber(rawValue);
-    if (value === null) {
-      onError(`meter "${bar.label}": ${where}.${bar.path} is ${rawValue === void 0 ? "absent" : "not a number"} — drawn as 0`);
-      value = 0;
-    }
-    let max;
-    if (bar.maxPath) {
-      const rawMax = readPath(node, bar.maxPath);
-      max = finiteNumber(rawMax);
-      if (max === null || max <= 0) {
-        onError(`meter "${bar.label}": ${where}.${bar.maxPath} is ${rawMax === void 0 ? "absent" : "not a positive number"} — scale drawn as 100`);
-        max = 100;
-      }
-    } else {
-      max = finiteNumber(bar.max);
-      if (max === null || max <= 0) {
-        onError(`meter "${bar.label}": the profile declares no usable max — scale drawn as 100`);
-        max = 100;
-      }
-    }
-    const pct = Math.max(0, Math.min(100, Math.round(value / max * 100)));
-    const color = RE_COLOR.test(String(bar.color || "")) ? String(bar.color) : DEFAULT_COLOR;
-    return { key: String(bar.key || bar.path), label: String(bar.label || bar.path), value, max, pct, color };
-  }
-  function meterPanelModel(statData, spec, onError = () => {
-  }) {
-    if (!spec || !statData || typeof statData !== "object") return null;
-    if (spec.showWhen && readPath(statData, spec.showWhen) !== true) return null;
-    let player = null;
-    if (spec.player && spec.player.root) {
-      const node = statData[spec.player.root];
-      if (node && typeof node === "object") {
-        player = {
-          label: String(spec.player.label || spec.player.root),
-          bars: (spec.player.bars || []).map((bar) => readBar(node, bar, spec.player.root, onError))
-        };
-      } else {
-        onError(`meter panel: ${spec.player.root} is absent from stat_data — the player's bars are not drawn`);
-      }
-    }
-    const cast = [];
-    if (spec.cast && spec.cast.root) {
-      const roster = statData[spec.cast.root];
-      if (roster && typeof roster === "object") {
-        for (const key of Object.keys(roster)) {
-          const member = roster[key];
-          if (!member || typeof member !== "object") continue;
-          if (readPath(member, spec.cast.presentPath) !== true) continue;
-          const rawName = readPath(member, spec.cast.namePath);
-          const name = String(rawName == null ? "" : rawName).trim() || key;
-          cast.push({ key, name, bars: (spec.cast.bars || []).map((bar) => readBar(member, bar, `${spec.cast.root}.${key}`, onError)) });
-        }
-      } else {
-        onError(`meter panel: ${spec.cast.root} is absent from stat_data — no cast bars are drawn`);
-      }
-    }
-    if (!player && !cast.length) return null;
-    return { player, cast };
-  }
-  function modelSignature(model) {
-    const bars = (list) => list.map((b) => `${b.key}=${b.value}/${b.max}`).join(",");
-    const groups = [];
-    if (model.player) groups.push(`${model.player.label}:${bars(model.player.bars)}`);
-    for (const member of model.cast) groups.push(`${member.key}:${member.name}:${bars(member.bars)}`);
-    return groups.join("|");
-  }
-  function barHtml(bar) {
-    return `<div class="${BAR_CLASS2}" data-meter="${escapeHtml2(bar.key)}"><span class="${LABEL_CLASS2}">${escapeHtml2(bar.label)}</span><span class="${VALUE_CLASS}">${escapeHtml2(bar.value)}/${escapeHtml2(bar.max)}</span><div class="${TRACK_CLASS}"><div class="${FILL_CLASS}" style="width:${bar.pct}%;background:${escapeHtml2(bar.color)}"></div></div></div>`;
-  }
-  function groupHtml(title, bars) {
-    return `<div class="${GROUP_CLASS}"><div class="${TITLE_CLASS}">${escapeHtml2(title)}</div>${bars.map(barHtml).join("")}</div>`;
-  }
-  function panelHtml(model) {
-    const groups = [];
-    if (model.player) groups.push(groupHtml(model.player.label, model.player.bars));
-    for (const member of model.cast) groups.push(groupHtml(member.name, member.bars));
-    return `<div class="${PANEL_CLASS}" ${SIGNATURE_ATTR}="${escapeHtml2(modelSignature(model))}">${groups.join("")}</div>`;
-  }
-
-  // src/features/galgame-bridge/meter-panel.js
-  var OVERLAY_SEL6 = "#gal-global-overlay";
-  var STAGE_SEL = "#gal-global-overlay .gal-game-container";
-  var MVU_UPDATE_ENDED = "mag_variable_update_ended";
-  function displayedFloor() {
-    const stage = DOC.querySelector(STAGE_SEL);
-    const raw = stage && stage.getAttribute("data-mes-id");
-    if (raw == null || raw === "") return -1;
-    const n = Number(raw);
-    return Number.isFinite(n) && n >= 0 ? n : -1;
-  }
-  var reported = /* @__PURE__ */ new Set();
-  function reportOnce(message) {
-    if (reported.has(message)) return;
-    reported.add(message);
-    log.warn("meter-panel: " + message);
-  }
-  var shown = false;
-  function redraw() {
-    const overlay = DOC.querySelector(OVERLAY_SEL6);
-    if (!overlay) return;
-    const spec = activeGenre().meterPanel;
-    const existing = overlay.querySelector(`.${PANEL_CLASS}`);
-    if (!spec) {
-      if (existing) {
-        existing.remove();
-        log.info("meter-panel: this genre declares no meters — panel removed");
-      }
-      shown = false;
-      return;
-    }
-    const from = displayedFloor();
-    const found = latestStatData(from >= 0 ? { from } : {});
-    const model = found ? meterPanelModel(found.statData, spec, reportOnce) : null;
-    if (!model) {
-      if (existing) existing.remove();
-      if (shown) {
-        shown = false;
-        log.info(`meter-panel: hidden — ${spec.showWhen || "nothing"} no longer reads true`);
-      }
-      return;
-    }
-    const html = panelHtml(model);
-    const signature = /data-meter-signature="([^"]*)"/.exec(html);
-    if (existing && signature && existing.getAttribute(SIGNATURE_ATTR) === signature[1]) return;
-    if (existing) existing.outerHTML = html;
-    else overlay.insertAdjacentHTML("beforeend", html);
-    if (!shown) {
-      shown = true;
-      log.info(`meter-panel: shown for genre "${activeGenre().name}" (${spec.showWhen} reads true on floor ${found.floor}) — ${model.player ? 1 : 0} player group, ${model.cast.length} cast group(s)`);
-    }
-  }
-  var scheduled2 = false;
-  function schedule() {
-    if (scheduled2) return;
-    scheduled2 = true;
-    requestAnimationFrame(() => {
-      scheduled2 = false;
-      try {
-        redraw();
-      } catch (e) {
-        log.error("meter-panel: redraw failed:", e);
-      }
-    });
-  }
-  function startMeterPanel() {
-    if (!DOC || !DOC.body) return setTimeout(startMeterPanel, 200);
-    const te = window.tavern_events || {};
-    const names = [te.MESSAGE_RECEIVED, te.MESSAGE_UPDATED, te.MESSAGE_SWIPED, te.MESSAGE_EDITED, te.MESSAGE_DELETED, te.CHAT_CHANGED, MVU_UPDATE_ENDED];
-    if (typeof window.eventOn === "function") {
-      for (const name of names) {
-        if (!name) continue;
-        try {
-          window.eventOn(name, schedule);
-        } catch (e) {
-          log.warn(`meter-panel: eventOn(${name}) failed — that trigger will not redraw the bars:`, e);
-        }
-      }
-    } else {
-      log.warn("meter-panel: eventOn is not on this window — the bars redraw only on stage rebuilds");
-    }
-    const observer2 = new MutationObserver(schedule);
-    observer2.observe(DOC.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-mes-id"] });
-    schedule();
-    log.info("meter-panel watching (the bars appear once a genre declaring meters is loaded and its gate reads true)");
-  }
-
   // src/app/index.js
   console.log(`[${SCRIPT_NAME}] v${VERSION} · build ${BUILD}`);
   try {
@@ -4203,7 +4159,6 @@ ${cot}` : cot;
   injectStyle();
   startI18n();
   startToolbar();
-  startStatusMenuPopupLayer();
   startFullscreenGuard();
   startBeatShaper();
   startImageSeam();

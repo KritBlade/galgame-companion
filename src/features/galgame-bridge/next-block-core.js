@@ -1,5 +1,5 @@
-// galgame-companion · next-block-core — does this genre HAVE a manual advance, and what does its
-// chip look like. v0.2
+// galgame-companion · next-block-core — does this genre HAVE a manual advance, what does its chip
+// look like, what is the flag now, and what sets it. v0.3
 //
 // WHY THIS FILE EXISTS (L6). next-block.js reaches topWindow, walks iframes and installs a
 // MutationObserver, so no test can open it — and the defect that created this file lived exactly
@@ -62,4 +62,36 @@ export function chipHtml(control) {
     `<span class="${LABEL_CLASS}">${escapeHtml(control.label)}</span>` +
     `<input type="checkbox" class="${CB_CLASS}" aria-label="${title}" />` +
     `</label>`;
+}
+
+/**
+ * The flag's live value, read off a stat_data object at the control's path — a [value, label] pair
+ * unwrapped, the same truthiness the game's own checkbox draws with. false for no state or no member.
+ *
+ * @param {?object} statData
+ * @param {string} bindPath dotted, from advanceControlFor
+ * @returns {boolean}
+ */
+export function flagFromStatData(statData, bindPath) {
+  let cur = statData;
+  for (const seg of String(bindPath || '').split('.').filter(Boolean)) {
+    if (cur == null || typeof cur !== 'object') return false;
+    cur = cur[seg];
+  }
+  const raw = Array.isArray(cur) && cur.length >= 2 && typeof cur[1] === 'string' ? cur[0] : cur;
+  return Boolean(raw);
+}
+
+// mvu-helper's published menu-action wire: the dispatcher runs the verb in the StatusMenu Engine,
+// applies its patches through MVU, and replies to the sender with `<type>-result`.
+export const MENU_ACTION_MESSAGE = 'mvu-statusmenu-action';
+
+/**
+ * The action that sets the flag — `setValue`, the verb the game's own checkbox posts, so the engine
+ * decides what the member becomes (its label, its type) exactly as it does for a click in the menu.
+ *
+ * @returns {{type: string, requestId: string, action: string, args: {path: string, value: boolean, scopePath: string}}}
+ */
+export function flagActionRequest(bindPath, want, requestId) {
+  return { type: MENU_ACTION_MESSAGE, requestId: String(requestId), action: 'setValue', args: { path: String(bindPath), value: Boolean(want), scopePath: '' } };
 }

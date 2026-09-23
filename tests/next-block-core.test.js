@@ -5,7 +5,7 @@
 // can be held still; the tests below pin BOTH halves of it — the answer itself, and the fact that the
 // answer is allowed to change during a session.
 import { describe, it, expect } from 'vitest';
-import { advanceControlFor, chipHtml, WRAP_CLASS, CB_CLASS, PATH_ATTR } from '../src/features/galgame-bridge/next-block-core.js';
+import { advanceControlFor, chipHtml, flagFromStatData, flagActionRequest, MENU_ACTION_MESSAGE, WRAP_CLASS, CB_CLASS, PATH_ATTR } from '../src/features/galgame-bridge/next-block-core.js';
 import { MAIN, SCHOOL } from '../src/genre/genre-profile-core.js';
 
 describe('advanceControlFor — who gets a chip', () => {
@@ -99,5 +99,33 @@ describe('chipHtml — the markup handed to the overlay', () => {
     expect(html).not.toContain('<now>');
     // still well formed: exactly the tags we opened, none introduced by the wording
     expect(html.match(/</g).length).toBe(5); // <label  <span  </span  <input  </label
+  });
+});
+
+// The flag used to be read and written through the StatusMenu's own checkbox, reached inside a
+// TavernHelper frame. A contained frame has an opaque origin, so the flag is read off stat_data and
+// written through the verb that checkbox posts. MUTATION (recorded): return `cur` without unwrapping
+// the [value, label] pair → the labelled-false case reads true and fails.
+describe('flagFromStatData — the flag, off the state the menu draws from', () => {
+  it('unwraps a [value, label] pair the way the menu checkbox does', () => {
+    expect(flagFromStatData({ PendingState: { BlockDone: [true, 'Time Block Done'] } }, 'PendingState.BlockDone')).toBe(true);
+    expect(flagFromStatData({ PendingState: { BlockDone: [false, 'Time Block Done'] } }, 'PendingState.BlockDone')).toBe(false);
+    expect(flagFromStatData({ PendingState: { BlockDone: true } }, 'PendingState.BlockDone')).toBe(true);
+  });
+  it('no state, no member, a scalar in the way — false, never a throw', () => {
+    expect(flagFromStatData(null, 'PendingState.BlockDone')).toBe(false);
+    expect(flagFromStatData({}, 'PendingState.BlockDone')).toBe(false);
+    expect(flagFromStatData({ PendingState: 5 }, 'PendingState.BlockDone')).toBe(false);
+  });
+});
+
+describe('flagActionRequest — the verb the menu checkbox posts', () => {
+  it('is setValue on the mvu-helper action wire, at the profile path', () => {
+    expect(flagActionRequest('PendingState.BlockDone', 1, 'r1')).toEqual({
+      type: 'mvu-statusmenu-action', requestId: 'r1', action: 'setValue',
+      args: { path: 'PendingState.BlockDone', value: true, scopePath: '' },
+    });
+    expect(MENU_ACTION_MESSAGE).toBe('mvu-statusmenu-action');
+    expect(flagActionRequest('X.Y', 0, 7).args.value).toBe(false);
   });
 });

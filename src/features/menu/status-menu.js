@@ -1,173 +1,122 @@
-// galgame-companion · status-menu — load the card's StatusMenu into a bridged iframe. v0.1 (G3)
-// The StatusMenu is embedded IN THE CARD as a regex script whose replaceString CONTAINS the menu
-// HTML (~200 KB, marked by "VARIABLE_UPDATE_ENDED"). We read it from card data at click time
-// (always the card's exact version — nothing shipped here, no drift), take the document out of the
-// platform envelope it now ships in (status-menu-core), and mount THAT in an iframe, bridging the
-// Tavern-Helper globals the menu needs.
+// galgame-companion · status-menu — the card's StatusMenu, in a frame the companion owns. v0.2
 //
-// THE BRIDGE (verified live 2026-07-15, corrects GCP §10.1):
-//  - the menu's context lookup is: (typeof window.getVariables === 'function' && window)
-//    || (window.parent...) — so it needs getVariables ON THE POPUP'S OWN WINDOW.
-//  - a bare iframe we create in the ST document has neither its own getVariables nor a
-//    parent (top ST window) with one → renders blank. THAT is the gotcha.
-//  - THIS companion iframe HAS getVariables/getChatMessages/eventOn/waitGlobalInitialized
-//    (TH injects them into script iframes) — but NOT Mvu (Mvu lives on the TOP window).
-//  - so: copy the functions from OUR window, copy Mvu from window.parent, onto the popup
-//    BEFORE writing HTML. The menu then resolves targetWindow = its own window.
-
-import { DOC, log } from '../../env.js';
-import { extractMenuDocument } from './status-menu-core.js';
-
-const MENU_MARKER = 'VARIABLE_UPDATE_ENDED';
-
-// Pick the StatusMenu script from the card. A card can hold MORE THAN ONE marker script
-// (School v3 has both "<GameStartMenu/>" — the new-game screen with RPG scaffolding — and
-// "StatusMenu" — the actual HUD). Prefer a name containing "status"; else avoid the
-// start/new-game screen; else the largest marker script.
-function pickMenuScript(scripts) {
-  const markers = scripts.filter((s) => (s.replaceString || '').includes(MENU_MARKER));
-  if (!markers.length) return null;
-  return markers.find((s) => /status/i.test(s.scriptName))
-    || markers.find((s) => !/start|开始|newgame|new game/i.test(s.scriptName))
-    || markers.slice().sort((a, b) => b.replaceString.length - a.replaceString.length)[0];
-}
-
-// Read the StatusMenu HTML out of the currently-loaded character card.
-export function loadMenuHtml() {
-  try {
-    const ctx = (window.SillyTavern || DOC.defaultView?.SillyTavern)?.getContext?.();
-    if (!ctx) { log.warn('status-menu: no SillyTavern context'); return null; }
-    const char = ctx.characters?.[ctx.characterId];
-    const scripts = char?.data?.extensions?.regex_scripts || [];
-    const menu = pickMenuScript(scripts);
-    if (!menu) { log.warn(`status-menu: no StatusMenu regex script on "${char?.name}"`); return null; }
-    const { html, wrapperChars } = extractMenuDocument(menu.replaceString);
-    log.info(
-      `status-menu: loaded "${menu.scriptName}" (${html.length} chars`
-      // Named when it happens, because the alternative reads identically in the log right up until
-      // the menu renders as an empty panel: a wrapper written into the iframe puts the menu's real
-      // <!DOCTYPE html> inside a div, and the browser drops it (live 2026-09-08).
-      + `${wrapperChars ? `, unwrapped from ${wrapperChars} chars of card/platform packaging` : ''})`,
-    );
-    return html;
-  } catch (e) {
-    log.error('status-menu: loadMenuHtml failed:', e);
-    return null;
-  }
-}
-
-// The menu's resolveCurrentMessageId() calls getCurrentMessageId() first. In a script-iframe
-// context (which is what bridges into the popup) that returns -1 — no "current message" — so
-// the menu can't pick a message_id and every field shows ???. We return the newest DATA-BEARING
-// floor.
+// WHAT CHANGED UNDER IT. mvu-helper contains a StatusMenu pack's document (mvu-helper
+// plans/statusmenu-containment.md): at install the document leaves the card's regex rows, and the one
+// place it can be mounted from is `MvuHelper.statusMenuFrameSource()`, which returns the sandbox tokens
+// and the whole contained document. A sandboxed frame has an opaque origin, so nothing can be written
+// onto its window from here and nothing in it can reach this window or SillyTavern's — the menu reads
+// the state it is pushed and asks mvu-helper's dispatcher for everything else.
 //
-// ⚠️ CORRECT-FLOOR (per MvuStatMenuBuilder/upgrade_db.html + user guidance): MVU snapshots
-// stat_data per message, but NOT every floor has it — a trailing user message (or an empty
-// floor) carries none. Reading the raw last id can land on such a floor → ??? or stale data.
-// And with several message iframes alive at once they look alike; only an EXPLICIT
-// {type:'message', message_id} (or chat scope) is unambiguous — never the ambient frame. So:
-// walk back from the last id to the newest floor whose variables actually contain stat_data.
-const FLOOR_LOOKBACK = 30; // cap the backward scan on huge chats
+// WHAT THIS FILE OWNS. The frame element, and the three messages that frame sends to the window it
+// sits in (SillyTavern's page — the modal lives there): its height (the modal body scrolls; the frame
+// is as tall as its content), a popup opening or closing (the frame is lifted over the screen while
+// one is open, so the popup is not clipped by the modal box), and an error (warned). And the state
+// push: the prelude has the state at mount; MVU's update event and the reply events push the current
+// floor's stat_data after that. A menu action's own result is pushed to the acting frame by mvu-helper.
 
-function latestMessageId() {
-  let last = -1;
-  try {
-    const n = Number(window.getLastMessageId ? window.getLastMessageId() : NaN);
-    if (Number.isFinite(n) && n >= 0) last = n;
-  } catch (e) { /* fall through */ }
-  if (last < 0) {
-    try {
-      const chat = (window.parent?.SillyTavern || window.SillyTavern)?.getContext?.()?.chat;
-      if (Array.isArray(chat)) last = chat.length - 1;
-    } catch (e) { /* fall through */ }
-  }
-  if (last < 0) return -1;
+import { DOC, topWindow, log } from '../../env.js';
+import {
+  frameAttributesFrom, readFrameMessage, FRAME_STATE_MESSAGE, FRAME_STYLE, FRAME_LIFTED_STYLE,
+} from './status-menu-core.js';
+import { latestStatData } from '../galgame-bridge/index.js';
 
-  const gv = typeof window.getVariables === 'function' ? window.getVariables : null;
-  if (gv) {
-    for (let id = last; id >= 0 && id > last - FLOOR_LOOKBACK; id--) {
-      try {
-        const v = gv({ type: 'message', message_id: id });
-        if (v && v.stat_data) return id; // newest floor that actually holds stat_data
-      } catch (e) { /* keep scanning */ }
+const MVU_UPDATE_ENDED = 'mag_variable_update_ended';   // Mvu.events.VARIABLE_UPDATE_ENDED
+
+// The ONE menu frame this companion has open (the modal holds at most one), with what its host half
+// needs: its last reported height and, while a popup is open, the style it had before the lift.
+let current = null;
+
+function onFrameMessage(event) {
+  if (!current || !current.frame.isConnected || event.source !== current.frame.contentWindow) return;
+  const msg = readFrameMessage(event.data);
+  if (!msg) return;
+  if (msg.kind === 'height') {
+    current.height = msg.height;
+    if (!current.lifted) current.frame.style.height = msg.height + 'px';
+  } else if (msg.kind === 'overlay') {
+    if (msg.open && !current.lifted) {
+      current.savedStyle = current.frame.style.cssText;
+      current.frame.style.cssText = FRAME_LIFTED_STYLE;
+      current.lifted = true;
+    } else if (!msg.open && current.lifted) {
+      current.frame.style.cssText = current.savedStyle;
+      current.lifted = false;
     }
+  } else {
+    log.warn('status-menu: the StatusMenu frame threw: ' + msg.message);
   }
-  return last; // none found in range → last id; the menu still falls back to chat scope
 }
 
-// The globals the menu resolves against. Functions come from OUR window; Mvu from the top window.
-//
-// THE WHOLE TAVERN-HELPER SURFACE, not a hand-picked subset. The menu is authored against a real TH
-// script iframe, where every function on the TavernHelper namespace (150 as of TH's current build)
-// is ALSO a bare global — and its API discovery reads exactly that way: `typeof getLorebookEntries
-// === 'function' ? getLorebookEntries : window.parent.getLorebookEntries`. Our popup's parent is the
-// top SillyTavern window, which has none of them, so any name we fail to copy resolves to nothing
-// on BOTH legs and the menu silently skips whatever needed it. That is how the pack layout went
-// missing (live 2026-09-08): the menu had grown a lorebook read for its pack registry, the eleven
-// names listed here did not include it, and the School Menu opened as an empty coloured panel with
-// no error anywhere. Copying the namespace wholesale reproduces the environment instead of chasing
-// it — verified against a blank iframe: none of the 150 names collide with a window property.
-//
-// The WRITE API rides along — the menu's interactive controls (Present/In-Conflict checkboxes, the
-// ✎ editor) call `updateVariablesWith((vars)=>…, {type:'message',message_id})` to persist edits.
-// `resolveCurrentMessageId` (our shim, below) picks the same data floor for writes as for reads.
-function bridgeGlobals(iw) {
-  const bridged = [];
-  // The two namespace objects the menu may reach through directly.
-  for (const k of ['SillyTavern', 'TavernHelper']) {
-    if (typeof window[k] !== 'undefined') { iw[k] = window[k]; bridged.push(k); }
+// The current floor's state to the open frame. Debounced: a reply fires several of the triggers.
+let pushTimer = null;
+function schedulePush() {
+  if (!current) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(() => {
+    if (!current || !current.frame.isConnected) { current = null; return; }
+    const live = latestStatData();
+    if (!live) return;
+    try {
+      current.frame.contentWindow.postMessage({ type: FRAME_STATE_MESSAGE, mid: live.floor, statData: live.statData }, '*');
+    } catch (e) {
+      log.warn('status-menu: could not push state to the StatusMenu frame:', e);
+    }
+  }, 150);
+}
+
+// Wired once, on the first mount: the frame's messages arrive on SillyTavern's window (the frame's
+// parent), and the state triggers are the same set the meter panel redraws on.
+let wired = false;
+function wireOnce() {
+  if (wired) return;
+  wired = true;
+  topWindow.addEventListener('message', onFrameMessage);
+  const te = window.tavern_events || {};
+  if (typeof window.eventOn !== 'function') {
+    log.warn('status-menu: eventOn is not on this window — the open menu shows the state it was opened with until it is reopened');
+    return;
   }
-  // Every TavernHelper function, as the bare global TH made it on OUR window.
-  let copied = 0;
-  for (const k of Object.keys(window.TavernHelper || {})) {
-    if (typeof window[k] === 'function') { iw[k] = window[k]; copied++; }
+  for (const name of [te.MESSAGE_RECEIVED, te.MESSAGE_UPDATED, te.MESSAGE_SWIPED, te.CHAT_CHANGED, MVU_UPDATE_ENDED]) {
+    if (!name) continue;
+    try { window.eventOn(name, schedulePush); }
+    catch (e) { log.warn(`status-menu: eventOn(${name}) failed — that trigger will not refresh the open menu:`, e); }
   }
-  if (copied) bridged.push(`${copied} TavernHelper functions`);
-  else log.error('status-menu: no TavernHelper functions found on this window — is the companion running inside a TH script iframe? The menu will render blank');
-  // getCurrentMessageId: OVERRIDE (do not pass through) — the companion's own returns -1 in a
-  // script iframe. Give the menu the latest message id so it reads that message's stat_data.
-  iw.getCurrentMessageId = latestMessageId;
-  bridged.push('getCurrentMessageId(shim)');
-  // Mvu is NOT on a TH-script iframe — grab it from the top window (window.parent).
+}
+
+// Mount the menu into `bodyEl` (the modal body). Resolves to the frame, or null with a reason shown.
+export async function mountStatusMenu(bodyEl) {
+  const helper = topWindow.MvuHelper;
+  if (!helper || typeof helper.statusMenuFrameSource !== 'function') {
+    bodyEl.textContent = 'The StatusMenu needs mvu-helper 0.3.290 or later.';
+    log.warn('status-menu: MvuHelper.statusMenuFrameSource is not on the page — mvu-helper is missing, disabled, or older than the contained menu');
+    return null;
+  }
+  const live = latestStatData();
+  let source = null;
   try {
-    const topMvu = window.parent && window.parent.Mvu;
-    if (topMvu) { iw.Mvu = topMvu; bridged.push('Mvu'); }
-    else log.warn('status-menu: Mvu not found on parent window (menu falls back to 2s polling)');
+    source = frameAttributesFrom(await helper.statusMenuFrameSource({ mid: live ? live.floor : -1, statData: live ? live.statData : null }));
   } catch (e) {
-    log.warn('status-menu: could not reach parent Mvu:', e);
+    log.error('status-menu: MvuHelper.statusMenuFrameSource failed:', e);
+    bodyEl.textContent = 'Failed to load the StatusMenu (see console).';
+    return null;
   }
-  if (typeof iw.getVariables !== 'function') {
-    log.error('status-menu: getVariables NOT bridged even after the namespace copy — menu will render blank');
-  }
-  return bridged;
-}
-
-// Mount the menu into `bodyEl` (the modal body). Returns the iframe (or null on failure).
-export function mountStatusMenu(bodyEl) {
-  const html = loadMenuHtml();
-  if (!html) {
+  if (!source) {
     bodyEl.textContent = 'This card has no StatusMenu.';
+    log.info('status-menu: mvu-helper reports no contained StatusMenu on this card — none is installed, or it was installed before the lift (re-activate the StatusMenu pack)');
     return null;
   }
+  if (!bodyEl.isConnected) return null;   // the modal closed while we read
+
+  wireOnce();
   bodyEl.textContent = '';
-  bodyEl.style.cssText = 'flex:1 1 auto;display:block;padding:0;overflow:hidden;';
-
+  bodyEl.style.cssText = 'flex:1 1 auto;display:block;padding:0;overflow:auto;';
   const frame = DOC.createElement('iframe');
-  frame.style.cssText = 'width:100%;height:100%;border:0;display:block;background:#fff;';
+  frame.setAttribute('sandbox', source.sandbox);
+  frame.setAttribute('title', 'StatusMenu');
+  frame.style.cssText = FRAME_STYLE;
+  frame.srcdoc = source.srcdoc;
   bodyEl.appendChild(frame);
-
-  const iw = frame.contentWindow;
-  const bridged = bridgeGlobals(iw);
-  log.info(`status-menu: bridged [${bridged.join(', ')}]`);
-
-  try {
-    iw.document.open();
-    iw.document.write(html); // 335 KB self-contained app; its scripts run + start the 2s poll
-    iw.document.close();
-  } catch (e) {
-    log.error('status-menu: writing menu HTML failed:', e);
-    bodyEl.textContent = 'Failed to render StatusMenu (see console).';
-    return null;
-  }
+  current = { frame, height: 0, lifted: false, savedStyle: '' };
+  log.info(`status-menu: mounted the contained StatusMenu (${source.srcdoc.length} chars, sandbox="${source.sandbox}")`);
   return frame;
 }

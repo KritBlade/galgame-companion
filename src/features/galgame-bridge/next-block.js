@@ -1,4 +1,4 @@
-// galgame-companion · next-block — surface a game's manual time-advance control on galgame's GUI. v1.0
+// galgame-companion · next-block — surface a game's manual time-advance control on galgame's GUI. v1.1
 //
 // GENRE-GATED. A manual block advance is not a universal idea — School has time blocks, most genres
 // do not — so both the PATH this drives and WHETHER THE CONTROL EXISTS come from the active genre
@@ -17,25 +17,29 @@
 // is removed. A genre with no control costs one querySelector per overlay rebuild — the price of not
 // having to know, at boot, something that is not knowable at boot.
 //
-// FLAG MIRROR, NOT AN ACTION. Checking the box only SETS the game's flag — nothing advances at click
-// time. The engine previews where the advance will land so the narrator writes the reply in the new
-// slot, and the resolver commits it at reply-end. So this overlay box drives the game's OWN stat-menu
-// checkbox (input[data-bind-checked="<the profile's bindPath>"]) and lets its native handler
-// (rt_bindings applyValueUpdate) write the flag; we never write state ourselves. Unchecking just
-// clears it — nothing was mutated, so there is no snapshot or undo to manage. The flag auto-clears
-// when the resolver consumes it, the real checkbox re-renders from it on each stat-menu redraw, and we
-// re-derive our box from that on every rebuild.
+// FLAG, NOT AN ACTION. Checking the box only SETS the game's flag — nothing advances at click time. The
+// engine previews where the advance will land so the narrator writes the reply in the new slot, and the
+// resolver commits it at reply-end. Unchecking just clears it — nothing was mutated, so there is no
+// snapshot or undo to manage. The flag auto-clears when the resolver consumes it, and our box re-reads
+// it on every rebuild.
 //
-// COUPLING (shape, not vocabulary): the stat-menu renders per message into TH-message--<id>--0 iframes
-// (same-origin srcdoc). We target the NEWEST reply's iframe (highest id) so the flag lands on the
-// current turn (schoolv3 concurrency audit). Degrades to a no-op + warn if unreachable — never throws.
-// The only game-specific fact — which path that checkbox binds — comes from the genre profile; School's
-// PendingState.BlockDone is one example of it, not the contract.
+// HOW IT IS READ AND WRITTEN. The game's StatusMenu runs in a CONTAINED frame (mvu-helper
+// plans/statusmenu-containment.md): an opaque origin, so no host can reach into its document for the
+// checkbox this chip used to click. The flag is READ off live stat_data (live-stat-data.js — the same
+// newest floor the menu draws from) and WRITTEN by posting the verb the menu's own checkbox posts —
+// `setValue` on mvu-helper's published action wire — so the StatusMenu Engine decides what the member
+// becomes, exactly as for a click in the menu, and mvu-helper writes it on the newest reply. The only
+// game-specific fact — which path — comes from the genre profile; School's PendingState.BlockDone is
+// one example of it, not the contract. Degrades to a warn and a reverted box, never a throw.
 
 import { DOC, topWindow, log } from '../../env.js';
 import { refreshLocationTimePills } from './location-time-bridge.js';
+import { latestStatData } from './live-stat-data.js';
 import { activeGenre } from '../../genre/index.js';
-import { advanceControlFor, chipHtml, WRAP_CLASS, CB_CLASS, PATH_ATTR } from './next-block-core.js';
+import {
+  advanceControlFor, chipHtml, flagFromStatData, flagActionRequest, MENU_ACTION_MESSAGE,
+  WRAP_CLASS, CB_CLASS, PATH_ATTR,
+} from './next-block-core.js';
 
 const OVERLAY_SEL = '#gal-global-overlay';
 
@@ -45,29 +49,12 @@ function control() {
   return advanceControlFor(activeGenre());
 }
 
-// The NEWEST reply's stat-menu advance checkbox (its iframe holds the current turn's stat_data).
-// null if unreachable, or if this genre has no advance control at all.
-function findRealCb() {
-  const active = control();
-  if (!active) return null;
-  const doc = (topWindow && topWindow.document) || DOC;
-  const frames = [...doc.querySelectorAll('iframe[id^="TH-message--"]')]
-    .map((f) => { const m = /^TH-message--(\d+)--/.exec(f.id); return { f, n: m ? Number(m[1]) : -1 }; })
-    .filter((x) => x.n >= 0)
-    .sort((a, b) => b.n - a.n); // newest reply first
-  for (const { f } of frames) {
-    try {
-      const cb = f.contentDocument && f.contentDocument.querySelector(`input[type="checkbox"][data-bind-checked="${active.bindPath}"]`);
-      if (cb) return cb;
-    } catch (e) { /* cross-realm hiccup — try the next iframe */ }
-  }
-  return null;
-}
-
-// The live flag state, read off the game's own checkbox (which reflects the flag). false when unreachable.
+// The live flag state, off the newest floor's stat_data. false when there is no control or no state.
 function readFlag() {
-  const cb = findRealCb();
-  return !!(cb && cb.checked);
+  const active = control();
+  if (!active) return false;
+  const live = latestStatData();
+  return flagFromStatData(live && live.statData, active.bindPath);
 }
 
 // Poke galgame's location/time pills a few times so they catch up to the (async-saved) flag/clock — galgame only
@@ -78,24 +65,33 @@ function nudgePills() {
   }, ms));
 }
 
-// Drive the game's own checkbox to `want` and fire its native handler (writes the flag = want — flag
-// only, no resolve). Returns the flag state actually achieved (so a failed write reverts our box instead of lying).
-//
-// ⚠ The bound handler (rt_bindings `el.onclick`) reads `el.checked` AFTER the browser toggles it on click. So to
-// land on `want` we PRIME the box to `!want`, then click() → the toggle flips it to `want` and the handler fires
-// applyValueUpdate(<flag>, want). Setting checked=want THEN click() would toggle AWAY from want and write the
-// opposite (live-caught 2026-07-28 on School: checking our box wrote the flag false).
+// Set the flag to `want` through mvu-helper's action wire, and resolve to the flag state actually
+// achieved — so a refused or unanswered write reverts our box instead of lying.
+const ACTION_TIMEOUT_MS = 8000;
+let actionSeq = 0;
 function setFlag(want) {
   const active = control();
-  const cb = findRealCb();
-  if (!cb) { log.warn(`next-block: real ${active ? active.bindPath : '(no advance control for this genre)'} checkbox not found — cannot set the flag`); return false; }
-  if (cb.checked !== want) {
-    cb.checked = !want;   // prime so the click toggles TO `want`
-    cb.click();           // rt_bindings onclick → applyValueUpdate(<flag>, want) — persisted flag write, no advance
-  }
-  log.info(`next-block: ${active.bindPath} flag ` + (want ? 'SET (will advance at reply-end; the engine previews it)' : 'cleared'));
-  nudgePills();
-  return want;
+  if (!active) { log.warn('next-block: this genre declares no manual advance — nothing to set'); return Promise.resolve(false); }
+  return new Promise((resolve) => {
+    const request = flagActionRequest(active.bindPath, want, 'next-block-' + (++actionSeq) + '-' + Date.now());
+    const done = (achieved, why) => {
+      clearTimeout(timer);
+      window.removeEventListener('message', onReply);
+      if (why) log.warn(`next-block: ${active.bindPath} flag NOT ${want ? 'set' : 'cleared'} — ${why}`);
+      else log.info(`next-block: ${active.bindPath} flag ` + (want ? 'SET (will advance at reply-end; the engine previews it)' : 'cleared'));
+      nudgePills();
+      resolve(achieved);
+    };
+    const timer = setTimeout(() => done(readFlag(), 'mvu-helper did not answer within ' + (ACTION_TIMEOUT_MS / 1000) + 's (is it installed and enabled?)'), ACTION_TIMEOUT_MS);
+    function onReply(event) {
+      const data = event && event.data;
+      if (!data || data.type !== MENU_ACTION_MESSAGE + '-result' || data.requestId !== request.requestId) return;
+      if (data.ok) done(want, '');
+      else done(readFlag(), data.reason || 'refused');
+    }
+    window.addEventListener('message', onReply);
+    topWindow.postMessage(request, '*');
+  });
 }
 
 // Say once, on the first chip we ever render, WHICH path it drives — the answer to "is this button
@@ -144,9 +140,12 @@ export function startNextBlock() {
   DOC.addEventListener('change', (e) => {
     const cb = e.target && e.target.classList && e.target.classList.contains(CB_CLASS) ? e.target : null;
     if (!cb) return;
-    let got = false;
-    try { got = setFlag(cb.checked); } catch (err) { log.error('next-block: flag toggle failed:', err); }
-    cb.checked = got; // if the write couldn't land, revert the box so it never lies about the flag
+    const want = cb.checked;
+    cb.disabled = true;   // one write in flight; the box answers when the host does
+    setFlag(want)
+      .then((got) => { cb.checked = got; })   // a write that did not land reverts the box, so it never lies about the flag
+      .catch((err) => { log.error('next-block: flag toggle failed:', err); cb.checked = readFlag(); })
+      .finally(() => { cb.disabled = false; });
   });
 
   // Re-inject whenever galgame (re)builds its overlay (rAF-batched, like the toolbar watcher). Each inject re-derives

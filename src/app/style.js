@@ -130,20 +130,6 @@ const CSS = `
   }
 }
 
-/* Card StatusMenu popups (quest/item detail, equip picker, image lightbox, portrait editor) — the
-   StatusMenu escapes them from its TH message iframe to the PARENT body so the iframe box can't clip
-   them, with a hardcoded inline z-index of 50000-60000. That wins in plain SillyTavern and loses
-   inside galgame, whose own body-level viewers sit at 99999 (.gal-embedded-viewer): opening a quest
-   from galgame's VIEW panel painted the popup BEHIND the panel — invisible, ✕ unclickable, no way to
-   close it (proven live 2026-08-24). Lift them above galgame AND above our own menu modal
-   (2147483000), keeping the StatusMenu's own relative order (detail/equip < lightbox < portrait) so a
-   lightbox opened from a detail popup still stacks on it. !important because the popup's z-index is
-   inline. Native fullscreen is a separate failure (top layer ignores z-index) — statusmenu-popup-layer.js.
-   Keyed on the StatusMenu's ids: a card without a StatusMenu matches nothing. */
-#detail-modal-overlay, #equip-modal-overlay { z-index: 2147483010 !important; }
-#img-popup-overlay { z-index: 2147483015 !important; }
-#portrait-mode-modal { z-index: 2147483020 !important; }
-
 /* Live meter panel (meter-panel.js) — the genre profile's bars over the stage, in the left column
    under the MENU button (whose chip ends 32px down; galgame's own status pills sit centred at the
    top, its dialog panel ~490px down, so this column is the one free strip). Drawn only while the

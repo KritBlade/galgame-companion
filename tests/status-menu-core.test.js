@@ -1,73 +1,66 @@
 /**
- * galgame-companion — StatusMenu document extraction (features/menu/status-menu-core.js).
+ * galgame-companion — hosting the contained StatusMenu (features/menu/status-menu-core.js).
  *
- * THE REGRESSION (live 2026-09-08): the card's StatusMenu regex script stopped BEING the menu
- * document and became the document wrapped in a platform envelope — an mvu-helper region div,
- * begin/end marker comments, and a markdown code fence. Written into the modal's iframe whole, the
- * fence showed as literal ``` and the real <!DOCTYPE html> landed nested inside a div, so the
- * browser dropped the document element and the School Menu opened as an empty coloured panel.
+ * The companion no longer reads or handles the menu's document. mvu-helper composes the one contained
+ * version of it (MvuHelper.statusMenuFrameSource) and the companion sets that on a frame it owns. So
+ * the guards here are about what the companion must NOT do: edit the sandbox or the document, or
+ * answer a message that is not one of the three its frame sends.
+ *
+ * MUTATION (run by hand, recorded): make frameAttributesFrom append ' allow-same-origin' to the
+ * sandbox → "passes the sandbox and document through unchanged" fails.
  *
  * Run:  npm test
  */
 import { describe, it, expect } from 'vitest';
-import { extractMenuDocument } from '../src/features/menu/status-menu-core.js';
+import {
+  frameAttributesFrom, readFrameMessage, FRAME_STYLE, FRAME_LIFTED_STYLE,
+  FRAME_STATE_MESSAGE, FRAME_HEIGHT_MESSAGE, FRAME_OVERLAY_MESSAGE, FRAME_ERROR_MESSAGE,
+} from '../src/features/menu/status-menu-core.js';
 
-const DOC_HTML = '<!DOCTYPE html>\n<html lang="en">\n<head><title>StatusMenu</title></head>\n<body><div id="app">hi</div></body>\n</html>';
+describe('frameAttributesFrom — the containment is mvu-helper\'s, passed through untouched', () => {
+  const source = { sandbox: 'allow-scripts allow-modals', srcdoc: '<!DOCTYPE html><html><body>menu</body></html>' };
 
-// The exact envelope shape read off the live card.
-const wrapped = (doc) => [
-  '<div class="mvu-helper-region" data-mvu-helper="statusmenu" data-mvu-helper-contract="move or hide this element whole - do not walk into it">',
-  '',
-  '<!-- mvu-helper:begin statusmenu -->',
-  '',
-  '```',
-  doc,
-  '```',
-  '',
-  '<!-- mvu-helper:end statusmenu -->',
-  '',
-  '</div>',
-].join('\n');
-
-describe('extractMenuDocument', () => {
-  it('THE REGRESSION: takes the document out of the region + fence envelope', () => {
-    const r = extractMenuDocument(wrapped(DOC_HTML));
-    expect(r.html).toBe(DOC_HTML);
-    expect(r.html.startsWith('<!DOCTYPE html>')).toBe(true);   // quirks mode would re-lay-out the menu
-    expect(r.html).not.toContain('```');
-    expect(r.html).not.toContain('mvu-helper-region');
-    expect(r.wrapperChars).toBeGreaterThan(0);
+  it('MUTATION TARGET — passes the sandbox and document through unchanged', () => {
+    expect(frameAttributesFrom(source)).toEqual(source);
+    expect(frameAttributesFrom(source).sandbox).not.toContain('allow-same-origin');
   });
-
-  it('a bare document is returned untouched, and says nothing was unwrapped', () => {
-    expect(extractMenuDocument(DOC_HTML)).toEqual({ html: DOC_HTML, wrapperChars: 0 });
+  it('nothing to mount is null — no card menu, an old mvu-helper, a malformed answer', () => {
+    expect(frameAttributesFrom(null)).toBeNull();
+    expect(frameAttributesFrom({ sandbox: 'allow-scripts' })).toBeNull();
+    expect(frameAttributesFrom({ sandbox: 'allow-scripts', srcdoc: '' })).toBeNull();
+    expect(frameAttributesFrom({ srcdoc: 'x' })).toBeNull();
   });
-
-  it("'</html>' inside the menu's own script or style is not mistaken for the document close", () => {
-    const tricky = '<!DOCTYPE html>\n<html>\n<head><style>/* </html> */</style></head>\n'
-      + '<body><script>const s = "</html>";<\/script>\n<div id="app">real</div></body>\n</html>';
-    const r = extractMenuDocument(wrapped(tricky));
-    expect(r.html).toBe(tricky);
-    expect(r.html).toContain('<div id="app">real</div>');       // nothing cut short
+  it('carries nothing but the two attributes — no global, no bridge, no extra field', () => {
+    expect(Object.keys(frameAttributesFrom({ ...source, extra: 1 })).sort()).toEqual(['sandbox', 'srcdoc']);
   });
+});
 
-  it('a menu that is a bare FRAGMENT (no <html>) still mounts, unchanged', () => {
-    const fragment = '<div id="app">no document element here</div>';
-    expect(extractMenuDocument(fragment)).toEqual({ html: fragment, wrapperChars: 0 });
+describe('readFrameMessage — the three messages the frame sends, and nothing else', () => {
+  it('reads height, overlay and error', () => {
+    expect(readFrameMessage({ type: FRAME_HEIGHT_MESSAGE, height: 811.6 })).toEqual({ kind: 'height', height: 812 });
+    expect(readFrameMessage({ type: FRAME_OVERLAY_MESSAGE, open: true })).toEqual({ kind: 'overlay', open: true });
+    expect(readFrameMessage({ type: FRAME_ERROR_MESSAGE, message: 'SecurityError: x' })).toEqual({ kind: 'error', message: 'SecurityError: x' });
   });
-
-  it('a TRUNCATED document (<html> that never closes) is left alone, not cut at a guess', () => {
-    const cut = '<!DOCTYPE html>\n<html>\n<body><div id="app">stops mid';
-    expect(extractMenuDocument(wrapped(cut)).wrapperChars).toBe(0);
+  it('ignores malformed shapes and every other message on the window', () => {
+    expect(readFrameMessage({ type: FRAME_HEIGHT_MESSAGE, height: -3 })).toBeNull();
+    expect(readFrameMessage({ type: FRAME_OVERLAY_MESSAGE, open: 'yes' })).toBeNull();
+    expect(readFrameMessage({ type: FRAME_STATE_MESSAGE, statData: {} })).toBeNull();
+    expect(readFrameMessage({ type: 'mvu-statusmenu-action-result' })).toBeNull();
+    expect(readFrameMessage(null)).toBeNull();
   });
-
-  it('the doctype comes from THIS document, even when the wrapper text mentions one', () => {
-    const withDecoy = '<div class="wrap">a doctype is written <!DOCTYPE decoy> in the prose</div>\n' + DOC_HTML;
-    expect(extractMenuDocument(withDecoy).html).toBe(DOC_HTML);
+  it('spells mvu-helper\'s published names', () => {
+    expect([FRAME_STATE_MESSAGE, FRAME_HEIGHT_MESSAGE, FRAME_OVERLAY_MESSAGE, FRAME_ERROR_MESSAGE]).toEqual([
+      'mvu-helper:statusmenu-state', 'mvu-helper:statusmenu-height', 'mvu-helper:statusmenu-overlay', 'mvu-helper:statusmenu-error',
+    ]);
   });
+});
 
-  it('junk input is a no-op', () => {
-    expect(extractMenuDocument('')).toEqual({ html: '', wrapperChars: 0 });
-    expect(extractMenuDocument(null)).toEqual({ html: '', wrapperChars: 0 });
+describe('the frame at rest and lifted', () => {
+  it('lifts to the viewport in explicit units (SillyTavern transforms <html>), above the modal', () => {
+    expect(FRAME_LIFTED_STYLE).toContain('position:fixed');
+    expect(FRAME_LIFTED_STYLE).toContain('100vw');
+    expect(FRAME_LIFTED_STYLE).toMatch(/z-index:(\d+)/);
+    expect(Number(FRAME_LIFTED_STYLE.match(/z-index:(\d+)/)[1])).toBeGreaterThan(2147483000);
+    expect(FRAME_STYLE).not.toContain('position:fixed');
   });
 });
