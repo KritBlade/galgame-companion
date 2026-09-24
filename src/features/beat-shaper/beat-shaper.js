@@ -1,5 +1,5 @@
 // galgame-companion · beat-shaper — deterministic reshaping of AI replies into galgame's beat
-// contract (plan: mvu-helper plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). v0.4
+// contract (plan: mvu-helper plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). v0.5
 //
 // Event-driven wrapper around the pure transform in beat-shaper-core.js: on MESSAGE_RECEIVED /
 // MESSAGE_UPDATED, read the floor's raw text (TH getChatMessages), shape it, and write it back
@@ -18,12 +18,23 @@
 //   CHARACTER_MESSAGE_RENDERED — NOT one of our trigger events, so no self-loop; galgame's
 //   .mes_text MutationObserver picks the re-render up and re-parses. Belt-and-braces: the
 //   transform is idempotent, and a per-floor in-flight set blocks re-entry.
+// - BEFORE the write, the shaped text goes to every registered before-write hook and the write waits
+//   for them (registerBeforeWriteHook). The image seam files each scene→image pair into galgame's
+//   backdrop library there: galgame looks the scene name up ~200 ms after the re-render, and a lookup
+//   that finds nothing is permanent (its SpriteManager marks the scene current before reading), so the
+//   row must exist before the DOM ever shows the name.
 
 import { topWindow, log, warnToast } from '../../env.js';
 import { shapeMessage, sceneUid, shortHash, repairTruncatedEnvelope, synthesizeEnvelope } from './beat-shaper-core.js';
 import { isTurnBusy } from '../galgame-quirks/index.js';
 
 const inFlight = new Set(); // message ids currently being shaped (re-entrancy guard)
+
+// Called with (id, shapedText) before the floor is written and re-rendered; the write waits for each.
+const beforeWriteHooks = [];
+export function registerBeforeWriteHook(hook) {
+  if (typeof hook === 'function') beforeWriteHooks.push(hook);
+}
 const deferralLogged = new Set(); // one deferral log per floor per reason — not one per event
 // One incomplete-reply toast per message, keyed `${id}:${reason}`. Without this the GENERATION_ENDED
 // retry + every later MESSAGE_UPDATED (image splices) would each re-toast the same dead turn.
@@ -241,6 +252,10 @@ async function onMessageEvent(messageId) {
   inFlight.add(id);
   try {
     stashStrippedReasoning(id, stats.strippedThinkText);
+    for (const hook of beforeWriteHooks) {
+      // eslint-disable-next-line no-await-in-loop -- serial on purpose: each hook must land before the floor re-renders
+      try { await hook(id, text); } catch (e) { log.warn(`beat-shaper msg=${id}: a before-write hook threw — the floor re-renders anyway:`, e); }
+    }
     await window.setChatMessages([{ message_id: id, message: text }], { refresh: 'affected' });
     log.image(
       `beat-shaper msg=${id}:${stats.renamed ? ' gametxt→maintext' : ''} wrapped=${stats.wrapped}p ` +

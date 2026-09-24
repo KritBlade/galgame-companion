@@ -1,9 +1,9 @@
-// galgame-companion v0.9.4
+// galgame-companion v0.9.5
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.9.4";
-  var BUILD = "a9e550e";
+  var VERSION = "0.9.5";
+  var BUILD = "39765ea";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -3032,6 +3032,10 @@ ${inner.replace(/^\n+/, "")}`;
 
   // src/features/beat-shaper/beat-shaper.js
   var inFlight = /* @__PURE__ */ new Set();
+  var beforeWriteHooks = [];
+  function registerBeforeWriteHook(hook) {
+    if (typeof hook === "function") beforeWriteHooks.push(hook);
+  }
   var deferralLogged = /* @__PURE__ */ new Set();
   var incompleteToasted = /* @__PURE__ */ new Set();
   var RE_HAS_UPDATEVAR = /<UpdateVariable>/i;
@@ -3168,6 +3172,13 @@ ${cot}` : cot;
     inFlight.add(id);
     try {
       stashStrippedReasoning(id, stats.strippedThinkText);
+      for (const hook of beforeWriteHooks) {
+        try {
+          await hook(id, text);
+        } catch (e) {
+          log.warn(`beat-shaper msg=${id}: a before-write hook threw — the floor re-renders anyway:`, e);
+        }
+      }
       await window.setChatMessages([{ message_id: id, message: text }], { refresh: "affected" });
       log.image(
         `beat-shaper msg=${id}:${stats.renamed ? " gametxt→maintext" : ""} wrapped=${stats.wrapped}p scenes=${stats.scenes}${stats.scenes ? " (hoisted #1)" : ""}${stats.picsPending ? " [scene binding HELD BACK — raw <pic> still un-rendered]" : ""} strippedScenes=${stats.strippedScenes}${stats.uid ? ` uid=${stats.uid}(${stats.uidMinted ? "minted" : "kept"})` : ""}${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ""}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ""}${stats.strippedThink ? ` strippedThink=1 (${stats.strippedThinkText.length}c leaked CoT moved to extra.reasoning)` : ""} rolls=${stats.rolls}(placed=${stats.rollsPlaced} unplaced=${stats.rollsUnplaced})${stats.imagesRehomed ? ` imagesRehomed=${stats.imagesRehomed} (were OUTSIDE <maintext>)` : ""}`
@@ -3473,15 +3484,37 @@ ${cot}` : cot;
     const deleted = await deleteBackgroundKeys(stale, why);
     return deleted ? deleted.length : 0;
   }
-  async function processMessage(id) {
-    const raw = rawMessage3(id);
-    if (!raw) return;
+  var filed = /* @__PURE__ */ new Map();
+  var scanChains = /* @__PURE__ */ new Map();
+  function scanSerialized(id, body) {
+    const previous = scanChains.get(id) || Promise.resolve();
+    const next = previous.then(body, body);
+    const settled = next.finally(() => {
+      if (scanChains.get(id) === settled) scanChains.delete(id);
+    });
+    scanChains.set(id, settled);
+    return next;
+  }
+  function processMessage(id) {
+    return scanSerialized(id, () => {
+      const raw = rawMessage3(id);
+      if (!raw) return void 0;
+      return processText(id, raw, "message event");
+    });
+  }
+  async function processText(id, raw, why) {
     const scan = pairImagesToScenes(raw);
     const { pairs } = scan;
     const report = unboundImageReport(raw, scan);
     if (report) log.image(`image-seam: message ${id} — ${report}`);
     if (!pairs.length) return;
+    const signature = pairs.map((p) => `${p.scene}=${p.url}`).join("|");
+    if (filed.get(id) === signature) {
+      log.image(`image-seam: message ${id} — its ${pairs.length} backdrop(s) are already filed (${why}); nothing to write`);
+      return;
+    }
     const ok = await writeBackgrounds(pairs);
+    if (ok === pairs.length) filed.set(id, signature);
     const keepByUid = /* @__PURE__ */ new Map();
     for (const p of pairs) {
       const uid = uidOfSceneName(p.scene);
@@ -3495,7 +3528,7 @@ ${cot}` : cot;
     }
     if (ok || removed) {
       log.image(
-        `image-seam: wrote ${ok}/${pairs.length} background(s) from message ${id}` + (removed ? `, pruned ${removed} superseded` : "")
+        `image-seam: wrote ${ok}/${pairs.length} background(s) from message ${id} (${why})` + (removed ? `, pruned ${removed} superseded` : "")
       );
     }
   }
@@ -3752,6 +3785,7 @@ ${cot}` : cot;
     const onMsg = (id) => {
       processMessage(Number(id));
     };
+    registerBeforeWriteHook((id, text) => scanSerialized(Number(id), () => processText(Number(id), text, "before the beat-shaper's re-render")));
     for (const ev of [te.MESSAGE_UPDATED, te.CHARACTER_MESSAGE_RENDERED, te.MESSAGE_SWIPED, te.MESSAGE_EDITED]) {
       if (ev) {
         try {

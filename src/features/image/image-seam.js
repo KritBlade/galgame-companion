@@ -1,5 +1,5 @@
 // galgame-companion · image-seam (G4b) — feed mvu-helper's generated images into galgame's own
-// backdrop library, and flip the ForceImageType latch on immersive enter/exit. GCP §10.3 / VPP §3. v0.9
+// backdrop library, and flip the ForceImageType latch on immersive enter/exit. GCP §10.3 / VPP §3. v0.10
 //
 // PIPELINE: the narrator writes `<background scene="X">` beats; mvu-helper draws each `<pic>` and
 // stamps `<span class="auto-img-wrap"><img src="…"></span>` into the message (then emits
@@ -7,6 +7,15 @@
 // pairImagesToScenes), and PUT that scene→url pair straight into galgame's IndexedDB `backgrounds`
 // store. galgame's getBackground() falls through to the DB on a cache miss, so the backdrop appears
 // when the player reaches that beat — no galgame edit.
+//
+// THE ROW MUST EXIST BEFORE THE DOM SHOWS THE NAME. The beat-shaper mints the scene name and re-renders
+// the floor; galgame re-parses ~200 ms after the DOM changes and looks the name up ONCE — a lookup that
+// finds nothing clears the layers and marks the scene current, and its SpriteManager never asks again
+// (live 2026-09-24: the seam's commit landed 200 ms before galgame's read on a good run, and after it on
+// a busy one, leaving a blank stage that no reload, exit or re-enter repaired). So the seam files the
+// pairs from the SHAPED TEXT inside the beat-shaper's before-write hook, and the write waits for the
+// commit; the message-event scan below stays for every other way a floor's text can change, and skips
+// pairs it has already filed.
 //
 // THE LIBRARY IS PER BROWSER, THE CHAT IS NOT. galgame's store lives in this browser's IndexedDB, and
 // the scan above runs only on a message event. So on every chat load the seam BACKFILLS: each scene the
@@ -21,7 +30,7 @@
 // `pack_default`), db/image-packs.js.
 
 import { DOC, topWindow, log } from '../../env.js';
-import { uidOfSceneName, currentChatKey } from '../beat-shaper/index.js';
+import { uidOfSceneName, currentChatKey, registerBeforeWriteHook } from '../beat-shaper/index.js';
 import {
   staleSiblingKeys, deadBackgroundKeys, pairImagesToScenes, unboundImageReport, decideForceReconcile, latchFloors,
   missingBackdropPairs,
@@ -118,9 +127,30 @@ async function pruneSceneSiblings(uid, keep) {
   return deleted ? deleted.length : 0;
 }
 
-async function processMessage(id) {
-  const raw = rawMessage(id);
-  if (!raw) return;
+// scene=url pairs last filed per message, so the message-event scan after a hook write is a no-op
+// instead of a second put + a second log line for the same rows.
+const filed = new Map();
+
+// One scan at a time per message: the hook and the message events can fire within milliseconds of each
+// other, and two concurrent scans each read the library before either prunes it.
+const scanChains = new Map();
+function scanSerialized(id, body) {
+  const previous = scanChains.get(id) || Promise.resolve();
+  const next = previous.then(body, body);
+  const settled = next.finally(() => { if (scanChains.get(id) === settled) scanChains.delete(id); });
+  scanChains.set(id, settled);
+  return next;
+}
+
+function processMessage(id) {
+  return scanSerialized(id, () => {
+    const raw = rawMessage(id);
+    if (!raw) return undefined;
+    return processText(id, raw, 'message event');
+  });
+}
+
+async function processText(id, raw, why) {
   const scan = pairImagesToScenes(raw);
   const { pairs } = scan;
   // Unmatched counts are EXPECTED mid-flight (a message the beat-shaper has not shaped yet has foreign
@@ -132,7 +162,13 @@ async function processMessage(id) {
   const report = unboundImageReport(raw, scan);
   if (report) log.image(`image-seam: message ${id} — ${report}`);
   if (!pairs.length) return; // transient (pre-shape / no images) — write nothing AND prune nothing
+  const signature = pairs.map((p) => `${p.scene}=${p.url}`).join('|');
+  if (filed.get(id) === signature) {
+    log.image(`image-seam: message ${id} — its ${pairs.length} backdrop(s) are already filed (${why}); nothing to write`);
+    return;
+  }
   const ok = await writeBackgrounds(pairs);
+  if (ok === pairs.length) filed.set(id, signature);
   // Drop superseded gens of THIS message's beats so swipe/regen doesn't accumulate (keep = current
   // names). Grouped by uid: the shaper mints exactly one per message, but grouping keeps every prune
   // scoped to a uid we actually saw here, so a hand-edited message carrying two can't widen the delete.
@@ -150,7 +186,7 @@ async function processMessage(id) {
   }
   if (ok || removed) {
     log.image(
-      `image-seam: wrote ${ok}/${pairs.length} background(s) from message ${id}` +
+      `image-seam: wrote ${ok}/${pairs.length} background(s) from message ${id} (${why})` +
         (removed ? `, pruned ${removed} superseded` : ''),
     );
   }
@@ -479,6 +515,8 @@ export function startImageSeam() {
   // Scan on both the initial render and mvu-helper's post-gen MESSAGE_UPDATED (it stamps the <img>
   // AFTER the message arrives). Writes are idempotent (put by id) so double-firing is harmless.
   const onMsg = (id) => { processMessage(Number(id)); };
+  // The shaped text, before the floor re-renders (file header: the row must exist before galgame reads).
+  registerBeforeWriteHook((id, text) => scanSerialized(Number(id), () => processText(Number(id), text, "before the beat-shaper's re-render")));
   for (const ev of [te.MESSAGE_UPDATED, te.CHARACTER_MESSAGE_RENDERED, te.MESSAGE_SWIPED, te.MESSAGE_EDITED]) {
     if (ev) { try { window.eventOn(ev, onMsg); } catch (e) { log.warn(`image-seam: eventOn(${ev}) failed:`, e); } }
   }
