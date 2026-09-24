@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   shapeMessage, sceneName, sceneUid, shortHash, uidOfSceneName, chatKeyOfSceneName,
-  SCENE_NAME_RE, LEGACY_SCENE_NAME_RE, parseCombatLog, repairTruncatedEnvelope, synthesizeEnvelope,
+  SCENE_NAME_RE, LEGACY_SCENE_NAME_RE, parseCombatLog, countCombatLogStrayTags, repairTruncatedEnvelope, synthesizeEnvelope,
 } from '../src/features/beat-shaper/beat-shaper-core.js';
 
 // A rendered image block exactly as mvu-helper's imagegen REPLACE path writes it.
@@ -466,6 +466,8 @@ describe('idempotency', () => {
 
 // ── §4 roll line: <combat_log> re-homed at the narrator's <roll/> markers ─────
 const combatLog = (...lines) => `\n<combat_log>\n${lines.join('\n')}\n</combat_log>\n`;
+// The hidden marker an unmarked roll carries (beat-shaper-core UNPLACED_PREFIX's comment half).
+const UNPLACED = '<!--gc:unplaced-->';
 const CRIT_FAIL = '[Support] on Mitsuki — DC 12, RawDie ①1 +2 CHA = 3 → CritFail';
 const SUCCESS = '[Repair] on Mitsuki — DC 12, RawDie 13 +0 CHA = 13 → Success';
 
@@ -486,6 +488,14 @@ describe('parseCombatLog (§4)', () => {
     expect(parseCombatLog(combatLog('# a comment'))).toEqual([]);
     expect(parseCombatLog('no block here')).toEqual([]);
     expect(parseCombatLog('')).toEqual([]);
+  });
+
+  it('MUTATION TARGET — a tag-only line is NOT a roll (a <roll/> written into the log, live 2026-09-24)', () => {
+    const rolls = parseCombatLog(combatLog(SUCCESS, '<roll/>'));
+    expect(rolls).toHaveLength(1);
+    expect(rolls[0].line).toBe(SUCCESS);
+    expect(countCombatLogStrayTags(combatLog(SUCCESS, '<roll/>'))).toBe(1);
+    expect(countCombatLogStrayTags(combatLog(SUCCESS))).toBe(0);
   });
 });
 
@@ -522,9 +532,9 @@ describe('roll placement (§4)', () => {
     expect(body).not.toContain('<script>');
   });
 
-  it('parks UNMARKED rolls at the top, labelled — a crit fail is never silently dropped', () => {
+  it('parks UNMARKED rolls at the top — a crit fail is never silently dropped', () => {
     const body = bodyOf(shaped('He apologised.\n<roll/>\n', combatLog(SUCCESS, CRIT_FAIL)));
-    const unmarked = body.indexOf('(unmarked)');
+    const unmarked = body.indexOf(UNPLACED);
     expect(unmarked).toBeGreaterThan(-1);
     expect(body.slice(unmarked, unmarked + 120)).toContain('CritFail');
     expect(unmarked).toBeLessThan(body.indexOf('He apologised'));
@@ -532,7 +542,26 @@ describe('roll placement (§4)', () => {
 
   it('an unmarked roll is a real BEAT, not bare text (wrapped like prose)', () => {
     const body = bodyOf(shaped('He apologised.', combatLog(CRIT_FAIL)));
-    expect(body).toMatch(/<p>🎲 \(unmarked\) 💀 [^<]*<\/p>/);
+    expect(body).toMatch(/<p><!--gc:unplaced-->🎲 💀 [^<]*<\/p>/);
+  });
+
+  it('MUTATION TARGET — the unmarked label is INVISIBLE: once comments are gone it reads like a placed roll', () => {
+    // galgame's cleanIllegalTags strips every <!--…--> before it builds a beat, and the browser renders no
+    // comment in the ST chat — so the player sees the roll, never a debugging word beside it.
+    const body = bodyOf(shaped('He apologised.', combatLog(CRIT_FAIL)));
+    const seen = body.replace(/<!--[\s\S]*?-->/g, '');
+    expect(seen).toMatch(/<p>🎲 💀 \[Support\] on Mitsuki[^<]*<\/p>/);
+    expect(seen).not.toContain('unmarked');
+    expect(seen).not.toContain('unplaced');
+  });
+
+  it('MUTATION TARGET — the live case: marker in the LOG, none in the prose → ONE roll beat, no markup shown', () => {
+    const raw = `<gametxt>He apologised.</gametxt>${combatLog(SUCCESS, '<roll/>')}`;
+    const { text, stats } = shapeMessage(raw, mint());
+    const body = bodyOf(text);
+    expect(body.match(/🎲/g)).toHaveLength(1);
+    expect(body).not.toContain('&lt;roll');
+    expect(stats).toMatchObject({ rolls: 1, rollsPlaced: 0, rollsUnplaced: 1, logStrayTags: 1 });
   });
 
   it('drops a SURPLUS marker — it names a roll that never happened', () => {
@@ -565,7 +594,7 @@ describe('roll placement (§4)', () => {
     const once = shapeMessage(raw, mint());
     const twice = shapeMessage(once.text, mint());
     expect(twice.changed).toBe(false);
-    expect(bodyOf(once.text).match(/\(unmarked\)/g)).toHaveLength(2);
+    expect(bodyOf(once.text).split(UNPLACED)).toHaveLength(3);
   });
 
   it('does not disturb scene binding — scene #1 still leads the whole body', () => {

@@ -1,6 +1,6 @@
 {
   "name": "galgame-companion",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "//": "RELEASE RULE: the version, the git tag and the jsDelivr pin move TOGETHER. On every bump: set the pin to @v<version> in README.md (Install) and galgame-companion.import.json, commit, tag that commit v<version>, push the commit AND the tag. jsDelivr serves dist/ from the tag, so a bump with no tag ships nothing, and a stale pin keeps every card on the old build.",
   "private": true,
   "description": "Companion Tavern-Helper script for bigmalove/galgame — i18n overlay, custom toolbar buttons, MVU stat_data HUD, and the mvu-helper image seam. Rides on galgame untouched.",

@@ -289,6 +289,15 @@ async function onMessageEvent(messageId) {
         'should emit one <roll/> per <combat_log> line, in the same order.',
       );
     }
+    // Same card-prompt class, and usually the CAUSE of the warn above: the marker was written into the
+    // log block instead of the prose. Ignored rather than rendered — it is markup, not a roll.
+    if (stats.logStrayTags) {
+      log.warn(
+        `beat-shaper msg=${id}: <combat_log> carried ${stats.logStrayTags} tag-only line(s) (e.g. a <roll/> ` +
+        'written into the log instead of the prose) — ignored. The log block holds roll lines only; the ' +
+        'narrator prompt must keep the marker in <gametxt>.',
+      );
+    }
   } catch (e) {
     log.warn(`beat-shaper: setChatMessages(${id}) failed — message left unshaped:`, e);
   } finally {

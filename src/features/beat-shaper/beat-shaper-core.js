@@ -1,4 +1,4 @@
-// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v1.0
+// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v1.1
 //
 // Deterministically reshapes an AI reply into galgame's beat contract (plan: mvu-helper
 // plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). galgame's standard parser builds display beats ONLY
@@ -13,24 +13,20 @@
 // each <p> beat is assigned to the image that depicts it (the nearest image AFTER it — the narrator is
 // taught to place a <pic> right after the beat it depicts), and each image's scene tag OPENS its beat run.
 // galgame binds a beat to the nearest PRECEDING <background>, so the scene must LEAD the beat's prose.
-// v0.5: beat-based binding also survives TAIL-CLUSTERING — a reasoning model sometimes dumps EVERY image
-// at the end (all prose, then img1 img2), which left image #2's scene governing no beat so it never showed
-// ("2nd image never displays"); we now guarantee every image owns >=1 beat (a starved tail image steals a
-// trailing beat). ALSO strips a leaked reasoning block before <maintext> — anchored on a </think> close
-// (matched or orphan) OR on an unclosed <think> open; either half can arrive alone.
-// v0.4 was the interspersed-only fix (scene #n right after image #(n-1)); v0.5 generalizes it.
-// v0.6: scene names are keyed by a per-message UID instead of the chat index — see §2.1 for why the
-// index was actively wrong (deleting a message renumbered the chat and made two messages collide).
-// v0.7: the engine's player-visible <combat_log> lines are re-homed INTO the prose at the narrator's
-// <roll/> markers (§4) — the block was always printed but always landed in the untouched TAIL, outside
-// <maintext>, so no roll ever reached the GUI. The injected beat is PLAIN TEXT: galgame silently drops
-// any beat carrying HTML, so severity rides in an emoji instead of a colour (§4).
-// v0.8: a pending <pic> no longer defers the WHOLE transform, only scene injection (§3b) — the
-// envelope rename is what keeps galgame's parser scoped, and withholding it during a stalled image
-// generation is what let a broken image backend take down the entire GUI.
-// v0.9: the image census requires an actual <img> — mvu-helper now gives an UNRENDERED <pic> the same
-// auto-img-wrap envelope, and counting one as an image bound a beat run to a scene nobody could ever
-// write a record for (see RE_IMG_WRAP).
+// Beat binding survives TAIL-CLUSTERING: a reasoning model sometimes dumps EVERY image at the end (all
+// prose, then img1 img2), which would leave image #2's scene governing no beat, so it never shows. Every
+// image is guaranteed >=1 beat (a starved tail image steals a trailing beat). A leaked reasoning block
+// before <maintext> is stripped too — anchored on a </think> close (matched or orphan) OR on an unclosed
+// <think> open; either half can arrive alone.
+// Scene names are keyed by a per-message UID, never the chat index (§2.1 says why the index is wrong).
+// The engine's player-visible <combat_log> lines are re-homed INTO the prose at the narrator's <roll/>
+// markers (§4): the block sits in the TAIL, outside <maintext>, where no roll would ever reach the GUI.
+// The injected beat is PLAIN TEXT — galgame silently drops any beat carrying HTML — so severity rides in
+// an emoji, not a colour.
+// A pending <pic> defers only scene injection, never the whole transform (§3b): the envelope rename is
+// what keeps galgame's parser scoped, so a stalled image backend must not hold it back.
+// The image census requires an actual <img> (see RE_IMG_WRAP): an UNRENDERED <pic> carries the same
+// auto-img-wrap envelope, and counting it would bind a beat run to a scene nobody can write a record for.
 //
 // The transform must be IDEMPOTENT: shape(shape(x)) === shape(x). It re-derives all scene tags
 // from scratch each run (strip-then-inject) and unwraps-then-rehides its own gc:hidden comments,
@@ -270,10 +266,12 @@ const RE_OUTCOME = /(CritSuccess|CritFail|Success|Failure)/g;
 // So severity rides in the TEXT, where nothing can filter it. This also survives any future GUI: a
 // plain sentence renders in the ST chat, in galgame, and in anything else that ever reads these beats.
 const ROLL_PREFIX = '🎲 ';
-// The degraded path (no marker for this roll) says so out loud. It is ALSO what lets the strip pass
-// tell an unmarked line — which must be DELETED — from a placed one, which must be turned back into a
-// <roll/> marker. Two prefixes, two exact rules, no positional guessing.
-const UNPLACED_PREFIX = '🎲 (unmarked) ';
+// The degraded path (no marker for this roll) carries an HTML COMMENT in front of the same visible text.
+// It is what lets the strip pass tell an unmarked line — which must be DELETED — from a placed one, which
+// must be turned back into a <roll/> marker: two prefixes, two exact rules, no positional guessing. It is a
+// comment so the PLAYER never sees it — the browser renders no comment in the ST chat, and galgame's
+// cleanIllegalTags strips every comment before it builds a beat. The console warn names the miss instead.
+const UNPLACED_PREFIX = `<!--gc:unplaced-->${ROLL_PREFIX}`;
 const OUTCOME_MARK = {
   CritSuccess: '✨',
   Success: '✅',
@@ -293,20 +291,26 @@ function escapeHtml(s) {
     .replace(/'/g, '&#39;');
 }
 
+// The lines of a <combat_log> block, trimmed, with blanks and # comments dropped. Shared by the parse
+// and the stray-tag census so both read the block the same way.
+function combatLogLines(text) {
+  const block = RE_COMBAT_LOG.exec(String(text || ''));
+  if (!block) return [];
+  return block[1].split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+}
+
 /**
  * Every real check line in a <combat_log> block, each tagged with the outcome word it ends on.
+ * A line that is nothing but tags (a <roll/> the narrator put in the log instead of the prose) is not a
+ * check and is IGNORED — rendering it would make a second, fake roll beat out of markup.
  * @param {string} text  the message TAIL (where <combat_log> lives); a full message works too
  * @returns {Array<{line: string, outcome: string|null}>}  [] for no block, an empty/comment-only
  *   block, or the engine's no-roll sentence. `outcome` is null when the line carries no known
  *   verdict word — the line is still shown (neutral), since hiding a roll we half-understand is worse.
  */
 export function parseCombatLog(text) {
-  const block = RE_COMBAT_LOG.exec(String(text || ''));
-  if (!block) return [];
-  return block[1]
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l && !l.startsWith('#') && !RE_NO_ROLL.test(l))
+  return combatLogLines(text)
+    .filter((l) => !RE_TAG_ONLY_PARAGRAPH.test(l) && !RE_NO_ROLL.test(l))
     .map((line) => {
       RE_OUTCOME.lastIndex = 0;
       let m;
@@ -316,6 +320,16 @@ export function parseCombatLog(text) {
       while ((m = RE_OUTCOME.exec(line)) !== null) outcome = m[1];
       return { line, outcome };
     });
+}
+
+/**
+ * How many tag-only lines the <combat_log> block carried — the ones parseCombatLog ignores. A CARD-PROMPT
+ * defect (the narrator wrote markup into a data block), counted so the caller can name it.
+ * @param {string} text  the message TAIL; a full message works too
+ * @returns {number}
+ */
+export function countCombatLogStrayTags(text) {
+  return combatLogLines(text).filter((l) => RE_TAG_ONLY_PARAGRAPH.test(l)).length;
 }
 
 /**
@@ -408,7 +422,7 @@ export function renderUnplacedRolls(rolls) {
  *                     renamed: boolean, strippedBgimg: number, hidden: number,
  *                     strippedThink: number, strippedThinkText: string,
  *                     uid: string|null, picsPending: boolean,
- *                     rolls: number, rollsPlaced: number, rollsUnplaced: number } }}
+ *                     rolls: number, rollsPlaced: number, rollsUnplaced: number, logStrayTags: number } }}
  *   strippedThinkText carries the CoT §0b removed — '' when nothing was stripped. The caller is
  *   expected to preserve it somewhere readable; this module only refuses to be the thing that
  *   destroys it (see §0b).
@@ -516,7 +530,7 @@ export function shapeMessage(raw, mintUid) {
   const blankStats = () => ({
     wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false,
     strippedBgimg: 0, hidden: 0, strippedThink: 0, strippedThinkText: '', uid: null, uidMinted: false, picsPending: false,
-    rolls: 0, rollsPlaced: 0, rollsUnplaced: 0, imagesRehomed: 0,
+    rolls: 0, rollsPlaced: 0, rollsUnplaced: 0, logStrayTags: 0, imagesRehomed: 0,
   });
   const stats = blankStats();
   const unchanged = (deferred = null) => ({
@@ -670,6 +684,7 @@ export function shapeMessage(raw, mintUid) {
   const unplacedText = renderUnplacedRolls(placement.unplaced);
   if (unplacedText) inner = `${unplacedText}\n\n${inner.replace(/^\n+/, '')}`;
   stats.rolls = rolls.length;
+  stats.logStrayTags = countCombatLogStrayTags(tail);
   stats.rollsPlaced = placement.placed;
   stats.rollsUnplaced = placement.unplaced.length;
 

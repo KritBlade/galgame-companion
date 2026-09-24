@@ -1,9 +1,9 @@
-// galgame-companion v0.9.2
+// galgame-companion v0.9.3
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.9.2";
-  var BUILD = "4745338";
+  var VERSION = "0.9.3";
+  var BUILD = "22019ae";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -2733,7 +2733,7 @@
   var RE_NO_ROLL = /no calculation needed|no d20 roll/i;
   var RE_OUTCOME = /(CritSuccess|CritFail|Success|Failure)/g;
   var ROLL_PREFIX = "🎲 ";
-  var UNPLACED_PREFIX = "🎲 (unmarked) ";
+  var UNPLACED_PREFIX = `<!--gc:unplaced-->${ROLL_PREFIX}`;
   var OUTCOME_MARK = {
     CritSuccess: "✨",
     Success: "✅",
@@ -2743,16 +2743,22 @@
   function escapeHtml2(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
-  function parseCombatLog(text) {
+  function combatLogLines(text) {
     const block = RE_COMBAT_LOG.exec(String(text || ""));
     if (!block) return [];
-    return block[1].split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#") && !RE_NO_ROLL.test(l)).map((line) => {
+    return block[1].split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+  }
+  function parseCombatLog(text) {
+    return combatLogLines(text).filter((l) => !RE_TAG_ONLY_PARAGRAPH.test(l) && !RE_NO_ROLL.test(l)).map((line) => {
       RE_OUTCOME.lastIndex = 0;
       let m;
       let outcome = null;
       while ((m = RE_OUTCOME.exec(line)) !== null) outcome = m[1];
       return { line, outcome };
     });
+  }
+  function countCombatLogStrayTags(text) {
+    return combatLogLines(text).filter((l) => RE_TAG_ONLY_PARAGRAPH.test(l)).length;
   }
   function renderRollText(roll, prefix = ROLL_PREFIX) {
     const mark = OUTCOME_MARK[roll.outcome] || "•";
@@ -2853,6 +2859,7 @@ ${out.slice(proseAt)}`;
       rolls: 0,
       rollsPlaced: 0,
       rollsUnplaced: 0,
+      logStrayTags: 0,
       imagesRehomed: 0
     });
     const stats = blankStats();
@@ -2943,6 +2950,7 @@ ${m2}
 
 ${inner.replace(/^\n+/, "")}`;
     stats.rolls = rolls.length;
+    stats.logStrayTags = countCombatLogStrayTags(tail);
     stats.rollsPlaced = placement.placed;
     stats.rollsUnplaced = placement.unplaced.length;
     inner = wrapBareProse(inner, stats);
@@ -3172,6 +3180,11 @@ ${cot}` : cot;
       if (stats.rollsUnplaced) {
         log.warn(
           `beat-shaper msg=${id}: ${stats.rollsUnplaced} of ${stats.rolls} roll(s) had no <roll/> marker in <gametxt> — shown as a beat at the TOP instead of at the moment they resolved. The narrator should emit one <roll/> per <combat_log> line, in the same order.`
+        );
+      }
+      if (stats.logStrayTags) {
+        log.warn(
+          `beat-shaper msg=${id}: <combat_log> carried ${stats.logStrayTags} tag-only line(s) (e.g. a <roll/> written into the log instead of the prose) — ignored. The log block holds roll lines only; the narrator prompt must keep the marker in <gametxt>.`
         );
       }
     } catch (e) {
