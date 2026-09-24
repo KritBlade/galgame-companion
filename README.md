@@ -27,10 +27,10 @@ Five capabilities:
 ## Install (Tavern Helper script library)
 
 ```js
-import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.9.3/dist/galgame-companion.dist.js'
+import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.9.4/dist/galgame-companion.dist.js'
 ```
 
-Add AFTER the galgame script entry. `@v0.9.3` pins a release tag — bump it to update.
+Add AFTER the galgame script entry. `@v0.9.4` pins a release tag — bump it to update.
 
 **Versionless (auto-latest)** — resolves to the newest semver tag, so the TH entry never needs editing:
 

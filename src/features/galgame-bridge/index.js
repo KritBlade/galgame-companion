@@ -5,6 +5,6 @@
 export { startChoices } from './choices.js';
 export { startLocationTimeBridge } from './location-time-bridge.js';
 export { startNextBlock } from './next-block.js';
-export { startMeterPanel } from './meter-panel.js';
+export { startMeterPanel, displayedFloor } from './meter-panel.js';
 // The one reader of live state — the menu host pushes it to its contained StatusMenu frame.
 export { latestStatData } from './live-stat-data.js';

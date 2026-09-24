@@ -1,4 +1,4 @@
-// galgame-companion · meter-panel — the genre profile's live bars, drawn over galgame's stage. v0.1
+// galgame-companion · meter-panel — the genre profile's live bars, drawn over galgame's stage. v0.2
 //
 // GENRE-GATED, like next-block. Which bars exist, what they read and when the panel shows at all
 // come from the active genre profile (src/genre/<name>/ — School declares its intimacy meters there);
@@ -34,8 +34,9 @@ const STAGE_SEL = '#gal-global-overlay .gal-game-container';
 // to the top window yet when this starts.
 const MVU_UPDATE_ENDED = 'mag_variable_update_ended';
 
-// The floor galgame is showing, or -1 when it has not stamped one.
-function displayedFloor() {
+// The floor galgame is showing (stamped on its stage as data-mes-id), or -1 when it has not stamped one.
+// Exported through the barrel: image-regen asks the same question of the same stamp.
+export function displayedFloor() {
   const stage = DOC.querySelector(STAGE_SEL);
   const raw = stage && stage.getAttribute('data-mes-id');
   if (raw == null || raw === '') return -1;

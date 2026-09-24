@@ -1,9 +1,9 @@
-// galgame-companion v0.9.3
+// galgame-companion v0.9.4
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.9.3";
-  var BUILD = "22019ae";
+  var VERSION = "0.9.4";
+  var BUILD = "a9e550e";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -3920,50 +3920,176 @@ ${cot}` : cot;
     log.image("image-viewer active");
   }
 
+  // src/features/image/image-regen-core.js
+  function basename(url) {
+    return String(url || "").split("/").pop().split("?")[0];
+  }
+  function cssUrlValue(url) {
+    const safe = String(url || "").replace(/[\r\n]/g, "").replace(/[\\"]/g, "\\$&");
+    return `url("${safe}")`;
+  }
+  function decideRegenRepaint({ floor, lastAiFloor: lastAiFloor2, stageFloor, displayedUrl, oldSrc, newSrc }) {
+    if (!newSrc || basename(newSrc) === basename(oldSrc)) {
+      return { repaint: false, landed: false, reason: "the image at that position has not changed yet" };
+    }
+    if (floor === lastAiFloor2) {
+      return { repaint: false, landed: true, reason: `floor ${floor} is the newest AI floor — galgame repaints it itself` };
+    }
+    if (stageFloor !== floor) {
+      return { repaint: false, landed: true, reason: `the stage shows floor ${stageFloor}, not floor ${floor}` };
+    }
+    if (basename(displayedUrl) !== basename(oldSrc)) {
+      return { repaint: false, landed: true, reason: "the stage no longer shows the image that was regenerated" };
+    }
+    return { repaint: true, landed: true, reason: `floor ${floor} is not the newest AI floor, so galgame leaves its stage as it was` };
+  }
+
   // src/features/image/image-regen.js
   var OVERLAY_SEL6 = "#gal-global-overlay";
   var BTN_CLASS2 = "school-imgregen-btn";
-  function basename(u) {
-    return (u || "").split("/").pop().split("?")[0];
+  var WRAP_SEL = '[class*="auto-img-wrap"]';
+  var REGEN_SEL = '[class*="auto-img-regen"]';
+  var BG_LAYER_SEL = "#gal-global-overlay .gal-layer-bg";
+  var BG_BASE_SEL = ".gal-bg-base";
+  var BG_FRONT_SEL = ".gal-bg-front";
+  var BG_TRANSITION_MS = 900;
+  var PENDING_SWAP_MS = 10 * 60 * 1e3;
+  function floorOf(el) {
+    const mes = el && el.closest(".mes");
+    const n = Number(mes && mes.getAttribute("mesid"));
+    return Number.isFinite(n) && n >= 0 ? n : -1;
+  }
+  function wrapsOf(floor) {
+    return Array.from(DOC.querySelectorAll(`.mes[mesid="${floor}"] ${WRAP_SEL}`));
+  }
+  function imgSrcOf2(wrap) {
+    const img = wrap && wrap.querySelector("img");
+    return img ? img.getAttribute("src") || img.src || null : null;
+  }
+  function lastAiFloor() {
+    const rows = DOC.querySelectorAll('#chat > .mes:not([is_user="true"])');
+    return rows.length ? floorOf(rows[rows.length - 1]) : -1;
+  }
+  function controlOf(wrap) {
+    const regen = wrap && wrap.querySelector(REGEN_SEL);
+    if (!regen) return null;
+    const floor = floorOf(wrap);
+    return { regen, floor, ordinal: floor >= 0 ? wrapsOf(floor).indexOf(wrap) : -1, src: imgSrcOf2(wrap) };
   }
   function regenForCurrentBg() {
     const target = basename(currentBgUrl());
     if (!target) return null;
-    for (const img of DOC.querySelectorAll('[class*="auto-img-wrap"] img')) {
+    for (const img of DOC.querySelectorAll(`${WRAP_SEL} img`)) {
       if (basename(img.getAttribute("src") || img.src) === target) {
-        const wrap = img.closest('[class*="auto-img-wrap"]');
-        const regen = wrap && wrap.querySelector('[class*="auto-img-regen"]');
-        if (regen) return regen;
+        const control2 = controlOf(img.closest(WRAP_SEL));
+        if (control2) return control2;
       }
     }
     return null;
   }
   function newestImageRegenControl() {
-    const wraps = DOC.querySelectorAll('[class*="auto-img-wrap"]');
+    const wraps = DOC.querySelectorAll(WRAP_SEL);
     for (let i = wraps.length - 1; i >= 0; i--) {
-      const regen = wraps[i].querySelector('[class*="auto-img-regen"]');
-      if (regen) return regen;
+      const control2 = controlOf(wraps[i]);
+      if (control2) return control2;
     }
     return null;
   }
+  var pendingSwap = null;
   function fireRegen(btn) {
-    let span = regenForCurrentBg();
+    let control2 = regenForCurrentBg();
     let target = "the current backdrop";
-    if (!span) {
-      span = newestImageRegenControl();
+    if (!control2) {
+      control2 = newestImageRegenControl();
       target = "the NEWEST image — no backdrop was on screen to match (deleted from the Background Manager?)";
     }
-    if (!span) {
+    if (!control2) {
       log.warn("image-regen: no generated image in this chat to regenerate — nothing to do");
       return false;
     }
-    span.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    log.image(`image-regen: triggered regenerate for ${target}`);
+    control2.regen.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    log.image(`image-regen: triggered regenerate for ${target} (floor ${control2.floor}, image #${control2.ordinal + 1}, ${basename(control2.src)})`);
+    if (control2.floor >= 0 && control2.ordinal >= 0 && control2.src) {
+      pendingSwap = { floor: control2.floor, ordinal: control2.ordinal, oldSrc: control2.src, at: Date.now() };
+    } else {
+      pendingSwap = null;
+      log.warn(`image-regen: the regenerated image's floor/position could not be read (floor ${control2.floor}, position ${control2.ordinal}) — the stage will not be repainted for it`);
+    }
     if (btn) {
       btn.classList.add("is-spinning");
       setTimeout(() => btn.classList.remove("is-spinning"), 2e3);
     }
     return true;
+  }
+  function paintStage(url) {
+    const layer = DOC.querySelector(BG_LAYER_SEL);
+    const base = layer && layer.querySelector(BG_BASE_SEL);
+    const front = layer && layer.querySelector(BG_FRONT_SEL);
+    if (!layer || !base || !front) {
+      log.warn("image-regen: galgame's backdrop layers (.gal-layer-bg > .gal-bg-base + .gal-bg-front) are not on the stage — its layer contract changed; stage not repainted");
+      return false;
+    }
+    const jq = topWindow.jQuery;
+    if (typeof jq !== "function") {
+      log.warn("image-regen: the top window has no jQuery, so galgame's bgCurrentUrl bookkeeping cannot be kept — stage not repainted");
+      return false;
+    }
+    const $layer = jq(layer);
+    const css = cssUrlValue(url);
+    $layer.data("bgCurrentUrl", url);
+    layer.querySelectorAll(".gal-gen-indicator").forEach((node) => node.remove());
+    front.classList.remove("is-active");
+    front.style.setProperty(BACKDROP_URL_VARIABLE, css);
+    void front.offsetHeight;
+    const token = `companion_${Date.now()}_${Math.random()}`;
+    $layer.data("bgTransitionToken", token);
+    layer.classList.remove("bg-transitioning");
+    void layer.offsetHeight;
+    layer.classList.add("bg-transitioning");
+    front.classList.add("is-active");
+    topWindow.setTimeout(() => {
+      if ($layer.data("bgTransitionToken") !== token) return;
+      base.style.setProperty(BACKDROP_URL_VARIABLE, css);
+      front.classList.remove("is-active");
+      front.style.removeProperty(BACKDROP_URL_VARIABLE);
+      layer.classList.remove("bg-transitioning");
+    }, BG_TRANSITION_MS);
+    return true;
+  }
+  function onMessageUpdated(id) {
+    if (!pendingSwap) return;
+    const floor = Number(id);
+    if (floor !== pendingSwap.floor) return;
+    if (Date.now() - pendingSwap.at > PENDING_SWAP_MS) {
+      log.image(`image-regen: forgot the regenerate fired on floor ${floor} ${Math.round((Date.now() - pendingSwap.at) / 6e4)} min ago — it never announced a swap`);
+      pendingSwap = null;
+      return;
+    }
+    const wrap = wrapsOf(floor)[pendingSwap.ordinal];
+    if (!wrap) {
+      log.warn(`image-regen: floor ${floor} no longer has an image at position ${pendingSwap.ordinal + 1} — the regenerated image cannot be located; stage not repainted`);
+      pendingSwap = null;
+      return;
+    }
+    const newSrc = imgSrcOf2(wrap);
+    const decision = decideRegenRepaint({
+      floor,
+      lastAiFloor: lastAiFloor(),
+      stageFloor: displayedFloor(),
+      displayedUrl: currentBgUrl(),
+      oldSrc: pendingSwap.oldSrc,
+      newSrc
+    });
+    if (!decision.landed) {
+      log.image(`image-regen: floor ${floor} changed but ${decision.reason} — still waiting for the swap`);
+      return;
+    }
+    pendingSwap = null;
+    if (!decision.repaint) {
+      log.image(`image-regen: regenerated image ${basename(newSrc)} landed on floor ${floor} — ${decision.reason}`);
+      return;
+    }
+    if (paintStage(newSrc)) log.image(`image-regen: stage repainted with ${basename(newSrc)} — ${decision.reason}`);
   }
   function injectButton2() {
     const overlay = DOC.querySelector(OVERLAY_SEL6);
@@ -3983,6 +4109,16 @@ ${cot}` : cot;
   }
   function startImageRegen() {
     if (!DOC || !DOC.body) return setTimeout(startImageRegen, 200);
+    const te = window.tavern_events || {};
+    if (typeof window.eventOn === "function" && te.MESSAGE_UPDATED) {
+      try {
+        window.eventOn(te.MESSAGE_UPDATED, onMessageUpdated);
+      } catch (e) {
+        log.warn("image-regen: eventOn(MESSAGE_UPDATED) failed — the stage will not repaint after a regenerate on an older floor:", e);
+      }
+    } else {
+      log.warn("image-regen: eventOn / tavern_events.MESSAGE_UPDATED are not on this window — the stage will not repaint after a regenerate on an older floor");
+    }
     let scheduled3 = false;
     const observer2 = new MutationObserver(() => {
       if (scheduled3) return;
