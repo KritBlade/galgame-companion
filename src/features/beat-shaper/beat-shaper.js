@@ -1,5 +1,5 @@
 // galgame-companion · beat-shaper — deterministic reshaping of AI replies into galgame's beat
-// contract (plan: mvu-helper plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). v0.5
+// contract (plan: mvu-helper plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). v0.6
 //
 // Event-driven wrapper around the pure transform in beat-shaper-core.js: on MESSAGE_RECEIVED /
 // MESSAGE_UPDATED, read the floor's raw text (TH getChatMessages), shape it, and write it back
@@ -18,22 +18,52 @@
 //   CHARACTER_MESSAGE_RENDERED — NOT one of our trigger events, so no self-loop; galgame's
 //   .mes_text MutationObserver picks the re-render up and re-parses. Belt-and-braces: the
 //   transform is idempotent, and a per-floor in-flight set blocks re-entry.
-// - BEFORE the write, the shaped text goes to every registered before-write hook and the write waits
-//   for them (registerBeforeWriteHook). The image seam files each scene→image pair into galgame's
-//   backdrop library there: galgame looks the scene name up ~200 ms after the re-render, and a lookup
-//   that finds nothing is permanent (its SpriteManager marks the scene current before reading), so the
-//   row must exist before the DOM ever shows the name.
+// - A write may carry PREREQUISITES (registerWritePrerequisite). The image seam registers one: galgame's
+//   backdrop row for every scene name the shaped text carries must exist before the floor shows that
+//   name — galgame looks the name up ~200 ms after the re-render and marks the scene current before it
+//   reads, so a missing row leaves the stage blank until the scene changes or the page reloads.
+// - Never hold a copy of the text across an await: other writers edit the floor while the shaper works
+//   (mvu-helper's resolver replaces caption tags and places its stat box), and setChatMessages
+//   replaces the whole text. So prerequisites are settled FIRST, and the read, the shape and the write
+//   run in one synchronous step once nothing is owed (core shapeAndWriteWhenSettled).
+// - MESSAGE_RECEIVED is bound FIRST (eventMakeFirst). SillyTavern awaits listeners in order, so the
+//   first shape — including the leaked-<think> strip — lands before MVU parses the reply and before
+//   mvu-helper's resolver turns the card's caption tags into text.
 
 import { topWindow, log, warnToast } from '../../env.js';
-import { shapeMessage, sceneUid, shortHash, repairTruncatedEnvelope, synthesizeEnvelope } from './beat-shaper-core.js';
+import { shapeMessage, sceneUid, shortHash, repairTruncatedEnvelope, synthesizeEnvelope, shapeAndWriteWhenSettled } from './beat-shaper-core.js';
 import { isTurnBusy } from '../galgame-quirks/index.js';
 
 const inFlight = new Set(); // message ids currently being shaped (re-entrancy guard)
 
-// Called with (id, shapedText) before the floor is written and re-rendered; the write waits for each.
-const beforeWriteHooks = [];
-export function registerBeforeWriteHook(hook) {
-  if (typeof hook === 'function') beforeWriteHooks.push(hook);
+// Work that must be done before a shaped text may be written (file header). Each prerequisite answers
+// owed(id, shapedText) SYNCHRONOUSLY with the keys still owed for that text, and settle(id, shapedText,
+// keys) does the async work. The shaper never holds the text while a settle runs.
+const writePrerequisites = [];
+export function registerWritePrerequisite(prerequisite) {
+  if (prerequisite && typeof prerequisite.owed === 'function' && typeof prerequisite.settle === 'function') {
+    writePrerequisites.push(prerequisite);
+  } else {
+    log.warn('beat-shaper: registerWritePrerequisite needs { owed(id, text), settle(id, text, keys) } — ignored:', prerequisite);
+  }
+}
+// Keys are namespaced by the prerequisite's position, so two prerequisites can never collide on a key.
+const KEY_SEPARATOR = '|';
+function owedKeys(id, text) {
+  return writePrerequisites.flatMap((p, i) => p.owed(id, text).map((key) => `${i}${KEY_SEPARATOR}${key}`));
+}
+async function settleKeys(id, text, keys) {
+  for (let i = 0; i < writePrerequisites.length; i++) {
+    const prefix = `${i}${KEY_SEPARATOR}`;
+    const mine = keys.filter((k) => k.startsWith(prefix)).map((k) => k.slice(prefix.length));
+    if (!mine.length) continue;
+    // eslint-disable-next-line no-await-in-loop -- serial on purpose: one prerequisite's work at a time
+    try { await writePrerequisites[i].settle(id, text, mine); }
+    catch (e) { log.warn(`beat-shaper msg=${id}: a write prerequisite threw while settling ${mine.join(', ')} — the floor is written anyway:`, e); }
+  }
+}
+function withoutNamespace(keys) {
+  return keys.map((k) => k.slice(k.indexOf(KEY_SEPARATOR) + 1));
 }
 const deferralLogged = new Set(); // one deferral log per floor per reason — not one per event
 // One incomplete-reply toast per message, keyed `${id}:${reason}`. Without this the GENERATION_ENDED
@@ -181,26 +211,10 @@ function stashStrippedReasoning(id, cot) {
     }
 }
 
-async function onMessageEvent(messageId) {
-  const id = Number(messageId);
-  if (!Number.isFinite(id) || id < 0) return;
-  if (inFlight.has(id)) return;
-  // galgame absent → its parser will never read the shaping; don't rewrite the user's chat text.
-  if (!topWindow.galgame) return;
-
-  const raw = rawMessage(id);
-  if (raw === null) return;
-
-  // Tell the player BEFORE any repair — the repair fixes the display, never the lost turn, and a
-  // repaired message looks healthy afterwards. Only once the TURN is finished: mid-stream every reply
-  // is legitimately "incomplete", and so is one whose POST pass has not written its block yet.
-  if (!isTurnBusy()) {
-    const reason = incompleteReplyReason(raw, id);
-    if (reason) toastIncompleteReply(id, reason);
-    else incompleteToasted.forEach((k) => { if (k.startsWith(`${id}:`)) incompleteToasted.delete(k); });
-  }
-
-  let { text, changed, deferred, stats } = shapeMessage(raw, mintUidForCurrentChat);
+// Shape one raw text, including the §4b envelope repair. Called once per round of the write loop
+// (core shapeAndWriteWhenSettled), so every round's fresh read gets the same treatment.
+function shapeWithRepair(id, raw, mintUid) {
+  let { text, changed, deferred, stats } = shapeMessage(raw, mintUid);
 
   // §4b: an unclosed envelope means "still streaming" ONLY while something is actually working —
   // ST's own generation, or mvu-helper's PRE/POST pass around it (isTurnBusy covers both, and POST is
@@ -221,7 +235,7 @@ async function onMessageEvent(messageId) {
         'cannot survive — its extractor falls through to the whole message and reads JSON as a speaker name — ' +
         'so this costs at most a beat of prose instead of the interface.',
       );
-      ({ text, changed, deferred, stats } = shapeMessage(synth.text, mintUidForCurrentChat));
+      ({ text, changed, deferred, stats } = shapeMessage(synth.text, mintUid));
       changed = true;
     } else if (repair) {
       log.warn(
@@ -230,33 +244,72 @@ async function onMessageEvent(messageId) {
         'OUTSIDE the envelope (kept, not deleted). The turn likely emitted no <UpdateVariable>, so RES resolved nothing — ' +
         'check the narrator\'s max response tokens.',
       );
-      ({ text, changed, deferred, stats } = shapeMessage(repair.text, mintUidForCurrentChat));
+      ({ text, changed, deferred, stats } = shapeMessage(repair.text, mintUid));
       changed = true;   // the repair itself is a change even if shaping found nothing else to do
     } else {
       log.warn(`beat-shaper msg=${id}: reply has no usable envelope — no complete </p> to close after and no block-machinery tag to anchor on. Leaving it raw (galgame may mis-parse it).`);
     }
   }
+  return { text, changed, deferred, stats };
+}
 
-  if (deferred) {
-    const key = `${id}:${deferred}`;
-    if (!deferralLogged.has(key)) {
-      deferralLogged.add(key);
-      log.image(`beat-shaper msg=${id}: deferred (${deferred}) — will retry on next message event`);
-    }
-    return;
+async function onMessageEvent(messageId) {
+  const id = Number(messageId);
+  if (!Number.isFinite(id) || id < 0) return;
+  if (inFlight.has(id)) return;
+  // galgame absent → its parser will never read the shaping; don't rewrite the user's chat text.
+  if (!topWindow.galgame) return;
+
+  const raw = rawMessage(id);
+  if (raw === null) return;
+
+  // Tell the player BEFORE any repair — the repair fixes the display, never the lost turn, and a
+  // repaired message looks healthy afterwards. Only once the TURN is finished: mid-stream every reply
+  // is legitimately "incomplete", and so is one whose POST pass has not written its block yet.
+  if (!isTurnBusy()) {
+    const reason = incompleteReplyReason(raw, id);
+    if (reason) toastIncompleteReply(id, reason);
+    else incompleteToasted.forEach((k) => { if (k.startsWith(`${id}:`)) incompleteToasted.delete(k); });
   }
-  deferralLogged.forEach((k) => { if (k.startsWith(`${id}:`)) deferralLogged.delete(k); });
 
-  if (!changed) return;
-
+  // In flight for the WHOLE loop: an event for this floor arriving while a prerequisite settles is
+  // skipped, and the loop's next fresh read is what picks up the text it brought.
   inFlight.add(id);
   try {
-    stashStrippedReasoning(id, stats.strippedThinkText);
-    for (const hook of beforeWriteHooks) {
-      // eslint-disable-next-line no-await-in-loop -- serial on purpose: each hook must land before the floor re-renders
-      try { await hook(id, text); } catch (e) { log.warn(`beat-shaper msg=${id}: a before-write hook threw — the floor re-renders anyway:`, e); }
+    const { outcome, result, settledRounds, unsettled } = await shapeAndWriteWhenSettled({
+      read: () => rawMessage(id),
+      shape: (text, mintUid) => shapeWithRepair(id, text, mintUid),
+      mintUid: mintUidForCurrentChat,
+      owed: ({ text }) => owedKeys(id, text),
+      settle: ({ text }, keys) => settleKeys(id, text, keys),
+      // Called in the same synchronous step as the read it shaped. Stash FIRST: setChatMessages ends in
+      // saveChatConditional, so one save persists both.
+      write: ({ text, stats }) => {
+        stashStrippedReasoning(id, stats.strippedThinkText);
+        return window.setChatMessages([{ message_id: id, message: text }], { refresh: 'affected' });
+      },
+    });
+
+    if (outcome === 'deferred') {
+      const key = `${id}:${result.deferred}`;
+      if (!deferralLogged.has(key)) {
+        deferralLogged.add(key);
+        log.image(`beat-shaper msg=${id}: deferred (${result.deferred}) — will retry on next message event`);
+      }
+      return;
     }
-    await window.setChatMessages([{ message_id: id, message: text }], { refresh: 'affected' });
+    deferralLogged.forEach((k) => { if (k.startsWith(`${id}:`)) deferralLogged.delete(k); });
+
+    if (outcome !== 'written') return;
+    if (unsettled.length) {
+      log.warn(
+        `beat-shaper msg=${id}: written although ${unsettled.length} prerequisite(s) did not settle ` +
+        `(${withoutNamespace(unsettled).join(', ')}) — for a backdrop row, galgame shows no backdrop for that scene ` +
+        'until the page reloads (the chat-load backfill files it then). The settle' + "'" + 's own warning says why.',
+      );
+    }
+
+    const { stats } = result;
     log.image(
       `beat-shaper msg=${id}:${stats.renamed ? ' gametxt→maintext' : ''} wrapped=${stats.wrapped}p ` +
       // picsPending is named EXPLICITLY: without it `scenes=0` reads as "scene binding ran and found
@@ -270,10 +323,10 @@ async function onMessageEvent(messageId) {
       `${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ''}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ''}` +
       // strippedThink is the one stat here that REMOVES text from the reply, so it must never be
       // silent: unlogged, a turn whose chain-of-thought vanished at generation-end looked EXACTLY
-      // like a turn that never had one, and 2026-08-11 it took a property trap on `mes` to find out
-      // who the remover was, because this line did not say. The char count is named because it is
-      // the receipt — it says the text went to extra.reasoning rather than into a hole.
-      `${stats.strippedThink ? ` strippedThink=1 (${stats.strippedThinkText.length}c leaked CoT moved to extra.reasoning)` : ''}` +
+      // like a turn that never had one. The char count is named because it is the receipt — it says
+      // the text went to extra.reasoning rather than into a hole — and the kept-tag count says which
+      // of the span's markup stayed in the reply.
+      `${stats.strippedThink ? ` strippedThink=1 (${stats.strippedThinkText.length}c leaked CoT moved to extra.reasoning${stats.thinkMarkupKept ? `; ${stats.thinkMarkupKept} bare tag(s) before the envelope kept in the reply` : ''})` : ''}` +
       // ALWAYS printed, including the 0 case: "rolls=0" is the difference between "this reply had no
       // check" and "the roll rendering silently failed", which a conditional suffix would blur. Both
       // halves are named because rolls=3 alone cannot tell a fully-marked reply from an unmarked one.
@@ -281,7 +334,10 @@ async function onMessageEvent(messageId) {
       // Only when it fired, because it is an EVENT rather than a census: the tail rescue MOVED the
       // narrator's markup (core §0a). Silent, `scenes=1` would look like an ordinary bind and hide the
       // fact that the image is anchored to the wrong beat — and that the reply broke its contract.
-      `${stats.imagesRehomed ? ` imagesRehomed=${stats.imagesRehomed} (were OUTSIDE <maintext>)` : ''}`,
+      `${stats.imagesRehomed ? ` imagesRehomed=${stats.imagesRehomed} (were OUTSIDE <maintext>)` : ''}` +
+      // Only when it happened: prerequisites were settled first, and the text written is a FRESH read
+      // shaped after the last settle — never the shape the settle was started for.
+      `${settledRounds ? ` prerequisiteRounds=${settledRounds} (settled before the write; the written text is a fresh read after them)` : ''}`,
     );
     // A CARD-PROMPT defect, same class as the missing <roll/> markers below: the image is recovered and
     // the stage is no longer blank, but it lands after the last beat instead of beside the beat it
@@ -314,7 +370,7 @@ async function onMessageEvent(messageId) {
       );
     }
   } catch (e) {
-    log.warn(`beat-shaper: setChatMessages(${id}) failed — message left unshaped:`, e);
+    log.warn(`beat-shaper msg=${id}: shaping or writing the reply failed — the message is left as it was:`, e);
   } finally {
     inFlight.delete(id);
   }
@@ -324,20 +380,30 @@ export function startBeatShaper() {
   if (
     typeof window.getChatMessages !== 'function' ||
     typeof window.setChatMessages !== 'function' ||
-    typeof window.eventOn !== 'function'
+    typeof window.eventOn !== 'function' ||
+    typeof window.eventMakeFirst !== 'function'
   ) {
-    log.warn('beat-shaper: TH globals (getChatMessages/setChatMessages/eventOn) absent — shaper disabled');
+    log.warn('beat-shaper: TH globals (getChatMessages/setChatMessages/eventOn/eventMakeFirst) absent — shaper disabled');
     return;
   }
   const te = window.tavern_events || {};
   let bound = 0;
-  for (const ev of [te.MESSAGE_RECEIVED, te.MESSAGE_UPDATED]) {
-    if (!ev) continue;
+  // MESSAGE_RECEIVED FIRST (file header): the first shape must land before any other listener reads or
+  // edits the reply. The listener returns onMessageEvent's promise, so SillyTavern's chain waits for it.
+  if (te.MESSAGE_RECEIVED) {
     try {
-      window.eventOn(ev, onMessageEvent);
+      window.eventMakeFirst(te.MESSAGE_RECEIVED, onMessageEvent);
       bound++;
     } catch (e) {
-      log.warn(`beat-shaper: eventOn(${ev}) failed:`, e);
+      log.warn(`beat-shaper: eventMakeFirst(${te.MESSAGE_RECEIVED}) failed:`, e);
+    }
+  }
+  if (te.MESSAGE_UPDATED) {
+    try {
+      window.eventOn(te.MESSAGE_UPDATED, onMessageEvent);
+      bound++;
+    } catch (e) {
+      log.warn(`beat-shaper: eventOn(${te.MESSAGE_UPDATED}) failed:`, e);
     }
   }
   // §4b retry hook. MESSAGE_RECEIVED can land while ST still reads BUSY (GENERATION_ENDED trails

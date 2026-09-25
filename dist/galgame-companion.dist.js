@@ -1,9 +1,9 @@
-// galgame-companion v0.9.5
+// galgame-companion v0.9.6
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.9.5";
-  var BUILD = "39765ea";
+  var VERSION = "0.9.6";
+  var BUILD = "59254e5";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -2711,6 +2711,8 @@
   var RE_P_OPEN = /<p(?:\s[^>]*)?>/gi;
   var RE_EXISTING_UID = /<background\s+scene="(gc[0-9a-z]+-[0-9a-z]+)_scene_\d+_[0-9a-z]+"/i;
   var RE_THINK_TAG = /^think(?:ing)?$/i;
+  var RE_TRAILING_SELF_CLOSING_RUN = /(?:\s*<[A-Za-z][\w:.-]*(?:\s[^<>]*)?\/>)+\s*$/;
+  var RE_SELF_CLOSING_TAG = /<[A-Za-z][\w:.-]*(?:\s[^<>]*)?\/>/g;
   var PROTECTED_BLOCK_RE = new RegExp(
     [
       "<p(?:\\s[^>]*)?>[\\s\\S]*?<\\/p>",
@@ -2853,6 +2855,7 @@ ${out.slice(proseAt)}`;
       hidden: 0,
       strippedThink: 0,
       strippedThinkText: "",
+      thinkMarkupKept: 0,
       uid: null,
       uidMinted: false,
       picsPending: false,
@@ -2917,8 +2920,14 @@ ${rescued.join("\n\n")}
       const envM = head.match(RE_MAINTEXT_OPEN);
       const end = envM ? envM.index : head.length;
       if (end > thinkOpen.at) {
-        stats.strippedThinkText = head.slice(thinkOpen.end, end).trim();
-        head = head.slice(0, thinkOpen.at) + head.slice(end);
+        const span = head.slice(thinkOpen.end, end);
+        const markup = span.match(RE_TRAILING_SELF_CLOSING_RUN);
+        const kept = markup ? markup[0].trim() : "";
+        stats.strippedThinkText = span.slice(0, markup ? markup.index : span.length).trim();
+        stats.thinkMarkupKept = kept ? kept.match(RE_SELF_CLOSING_TAG).length : 0;
+        head = head.slice(0, thinkOpen.at) + (kept ? `${kept}
+
+` : "") + head.slice(end);
         stats.strippedThink = 1;
       }
     }
@@ -3029,12 +3038,62 @@ ${inner.replace(/^\n+/, "")}`;
     }
     return parts.join("");
   }
+  var SETTLE_ROUNDS_BEFORE_BUG = 50;
+  async function shapeAndWriteWhenSettled(io) {
+    let pinnedUid = null;
+    const mintOnce = () => pinnedUid || (pinnedUid = io.mintUid());
+    const attempted = /* @__PURE__ */ new Set();
+    let settledRounds = 0;
+    for (; ; ) {
+      const raw = io.read();
+      if (raw === null) return { outcome: "gone", result: null, settledRounds, unsettled: [] };
+      const result = io.shape(raw, mintOnce);
+      if (result.deferred) return { outcome: "deferred", result, settledRounds, unsettled: [] };
+      if (!result.changed) return { outcome: "unchanged", result, settledRounds, unsettled: [] };
+      const owed = io.owed(result);
+      const fresh = owed.filter((key) => !attempted.has(key));
+      if (!fresh.length) {
+        const written = io.write(result);
+        await written;
+        return { outcome: "written", result, settledRounds, unsettled: owed };
+      }
+      if (settledRounds >= SETTLE_ROUNDS_BEFORE_BUG) {
+        throw new Error(`write prerequisites never converged: ${settledRounds} rounds, still owed ${fresh.join(", ")}`);
+      }
+      for (const key of fresh) attempted.add(key);
+      await io.settle(result, fresh);
+      settledRounds++;
+    }
+  }
 
   // src/features/beat-shaper/beat-shaper.js
   var inFlight = /* @__PURE__ */ new Set();
-  var beforeWriteHooks = [];
-  function registerBeforeWriteHook(hook) {
-    if (typeof hook === "function") beforeWriteHooks.push(hook);
+  var writePrerequisites = [];
+  function registerWritePrerequisite(prerequisite) {
+    if (prerequisite && typeof prerequisite.owed === "function" && typeof prerequisite.settle === "function") {
+      writePrerequisites.push(prerequisite);
+    } else {
+      log.warn("beat-shaper: registerWritePrerequisite needs { owed(id, text), settle(id, text, keys) } — ignored:", prerequisite);
+    }
+  }
+  var KEY_SEPARATOR = "|";
+  function owedKeys(id, text) {
+    return writePrerequisites.flatMap((p, i) => p.owed(id, text).map((key) => `${i}${KEY_SEPARATOR}${key}`));
+  }
+  async function settleKeys(id, text, keys) {
+    for (let i = 0; i < writePrerequisites.length; i++) {
+      const prefix = `${i}${KEY_SEPARATOR}`;
+      const mine = keys.filter((k) => k.startsWith(prefix)).map((k) => k.slice(prefix.length));
+      if (!mine.length) continue;
+      try {
+        await writePrerequisites[i].settle(id, text, mine);
+      } catch (e) {
+        log.warn(`beat-shaper msg=${id}: a write prerequisite threw while settling ${mine.join(", ")} — the floor is written anyway:`, e);
+      }
+    }
+  }
+  function withoutNamespace(keys) {
+    return keys.map((k) => k.slice(k.indexOf(KEY_SEPARATOR) + 1));
   }
   var deferralLogged = /* @__PURE__ */ new Set();
   var incompleteToasted = /* @__PURE__ */ new Set();
@@ -3123,6 +3182,29 @@ ${cot}` : cot;
       log.warn(`beat-shaper msg=${id}: could not stash the stripped reasoning (it is still removed from the reply, just not kept):`, e);
     }
   }
+  function shapeWithRepair(id, raw, mintUid) {
+    let { text, changed, deferred, stats } = shapeMessage(raw, mintUid);
+    if ((deferred === "maintext-unclosed" || deferred === "gametxt-unclosed" || deferred === "no-envelope") && !isTurnBusy()) {
+      const repair = deferred === "no-envelope" ? null : repairTruncatedEnvelope(raw);
+      const synth = repair ? null : synthesizeEnvelope(raw);
+      if (!repair && synth) {
+        log.warn(
+          `beat-shaper msg=${id}: reply is missing its envelope (${synth.inserted.join(" + ")}) and the turn is finished. Derived it from the first block-machinery tag and inserted it. A MISSING OPEN tag is the one galgame cannot survive — its extractor falls through to the whole message and reads JSON as a speaker name — so this costs at most a beat of prose instead of the interface.`
+        );
+        ({ text, changed, deferred, stats } = shapeMessage(synth.text, mintUid));
+        changed = true;
+      } else if (repair) {
+        log.warn(
+          `beat-shaper msg=${id}: reply is TRUNCATED — no ${repair.closeTag} and the turn is finished, so it is never coming. Inserted ${repair.closeTag} after the last complete </p>; ${repair.droppedChars} char(s) of partial output now sit OUTSIDE the envelope (kept, not deleted). The turn likely emitted no <UpdateVariable>, so RES resolved nothing — check the narrator's max response tokens.`
+        );
+        ({ text, changed, deferred, stats } = shapeMessage(repair.text, mintUid));
+        changed = true;
+      } else {
+        log.warn(`beat-shaper msg=${id}: reply has no usable envelope — no complete </p> to close after and no block-machinery tag to anchor on. Leaving it raw (galgame may mis-parse it).`);
+      }
+    }
+    return { text, changed, deferred, stats };
+  }
   async function onMessageEvent(messageId) {
     const id = Number(messageId);
     if (!Number.isFinite(id) || id < 0) return;
@@ -3137,51 +3219,41 @@ ${cot}` : cot;
         if (k.startsWith(`${id}:`)) incompleteToasted.delete(k);
       });
     }
-    let { text, changed, deferred, stats } = shapeMessage(raw, mintUidForCurrentChat);
-    if ((deferred === "maintext-unclosed" || deferred === "gametxt-unclosed" || deferred === "no-envelope") && !isTurnBusy()) {
-      const repair = deferred === "no-envelope" ? null : repairTruncatedEnvelope(raw);
-      const synth = repair ? null : synthesizeEnvelope(raw);
-      if (!repair && synth) {
-        log.warn(
-          `beat-shaper msg=${id}: reply is missing its envelope (${synth.inserted.join(" + ")}) and the turn is finished. Derived it from the first block-machinery tag and inserted it. A MISSING OPEN tag is the one galgame cannot survive — its extractor falls through to the whole message and reads JSON as a speaker name — so this costs at most a beat of prose instead of the interface.`
-        );
-        ({ text, changed, deferred, stats } = shapeMessage(synth.text, mintUidForCurrentChat));
-        changed = true;
-      } else if (repair) {
-        log.warn(
-          `beat-shaper msg=${id}: reply is TRUNCATED — no ${repair.closeTag} and the turn is finished, so it is never coming. Inserted ${repair.closeTag} after the last complete </p>; ${repair.droppedChars} char(s) of partial output now sit OUTSIDE the envelope (kept, not deleted). The turn likely emitted no <UpdateVariable>, so RES resolved nothing — check the narrator's max response tokens.`
-        );
-        ({ text, changed, deferred, stats } = shapeMessage(repair.text, mintUidForCurrentChat));
-        changed = true;
-      } else {
-        log.warn(`beat-shaper msg=${id}: reply has no usable envelope — no complete </p> to close after and no block-machinery tag to anchor on. Leaving it raw (galgame may mis-parse it).`);
-      }
-    }
-    if (deferred) {
-      const key = `${id}:${deferred}`;
-      if (!deferralLogged.has(key)) {
-        deferralLogged.add(key);
-        log.image(`beat-shaper msg=${id}: deferred (${deferred}) — will retry on next message event`);
-      }
-      return;
-    }
-    deferralLogged.forEach((k) => {
-      if (k.startsWith(`${id}:`)) deferralLogged.delete(k);
-    });
-    if (!changed) return;
     inFlight.add(id);
     try {
-      stashStrippedReasoning(id, stats.strippedThinkText);
-      for (const hook of beforeWriteHooks) {
-        try {
-          await hook(id, text);
-        } catch (e) {
-          log.warn(`beat-shaper msg=${id}: a before-write hook threw — the floor re-renders anyway:`, e);
+      const { outcome, result, settledRounds, unsettled } = await shapeAndWriteWhenSettled({
+        read: () => rawMessage2(id),
+        shape: (text, mintUid) => shapeWithRepair(id, text, mintUid),
+        mintUid: mintUidForCurrentChat,
+        owed: ({ text }) => owedKeys(id, text),
+        settle: ({ text }, keys) => settleKeys(id, text, keys),
+        // Called in the same synchronous step as the read it shaped. Stash FIRST: setChatMessages ends in
+        // saveChatConditional, so one save persists both.
+        write: ({ text, stats: stats2 }) => {
+          stashStrippedReasoning(id, stats2.strippedThinkText);
+          return window.setChatMessages([{ message_id: id, message: text }], { refresh: "affected" });
         }
+      });
+      if (outcome === "deferred") {
+        const key = `${id}:${result.deferred}`;
+        if (!deferralLogged.has(key)) {
+          deferralLogged.add(key);
+          log.image(`beat-shaper msg=${id}: deferred (${result.deferred}) — will retry on next message event`);
+        }
+        return;
       }
-      await window.setChatMessages([{ message_id: id, message: text }], { refresh: "affected" });
+      deferralLogged.forEach((k) => {
+        if (k.startsWith(`${id}:`)) deferralLogged.delete(k);
+      });
+      if (outcome !== "written") return;
+      if (unsettled.length) {
+        log.warn(
+          `beat-shaper msg=${id}: written although ${unsettled.length} prerequisite(s) did not settle (${withoutNamespace(unsettled).join(", ")}) — for a backdrop row, galgame shows no backdrop for that scene until the page reloads (the chat-load backfill files it then). The settle's own warning says why.`
+        );
+      }
+      const { stats } = result;
       log.image(
-        `beat-shaper msg=${id}:${stats.renamed ? " gametxt→maintext" : ""} wrapped=${stats.wrapped}p scenes=${stats.scenes}${stats.scenes ? " (hoisted #1)" : ""}${stats.picsPending ? " [scene binding HELD BACK — raw <pic> still un-rendered]" : ""} strippedScenes=${stats.strippedScenes}${stats.uid ? ` uid=${stats.uid}(${stats.uidMinted ? "minted" : "kept"})` : ""}${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ""}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ""}${stats.strippedThink ? ` strippedThink=1 (${stats.strippedThinkText.length}c leaked CoT moved to extra.reasoning)` : ""} rolls=${stats.rolls}(placed=${stats.rollsPlaced} unplaced=${stats.rollsUnplaced})${stats.imagesRehomed ? ` imagesRehomed=${stats.imagesRehomed} (were OUTSIDE <maintext>)` : ""}`
+        `beat-shaper msg=${id}:${stats.renamed ? " gametxt→maintext" : ""} wrapped=${stats.wrapped}p scenes=${stats.scenes}${stats.scenes ? " (hoisted #1)" : ""}${stats.picsPending ? " [scene binding HELD BACK — raw <pic> still un-rendered]" : ""} strippedScenes=${stats.strippedScenes}${stats.uid ? ` uid=${stats.uid}(${stats.uidMinted ? "minted" : "kept"})` : ""}${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ""}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ""}${stats.strippedThink ? ` strippedThink=1 (${stats.strippedThinkText.length}c leaked CoT moved to extra.reasoning${stats.thinkMarkupKept ? `; ${stats.thinkMarkupKept} bare tag(s) before the envelope kept in the reply` : ""})` : ""} rolls=${stats.rolls}(placed=${stats.rollsPlaced} unplaced=${stats.rollsUnplaced})${stats.imagesRehomed ? ` imagesRehomed=${stats.imagesRehomed} (were OUTSIDE <maintext>)` : ""}${settledRounds ? ` prerequisiteRounds=${settledRounds} (settled before the write; the written text is a fresh read after them)` : ""}`
       );
       if (stats.imagesRehomed) {
         log.warn(
@@ -3199,25 +3271,32 @@ ${cot}` : cot;
         );
       }
     } catch (e) {
-      log.warn(`beat-shaper: setChatMessages(${id}) failed — message left unshaped:`, e);
+      log.warn(`beat-shaper msg=${id}: shaping or writing the reply failed — the message is left as it was:`, e);
     } finally {
       inFlight.delete(id);
     }
   }
   function startBeatShaper() {
-    if (typeof window.getChatMessages !== "function" || typeof window.setChatMessages !== "function" || typeof window.eventOn !== "function") {
-      log.warn("beat-shaper: TH globals (getChatMessages/setChatMessages/eventOn) absent — shaper disabled");
+    if (typeof window.getChatMessages !== "function" || typeof window.setChatMessages !== "function" || typeof window.eventOn !== "function" || typeof window.eventMakeFirst !== "function") {
+      log.warn("beat-shaper: TH globals (getChatMessages/setChatMessages/eventOn/eventMakeFirst) absent — shaper disabled");
       return;
     }
     const te = window.tavern_events || {};
     let bound = 0;
-    for (const ev of [te.MESSAGE_RECEIVED, te.MESSAGE_UPDATED]) {
-      if (!ev) continue;
+    if (te.MESSAGE_RECEIVED) {
       try {
-        window.eventOn(ev, onMessageEvent);
+        window.eventMakeFirst(te.MESSAGE_RECEIVED, onMessageEvent);
         bound++;
       } catch (e) {
-        log.warn(`beat-shaper: eventOn(${ev}) failed:`, e);
+        log.warn(`beat-shaper: eventMakeFirst(${te.MESSAGE_RECEIVED}) failed:`, e);
+      }
+    }
+    if (te.MESSAGE_UPDATED) {
+      try {
+        window.eventOn(te.MESSAGE_UPDATED, onMessageEvent);
+        bound++;
+      } catch (e) {
+        log.warn(`beat-shaper: eventOn(${te.MESSAGE_UPDATED}) failed:`, e);
       }
     }
     for (const ev of [te.GENERATION_ENDED, te.GENERATION_STOPPED]) {
@@ -3292,6 +3371,14 @@ ${cot}` : cot;
     if (!RE_ENVELOPE_CLOSED.test(text)) return null;
     if (RE_PIC_PENDING.test(text)) return null;
     return `EVERY image is unbound — ${imageCount} rendered image(s), ${sceneCount} scene tag(s)` + (foreignScenes ? `, ${foreignScenes} foreign` : "") + ". galgame will show NO backdrop for this message. " + (sceneCount === 0 ? "No scene tags exist at all, so the beat-shaper saw no image INSIDE <maintext> — the most likely cause is a <pic> tag emitted outside the envelope (in the tail, after the engine blocks)." : "Scene tags exist but none carries an image hash — the shaper and the rendered <img> src have drifted.");
+  }
+  function pairSignature(pairs) {
+    return pairs.map((p) => `${p.scene}=${p.url}`).join("|");
+  }
+  function backdropScenesOwed(text, filedSignature) {
+    const { pairs } = pairImagesToScenes(text);
+    if (!pairs.length) return [];
+    return filedSignature === pairSignature(pairs) ? [] : pairs.map((p) => p.scene);
   }
   function missingBackdropPairs(rawMessages, libraryKeys) {
     const present = new Set(libraryKeys || []);
@@ -3508,7 +3595,7 @@ ${cot}` : cot;
     const report = unboundImageReport(raw, scan);
     if (report) log.image(`image-seam: message ${id} — ${report}`);
     if (!pairs.length) return;
-    const signature = pairs.map((p) => `${p.scene}=${p.url}`).join("|");
+    const signature = pairSignature(pairs);
     if (filed.get(id) === signature) {
       log.image(`image-seam: message ${id} — its ${pairs.length} backdrop(s) are already filed (${why}); nothing to write`);
       return;
@@ -3785,7 +3872,10 @@ ${cot}` : cot;
     const onMsg = (id) => {
       processMessage(Number(id));
     };
-    registerBeforeWriteHook((id, text) => scanSerialized(Number(id), () => processText(Number(id), text, "before the beat-shaper's re-render")));
+    registerWritePrerequisite({
+      owed: (id, text) => backdropScenesOwed(text, filed.get(Number(id))),
+      settle: (id, text) => scanSerialized(Number(id), () => processText(Number(id), text, "before the beat-shaper's write"))
+    });
     for (const ev of [te.MESSAGE_UPDATED, te.CHARACTER_MESSAGE_RENDERED, te.MESSAGE_SWIPED, te.MESSAGE_EDITED]) {
       if (ev) {
         try {

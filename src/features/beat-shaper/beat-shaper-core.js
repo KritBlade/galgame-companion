@@ -1,4 +1,4 @@
-// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v1.1
+// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v1.2
 //
 // Deterministically reshapes an AI reply into galgame's beat contract (plan: mvu-helper
 // plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). galgame's standard parser builds display beats ONLY
@@ -17,7 +17,9 @@
 // prose, then img1 img2), which would leave image #2's scene governing no beat, so it never shows. Every
 // image is guaranteed >=1 beat (a starved tail image steals a trailing beat). A leaked reasoning block
 // before <maintext> is stripped too — anchored on a </think> close (matched or orphan) OR on an unclosed
-// <think> open; either half can arrive alone.
+// <think> open; either half can arrive alone. The write-back (shapeAndWriteWhenSettled) settles its async
+// prerequisites first and then reads, shapes and writes in one synchronous step, so it never overwrites
+// an edit another writer made while the shaper waited.
 // Scene names are keyed by a per-message UID, never the chat index (§2.1 says why the index is wrong).
 // The engine's player-visible <combat_log> lines are re-homed INTO the prose at the narrator's <roll/>
 // markers (§4): the block sits in the TAIL, outside <maintext>, where no roll would ever reach the GUI.
@@ -202,6 +204,12 @@ const RE_EXISTING_UID = /<background\s+scene="(gc[0-9a-z]+-[0-9a-z]+)_scene_\d+_
 // scanner (shared/tag-balance-core.js — every mis-emitted-tag shape used to grow its own regex fork
 // here); this file keeps only the POLICY: which tags are reasoning, and how a leak is repaired.
 const RE_THINK_TAG = /^think(?:ing)?$/i;
+// A run of bare self-closing tags (`<Name/>`, `<Name attr="x"/>`) at the very END of an unclosed
+// <think> span, right before the envelope: the reply's own markup, which the model wrote after its
+// thinking and before <maintext>. A placeholder such as a card's bare caption tag is the only anchor
+// its later text replacement has, so it must stay in the reply rather than go out with the CoT.
+const RE_TRAILING_SELF_CLOSING_RUN = /(?:\s*<[A-Za-z][\w:.-]*(?:\s[^<>]*)?\/>)+\s*$/;
+const RE_SELF_CLOSING_TAG = /<[A-Za-z][\w:.-]*(?:\s[^<>]*)?\/>/g;
 
 // Blocks whose CONTENT must never be re-wrapped (protected verbatim during the <p>-wrap pass).
 // Built as alternatives of one scanning regex; order matters only for overlap (none in practice).
@@ -420,12 +428,13 @@ export function renderUnplacedRolls(rolls) {
  * @returns {{ text: string, changed: boolean, deferred: string|null,
  *            stats: { wrapped: number, scenes: number, strippedScenes: number,
  *                     renamed: boolean, strippedBgimg: number, hidden: number,
- *                     strippedThink: number, strippedThinkText: string,
+ *                     strippedThink: number, strippedThinkText: string, thinkMarkupKept: number,
  *                     uid: string|null, picsPending: boolean,
  *                     rolls: number, rollsPlaced: number, rollsUnplaced: number, logStrayTags: number } }}
  *   strippedThinkText carries the CoT §0b removed — '' when nothing was stripped. The caller is
  *   expected to preserve it somewhere readable; this module only refuses to be the thing that
- *   destroys it (see §0b).
+ *   destroys it (see §0b). thinkMarkupKept counts the bare self-closing tags an unclosed <think>
+ *   span ended with, which §0b left in the reply instead of stripping.
  *   deferred ≠ null → text is returned UNCHANGED and the caller should retry on a later event
  *   ('maintext-unclosed'/'gametxt-unclosed' while streaming). A pending <pic> is NOT a deferral:
  *   the text is shaped and returned, with stats.picsPending marking that scene binding was the one
@@ -529,7 +538,7 @@ export function synthesizeEnvelope(raw) {
 export function shapeMessage(raw, mintUid) {
   const blankStats = () => ({
     wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false,
-    strippedBgimg: 0, hidden: 0, strippedThink: 0, strippedThinkText: '', uid: null, uidMinted: false, picsPending: false,
+    strippedBgimg: 0, hidden: 0, strippedThink: 0, strippedThinkText: '', thinkMarkupKept: 0, uid: null, uidMinted: false, picsPending: false,
     rolls: 0, rollsPlaced: 0, rollsUnplaced: 0, logStrayTags: 0, imagesRehomed: 0,
   });
   const stats = blankStats();
@@ -619,19 +628,26 @@ export function shapeMessage(raw, mintUid) {
     head = head.slice(cutEnd).replace(/^\s+/, '');
     stats.strippedThink = 1;
   } else if (thinkOpen) {
-    // The MIRROR leak (live 2026-09-04): <think> opened and NEVER closed, running its planning block
-    // straight into <maintext>. Everything from that open to the envelope is reasoning — the close
-    // that would bound it tighter does not exist, so end-of-head is the only boundary that is not a
-    // guess (engine caption lines caught in the span are display sugar whose data lives in
-    // stat_data). Left in place it cost the whole stage: a thinking beautifier rendered the block as
-    // a <style> element, galgame's parser fell through to the raw floor, and no <background scene>
-    // was ever requested. Text before the open (usually nothing) is kept — and so is the <maintext>
-    // open tag, by construction the LAST thing in `head`.
+    // The MIRROR leak: <think> opened and NEVER closed, running its planning block straight into
+    // <maintext>. A preset whose "Start Reply With" is <think> produces it on every reply from a
+    // model that reasons natively: ST sees reasoning already present, skips its own parse, and the
+    // lone open stays in the text. The close that would bound the span does not exist, so the
+    // envelope is the boundary — with ONE exception: a run of bare self-closing tags ending the
+    // span is the reply's own markup, not thought, and stays in the head (RE_TRAILING_SELF_CLOSING_RUN).
+    // Text written as prose before the envelope still leaves with the span; this module cannot tell a
+    // rendered caption line from a line of thinking. Left in place, the leak cost the whole stage: a
+    // thinking beautifier rendered the block as a <style> element, galgame's parser fell through to
+    // the raw floor, and no <background scene> was ever requested. Text before the open (usually
+    // nothing) is kept — and so is the <maintext> open tag, by construction the LAST thing in `head`.
     const envM = head.match(RE_MAINTEXT_OPEN);
     const end = envM ? envM.index : head.length;
     if (end > thinkOpen.at) {
-      stats.strippedThinkText = head.slice(thinkOpen.end, end).trim();
-      head = head.slice(0, thinkOpen.at) + head.slice(end);
+      const span = head.slice(thinkOpen.end, end);
+      const markup = span.match(RE_TRAILING_SELF_CLOSING_RUN);
+      const kept = markup ? markup[0].trim() : '';
+      stats.strippedThinkText = span.slice(0, markup ? markup.index : span.length).trim();
+      stats.thinkMarkupKept = kept ? kept.match(RE_SELF_CLOSING_TAG).length : 0;
+      head = head.slice(0, thinkOpen.at) + (kept ? `${kept}\n\n` : '') + head.slice(end);
       stats.strippedThink = 1;
     }
   }
@@ -796,4 +812,59 @@ function wrapFreeRun(run, stats) {
     stats.wrapped++;
   }
   return parts.join('');
+}
+
+// ── write-back: prerequisites first, then read → shape → write in ONE synchronous step ─────────
+// Every writer of a finished reply follows one rule: never hold a copy of the text across an await.
+// setChatMessages replaces the whole text, so a write of text read BEFORE an await reverts every edit
+// other writers made during it — mvu-helper's resolver replaces the card's caption tags and places its
+// stat box a few hundred ms after the reply lands, and a stale write-back takes both out with nothing
+// logged.
+//
+// The shaper has one async prerequisite: galgame's backdrop row for every scene name it writes must
+// exist BEFORE the floor shows that name (image-seam header — galgame marks a scene current before it
+// looks the row up). So the async work comes first and holds no copy: shape, ask which prerequisites
+// this shaped text still owes, settle them, and DISCARD that shape. Then read again, shape again, and
+// write only when nothing is owed — the read, the shape and the write call run in one synchronous
+// step, so no other writer can land between them. That is correct in any order the writers finish.
+//
+// It ends without a retry cap: every round either writes or settles at least one owed key it has not
+// tried before, and a reply names a finite set (one scene per image). A key whose settle did not take
+// is not retried; the floor is written anyway and the key comes back in `unsettled`.
+//
+// io.read()              → the reply's current text, or null when it is gone
+// io.shape(raw, mintUid) → shapeMessage's result shape ({ text, changed, deferred, stats })
+// io.mintUid()           → a fresh scene uid; called at most once, so every round names the same scenes
+// io.owed(result)        → SYNCHRONOUS: keys this shaped text still needs settled before it is written
+// io.settle(result, keys)→ settles those keys (awaited)
+// io.write(result)       → performs the write; called in the same synchronous step as the read
+// Resolves to { outcome, result, settledRounds, unsettled }: outcome is 'written' | 'unchanged' |
+// 'deferred' | 'gone'; unsettled lists owed keys that were settled once and are still owed.
+export const SETTLE_ROUNDS_BEFORE_BUG = 50;
+export async function shapeAndWriteWhenSettled(io) {
+  let pinnedUid = null;
+  const mintOnce = () => (pinnedUid || (pinnedUid = io.mintUid()));
+  const attempted = new Set();
+  let settledRounds = 0;
+  for (;;) {
+    const raw = io.read();
+    if (raw === null) return { outcome: 'gone', result: null, settledRounds, unsettled: [] };
+    const result = io.shape(raw, mintOnce);
+    if (result.deferred) return { outcome: 'deferred', result, settledRounds, unsettled: [] };
+    if (!result.changed) return { outcome: 'unchanged', result, settledRounds, unsettled: [] };
+    const owed = io.owed(result);
+    const fresh = owed.filter((key) => !attempted.has(key));
+    if (!fresh.length) {
+      const written = io.write(result);
+      await written;
+      return { outcome: 'written', result, settledRounds, unsettled: owed };
+    }
+    // Not reachable while owed() names only keys the text itself carries; a loud stop, never a silent spin.
+    if (settledRounds >= SETTLE_ROUNDS_BEFORE_BUG) {
+      throw new Error(`write prerequisites never converged: ${settledRounds} rounds, still owed ${fresh.join(', ')}`);
+    }
+    for (const key of fresh) attempted.add(key);
+    await io.settle(result, fresh);
+    settledRounds++;
+  }
 }

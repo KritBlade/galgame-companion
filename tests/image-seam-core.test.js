@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
   staleSiblingKeys, deadBackgroundKeys, pairImagesToScenes, unboundImageReport, decideForceReconcile, latchFloors,
-  missingBackdropPairs,
+  missingBackdropPairs, pairSignature, backdropScenesOwed,
 } from '../src/features/image/image-seam-core.js';
 import { sceneName, sceneUid, shortHash } from '../src/features/beat-shaper/beat-shaper-core.js';
 
@@ -303,6 +303,39 @@ describe('latchFloors (which floors carry the ForceImageType latch)', () => {
 
   it('is newest-first, so the reconcile can read the head as THE current floor', () => {
     expect(latchFloors(9, () => true)[0]).toBe(9);
+  });
+});
+
+// The beat-shaper writes a shaped text only once the library holds every scene it names (the row must
+// exist before galgame reads the name). The seam answers "what is still owed?" synchronously.
+describe('backdropScenesOwed (the beat-shaper write prerequisite)', () => {
+  const uid = sceneUid(CHAT, 'o1o1o1');
+  const srcA = '/user/images/ArtificKoi/owedA.png';
+  const srcB = '/user/images/ArtificKoi/owedB.png';
+  const sceneA = sceneName(uid, 1, shortHash(srcA));
+  const sceneB = sceneName(uid, 2, shortHash(srcB));
+  const bg = (n) => `<background scene="${n}" />`;
+  const img = (s) => `<span class="auto-img-wrap" data-rawtag="x"><img src="${s}"><span class="auto-img-regen"></span></span>`;
+  const text = `${bg(sceneA)}<p>a</p>${img(srcA)}${bg(sceneB)}<p>b</p>${img(srcB)}`;
+  const pairs = pairImagesToScenes(text).pairs;
+
+  it('owes every scene the text binds when nothing is filed for the message', () => {
+    expect(backdropScenesOwed(text, undefined)).toEqual([sceneA, sceneB]);
+  });
+
+  // MUTATION TARGET: compare anything but the exact filed set and a filed message is re-filed forever,
+  // or an unfiled one is written with no row.
+  it('owes nothing once that exact pair set is filed', () => {
+    expect(backdropScenesOwed(text, pairSignature(pairs))).toEqual([]);
+  });
+
+  it('owes the scenes again when the text binds a different set than the one filed', () => {
+    const filedEarlier = pairSignature(pairs.slice(0, 1));
+    expect(backdropScenesOwed(text, filedEarlier)).toEqual([sceneA, sceneB]);
+  });
+
+  it('a text with no bound image owes nothing', () => {
+    expect(backdropScenesOwed('<p>no images</p>', undefined)).toEqual([]);
   });
 });
 

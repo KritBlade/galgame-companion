@@ -1,8 +1,10 @@
 // beat-shaper-core unit tests — pure transform (plan GALGAME_DUMB_TERMINAL_PLAN.md §5.1). v0.3
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   shapeMessage, sceneName, sceneUid, shortHash, uidOfSceneName, chatKeyOfSceneName,
   SCENE_NAME_RE, LEGACY_SCENE_NAME_RE, parseCombatLog, countCombatLogStrayTags, repairTruncatedEnvelope, synthesizeEnvelope,
+  shapeAndWriteWhenSettled,
 } from '../src/features/beat-shaper/beat-shaper-core.js';
 
 // A rendered image block exactly as mvu-helper's imagegen REPLACE path writes it.
@@ -360,6 +362,49 @@ describe('leaked-reasoning strip (Fix §0b)', () => {
     expect(r.text).toContain('/Intent/eventFire: x');            // TAIL untouched
     expect(r.stats.strippedThinkText).toContain('step one');     // handed back, not destroyed
     expect(r.stats.strippedThinkText).not.toContain('<think>');  // the tag is packaging, not reasoning
+  });
+
+  // A preset whose "Start Reply With" is <think> leaves a lone open on every reply from a model that
+  // reasons natively. The card's bare caption tags sit between the planning block and <maintext>; they
+  // are the reply's markup (the resolver replaces them later), so they stay while the planning goes.
+  // MUTATION TARGET: drop RE_TRAILING_SELF_CLOSING_RUN and the tags leave with the CoT.
+  it('an unclosed <think> strip keeps the bare self-closing tags that END the span', () => {
+    const raw = `<think><plan~>
+- step one
+</plan~>
+
+<DateAndTime/>
+
+<location/>
+
+<maintext>
+<p>narration</p>
+</maintext>
+
+<UpdateVariable>x</UpdateVariable>`;
+    const r = shapeMessage(raw, mint());
+    expect(r.stats.strippedThink).toBe(1);
+    expect(r.stats.thinkMarkupKept).toBe(2);
+    expect(r.text).not.toContain('<think>');
+    expect(r.text).not.toContain('step one');
+    expect(r.text.startsWith(`<DateAndTime/>
+
+<location/>
+
+<maintext>`)).toBe(true);
+    expect(r.stats.strippedThinkText).toContain('step one');
+    expect(r.stats.strippedThinkText).not.toContain('<DateAndTime/>');
+  });
+
+  it('a self-closing tag the CoT merely mentions mid-span leaves with the CoT', () => {
+    const raw = `<think>I will emit <DateAndTime/> first, then write the scene.
+<maintext>
+<p>beat</p>
+</maintext>`;
+    const r = shapeMessage(raw, mint());
+    expect(r.stats.thinkMarkupKept).toBe(0);
+    expect(r.text.startsWith('<maintext>')).toBe(true);
+    expect(r.stats.strippedThinkText).toBe('I will emit <DateAndTime/> first, then write the scene.');
   });
 
   it('an unclosed <think> strip keeps any text BEFORE the open', () => {
@@ -828,5 +873,153 @@ describe('synthesizeEnvelope (§4c)', () => {
     const out = shapeMessage(synthesizeEnvelope(liveShape).text, mint());
     expect(out.deferred).toBe(null);
     expect(out.stats.wrapped).toBeGreaterThan(0);
+  });
+});
+
+// THE WRITE-BACK RULE. Never hold a copy of the reply across an await: mvu-helper's resolver replaces the
+// caption tags and places the stat box while the shaper files its backdrop rows, and a write of the text
+// read before that wait reverted both on every reply. Prerequisites settle first; the write is a fresh
+// read shaped and written in one synchronous step.
+describe('shapeAndWriteWhenSettled — prerequisites first, then read → shape → write in one step', () => {
+  // A floor whose text another writer can change while a prerequisite settles. `owed` mimics the image
+  // seam: every scene of the shaped text is owed until a settle files that exact text's scenes.
+  function floor(initial) {
+    const f = { text: initial, writes: [], settles: [], filed: new Set(), failSettle: false, onSettle: null, minter: stubMinter() };
+    const scenesOf = (text) => [...text.matchAll(/<background scene="([^"]+)"/g)].map((m) => m[1]);
+    f.io = () => ({
+      read: () => f.text,
+      shape: (raw, mintUid) => shapeMessage(raw, mintUid),
+      mintUid: f.minter,
+      owed: ({ text }) => scenesOf(text).filter((s) => !f.filed.has(s)),
+      settle: async ({ text }, keys) => {
+        f.settles.push(keys);
+        await Promise.resolve();
+        if (!f.failSettle) for (const s of scenesOf(text)) f.filed.add(s);
+        if (f.onSettle) f.onSettle(f.settles.length);
+      },
+      write: ({ text }) => { f.writes.push(text); f.text = text; return Promise.resolve(); },
+    });
+    return f;
+  }
+  const reply = `<DateAndTime/>
+
+<maintext>
+<p>She smiled.</p>
+${img(1)}
+</maintext>
+
+<UpdateVariable>x</UpdateVariable>`;
+  const withBars = reply.replace('<DateAndTime/>', '[ 🗓️ Date: 2026-04-08 (Wed) | 🕰️ Time: 10:20 ]');
+
+  it('a text that owes nothing is written in the first round, with no settle', async () => {
+    const f = floor('<maintext>\nShe smiled.\n</maintext>');
+    const r = await shapeAndWriteWhenSettled(f.io());
+    expect(r.outcome).toBe('written');
+    expect(r.settledRounds).toBe(0);
+    expect(f.settles.length).toBe(0);
+    expect(f.writes.length).toBe(1);
+  });
+
+  it('owed backdrop rows are settled BEFORE the write, then a fresh read is written', async () => {
+    const f = floor(reply);
+    const r = await shapeAndWriteWhenSettled(f.io());
+    expect(r.outcome).toBe('written');
+    expect(r.settledRounds).toBe(1);
+    expect(f.settles.length).toBe(1);
+    expect(f.writes.length).toBe(1);
+    expect(f.writes[0]).toContain('<background scene=');
+    expect(r.unsettled).toEqual([]);
+  });
+
+  // MUTATION TARGET: write the shape the settle was started for (skip the fresh read) and the bars come
+  // back as the raw tag.
+  it("an edit another writer makes while the rows settle SURVIVES — the written text is a fresh read", async () => {
+    const f = floor(reply);
+    f.onSettle = () => { f.text = withBars; };   // the resolver lands while the rows are filed
+    const r = await shapeAndWriteWhenSettled(f.io());
+    expect(r.outcome).toBe('written');
+    expect(f.writes.length).toBe(1);
+    expect(f.writes[0]).toContain('🗓️ Date: 2026-04-08');
+    expect(f.writes[0]).not.toContain('<DateAndTime/>');
+    expect(f.writes[0]).toContain('<background scene=');
+  });
+
+  // MUTATION TARGET: insert any await between the read and the write, and the microtask queued at the
+  // read runs before the write.
+  it('the read and the write run in one synchronous step', async () => {
+    const f = floor(reply);
+    let readsSeen = 0;
+    let microtasksRun = 0;
+    let sameStep = null;
+    const io = f.io();
+    const read = io.read;
+    io.read = () => { readsSeen++; queueMicrotask(() => { microtasksRun = readsSeen; }); return read(); };
+    const write = io.write;
+    io.write = (result) => { sameStep = microtasksRun !== readsSeen; return write(result); };
+    await shapeAndWriteWhenSettled(io);
+    expect(sameStep).toBe(true);
+  });
+
+  // MUTATION TARGET: mint per round and the fresh read names its scenes under a second uid.
+  it('every round names the same scenes, so the rows filed are the rows written', async () => {
+    const f = floor(reply);
+    await shapeAndWriteWhenSettled(f.io());
+    expect(f.minter.calls).toBe(1);
+    const writtenScenes = [...f.writes[0].matchAll(/<background scene="([^"]+)"/g)].map((m) => m[1]);
+    expect(writtenScenes.every((s) => f.filed.has(s))).toBe(true);
+  });
+
+  it('a settle that does not take is not retried: the floor is written and the key is reported', async () => {
+    const f = floor(reply);
+    f.failSettle = true;
+    const r = await shapeAndWriteWhenSettled(f.io());
+    expect(r.outcome).toBe('written');
+    expect(f.settles.length).toBe(1);
+    expect(r.unsettled.length).toBe(1);
+    expect(f.writes.length).toBe(1);
+  });
+
+  it('an image added while the rows settle gets its own settle round, and only it', async () => {
+    const f = floor(reply);
+    f.onSettle = (n) => { if (n === 1) f.text = reply.replace('</maintext>', `<p>Later.</p>\n${img(2)}\n</maintext>`); };
+    const r = await shapeAndWriteWhenSettled(f.io());
+    expect(r.outcome).toBe('written');
+    expect(r.settledRounds).toBe(2);
+    expect(f.settles[1].length).toBe(1);
+    expect(f.writes[0]).toContain(imgSrc(2));
+  });
+
+  it('writes nothing for an already-shaped reply, a streaming one, a deleted one, or one deleted mid-settle', async () => {
+    const shaped = floor(reply);
+    await shapeAndWriteWhenSettled(shaped.io());
+    const again = floor(shaped.text);
+    expect((await shapeAndWriteWhenSettled(again.io())).outcome).toBe('unchanged');
+    const streaming = floor(`<maintext>
+<p>half a sente`);
+    expect((await shapeAndWriteWhenSettled(streaming.io())).outcome).toBe('deferred');
+    const gone = floor(null);
+    expect((await shapeAndWriteWhenSettled(gone.io())).outcome).toBe('gone');
+    const deleted = floor(reply);
+    deleted.onSettle = () => { deleted.text = null; };
+    expect((await shapeAndWriteWhenSettled(deleted.io())).outcome).toBe('gone');
+    expect(again.writes.length + streaming.writes.length + gone.writes.length + deleted.writes.length).toBe(0);
+  });
+
+  it('a prerequisite that keeps inventing keys stops loudly instead of spinning', async () => {
+    const f = floor(reply);
+    const io = f.io();
+    let n = 0;
+    io.owed = () => [`key-${n++}`];
+    await expect(shapeAndWriteWhenSettled(io)).rejects.toThrow(/never converged/);
+  });
+});
+
+// The first shape — the leaked-<think> strip included — must land before MVU parses the reply and before
+// mvu-helper's resolver turns the caption tags into text. SillyTavern awaits listeners in order.
+describe('the beat-shaper runs FIRST on MESSAGE_RECEIVED', () => {
+  const src = readFileSync(new URL('../src/features/beat-shaper/beat-shaper.js', import.meta.url), 'utf8');
+  it('MESSAGE_RECEIVED is bound with eventMakeFirst, and the listener returns the shaping promise', () => {
+    expect(src).toMatch(/window\.eventMakeFirst\(te\.MESSAGE_RECEIVED,\s*onMessageEvent\)/);
+    expect(src).not.toMatch(/window\.eventOn\(te\.MESSAGE_RECEIVED/);
   });
 });

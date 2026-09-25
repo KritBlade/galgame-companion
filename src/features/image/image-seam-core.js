@@ -1,4 +1,4 @@
-// galgame-companion · image-seam-core — PURE decisions for the image seam (no DOM/IndexedDB). v0.4
+// galgame-companion · image-seam-core — PURE decisions for the image seam (no DOM/IndexedDB). v0.5
 //
 // The image-seam DELETES rows out of galgame's own global background DB, so "which keys go" is the one
 // decision in this feature that must never be wrong: over-delete and the player loses backdrops from a
@@ -123,6 +123,31 @@ export function unboundImageReport(rawMes, scan) {
       ? 'No scene tags exist at all, so the beat-shaper saw no image INSIDE <maintext> — the most '
         + 'likely cause is a <pic> tag emitted outside the envelope (in the tail, after the engine blocks).'
       : 'Scene tags exist but none carries an image hash — the shaper and the rendered <img> src have drifted.');
+}
+
+/**
+ * The identity of one message's filed pair set: the scene=url pairs in binding order.
+ *
+ * @param {{scene: string, url: string}[]} pairs
+ * @returns {string}
+ */
+export function pairSignature(pairs) {
+  return pairs.map((p) => `${p.scene}=${p.url}`).join('|');
+}
+
+/**
+ * The scenes a shaped text still owes galgame's library before the beat-shaper may write it: every scene
+ * it binds, unless that exact pair set is what the seam last filed for the message. A message's pairs are
+ * filed in one transaction, so the set is filed whole or not at all.
+ *
+ * @param {string} text                  the shaped text about to be written
+ * @param {string|undefined} filedSignature pairSignature of the pairs last filed for this message
+ * @returns {string[]} the scene names still owed, in binding order ([] when nothing is owed)
+ */
+export function backdropScenesOwed(text, filedSignature) {
+  const { pairs } = pairImagesToScenes(text);
+  if (!pairs.length) return [];
+  return filedSignature === pairSignature(pairs) ? [] : pairs.map((p) => p.scene);
 }
 
 /**
