@@ -1,9 +1,10 @@
 // galgame-companion · beat-shaper — deterministic reshaping of AI replies into galgame's beat
-// contract (plan: mvu-helper plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). v0.6
+// contract (plan: mvu-helper plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). v0.7
 //
 // Event-driven wrapper around the pure transform in beat-shaper-core.js: on MESSAGE_RECEIVED /
 // MESSAGE_UPDATED, read the floor's raw text (TH getChatMessages), shape it, and write it back
-// (TH setChatMessages) ONLY when the text actually changed.
+// (TH setChatMessages) ONLY when the text actually changed. A reply whose envelope repair had to wait
+// for the turn is shaped once more when mvu-helper's last turn phase closes (core §4d).
 //
 // WHY THESE TRIGGERS / LOOP + RACE SAFETY (verified against the real sources 2026-07-17):
 // - mvu-helper's imagegen splices the rendered <img> in AFTER a multi-second generation await
@@ -31,8 +32,11 @@
 //   mvu-helper's resolver turns the card's caption tags into text.
 
 import { topWindow, log, warnToast } from '../../env.js';
-import { shapeMessage, sceneUid, shortHash, repairTruncatedEnvelope, synthesizeEnvelope, shapeAndWriteWhenSettled } from './beat-shaper-core.js';
-import { isTurnBusy } from '../galgame-quirks/index.js';
+import {
+  shapeMessage, sceneUid, shortHash, repairTruncatedEnvelope, synthesizeEnvelope, shapeAndWriteWhenSettled,
+  awaitsEnvelopeRepair, envelopeRepairsToRun,
+} from './beat-shaper-core.js';
+import { isTurnBusy, onTurnPhaseClosed } from '../galgame-quirks/index.js';
 
 const inFlight = new Set(); // message ids currently being shaped (re-entrancy guard)
 
@@ -66,6 +70,9 @@ function withoutNamespace(keys) {
   return keys.map((k) => k.slice(k.indexOf(KEY_SEPARATOR) + 1));
 }
 const deferralLogged = new Set(); // one deferral log per floor per reason — not one per event
+// Replies whose envelope repair was deferred because the turn was still busy (core §4d): message id →
+// the chat key it was deferred in. Retried when mvu-helper's last turn phase closes.
+const pendingEnvelopeRepairs = new Map();
 // One incomplete-reply toast per message, keyed `${id}:${reason}`. Without this the GENERATION_ENDED
 // retry + every later MESSAGE_UPDATED (image splices) would each re-toast the same dead turn.
 const incompleteToasted = new Set();
@@ -222,7 +229,7 @@ function shapeWithRepair(id, raw, mintUid) {
   // never coming, so deferring forever leaves galgame parsing raw text (which blocked the whole GUI
   // once — see repairTruncatedEnvelope).
   // Repair, then re-shape the repaired text so this turn still gets its normal treatment.
-  if ((deferred === 'maintext-unclosed' || deferred === 'gametxt-unclosed' || deferred === 'no-envelope') && !isTurnBusy()) {
+  if (awaitsEnvelopeRepair(deferred) && !isTurnBusy()) {
     // §4c runs ONLY here, never inside shapeMessage: a synthesized tag is WRITTEN to the message, so
     // doing it mid-stream would freeze a boundary the rest of the reply was about to move.
     // It also outranks §4b on the missing-OPEN case, which §4b cannot address at all.
@@ -291,13 +298,22 @@ async function onMessageEvent(messageId) {
     });
 
     if (outcome === 'deferred') {
+      // Owed a retry only when the REPAIR was what waited, and it waited for the turn. Deferred while
+      // idle, the repair already ran and found nothing to anchor on (warned in shapeWithRepair), so a
+      // retry would only repeat that.
+      const waitsForTurn = awaitsEnvelopeRepair(result.deferred) && isTurnBusy();
+      if (waitsForTurn) pendingEnvelopeRepairs.set(id, currentChatKey());
+      else pendingEnvelopeRepairs.delete(id);
       const key = `${id}:${result.deferred}`;
       if (!deferralLogged.has(key)) {
         deferralLogged.add(key);
-        log.image(`beat-shaper msg=${id}: deferred (${result.deferred}) — will retry on next message event`);
+        log.image(`beat-shaper msg=${id}: deferred (${result.deferred}) — ${waitsForTurn
+          ? 'the envelope repair runs when the turn finishes'
+          : 'will retry on next message event'}`);
       }
       return;
     }
+    pendingEnvelopeRepairs.delete(id);
     deferralLogged.forEach((k) => { if (k.startsWith(`${id}:`)) deferralLogged.delete(k); });
 
     if (outcome !== 'written') return;
@@ -376,6 +392,24 @@ async function onMessageEvent(messageId) {
   }
 }
 
+// THE RETRY THE ENVELOPE REPAIR WAITS FOR (core §4d). The repair runs only once the turn is finished,
+// and with mvu-helper's POST call routed every other trigger fires while that call still runs:
+// GENERATION_ENDED lands before it, and its own writes land inside it. Without this, a reply missing
+// its envelope stays raw and galgame reads the JSON after the prose as dialogue (live 2026-09-26: a
+// `{"op` speaker). Only the replies that deferred for their envelope are retried, never a healthy one.
+function retryPendingEnvelopeRepairs() {
+  if (!pendingEnvelopeRepairs.size) return;
+  const { run, drop } = envelopeRepairsToRun(pendingEnvelopeRepairs, currentChatKey());
+  for (const id of drop) {
+    pendingEnvelopeRepairs.delete(id);
+    log.image(`beat-shaper msg=${id}: envelope repair dropped — it was deferred in another chat`);
+  }
+  for (const id of run) {
+    log.image(`beat-shaper msg=${id}: turn finished — running the envelope repair it deferred`);
+    void onMessageEvent(id);
+  }
+}
+
 export function startBeatShaper() {
   if (
     typeof window.getChatMessages !== 'function' ||
@@ -430,5 +464,6 @@ export function startBeatShaper() {
     log.warn('beat-shaper: no tavern message events available — shaper disabled');
     return;
   }
-  log.image(`beat-shaper active (${bound} event(s) bound)`);
+  onTurnPhaseClosed(retryPendingEnvelopeRepairs);
+  log.image(`beat-shaper active (${bound} event(s) bound, envelope repair retried when mvu-helper's turn phase closes)`);
 }

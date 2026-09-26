@@ -1,4 +1,4 @@
-// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v1.2
+// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v1.3
 //
 // Deterministically reshapes an AI reply into galgame's beat contract (plan: mvu-helper
 // plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). galgame's standard parser builds display beats ONLY
@@ -533,6 +533,26 @@ export function synthesizeEnvelope(raw) {
   if (!closeM) { out = `${out.slice(0, machAt)}\n</maintext>\n${out.slice(machAt)}`; inserted.push('close'); }
   if (!openM) { out = `${out.slice(0, proseAt)}\n<maintext>\n${out.slice(proseAt)}`; inserted.push('open'); }
   return { text: out, inserted };
+}
+
+// ── §4d when the envelope repair runs ────────────────────────────────────────
+// §4b and §4c run only once the turn is finished, because mid-turn a missing or unclosed envelope may
+// still be on its way. These are the deferrals they exist for. A reply deferred for one of them WHILE
+// the turn was busy is owed one re-shape when the turn finishes; no other reply is, so a healthy reply
+// is never shaped again by this path.
+export const ENVELOPE_REPAIR_DEFERRALS = Object.freeze(['no-envelope', 'gametxt-unclosed', 'maintext-unclosed']);
+export function awaitsEnvelopeRepair(deferred) {
+  return ENVELOPE_REPAIR_DEFERRALS.includes(deferred);
+}
+
+// Which owed repairs to run when the turn finishes. `pending` maps message id → the chat key it was
+// deferred in. An id deferred in ANOTHER chat names a different message here, so it is dropped and
+// never shaped.
+export function envelopeRepairsToRun(pending, chatKey) {
+  const run = [];
+  const drop = [];
+  for (const [id, deferredInChat] of pending) (deferredInChat === chatKey ? run : drop).push(id);
+  return { run, drop };
 }
 
 export function shapeMessage(raw, mintUid) {

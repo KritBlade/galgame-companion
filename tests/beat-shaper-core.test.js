@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import {
   shapeMessage, sceneName, sceneUid, shortHash, uidOfSceneName, chatKeyOfSceneName,
   SCENE_NAME_RE, LEGACY_SCENE_NAME_RE, parseCombatLog, countCombatLogStrayTags, repairTruncatedEnvelope, synthesizeEnvelope,
-  shapeAndWriteWhenSettled,
+  shapeAndWriteWhenSettled, awaitsEnvelopeRepair, envelopeRepairsToRun,
 } from '../src/features/beat-shaper/beat-shaper-core.js';
 
 // A rendered image block exactly as mvu-helper's imagegen REPLACE path writes it.
@@ -1021,5 +1021,46 @@ describe('the beat-shaper runs FIRST on MESSAGE_RECEIVED', () => {
   it('MESSAGE_RECEIVED is bound with eventMakeFirst, and the listener returns the shaping promise', () => {
     expect(src).toMatch(/window\.eventMakeFirst\(te\.MESSAGE_RECEIVED,\s*onMessageEvent\)/);
     expect(src).not.toMatch(/window\.eventOn\(te\.MESSAGE_RECEIVED/);
+  });
+});
+
+// §4d. The envelope repair waits for the turn to finish, and with mvu-helper's POST call routed every
+// message event fires inside that call — so a reply missing its envelope was never repaired and galgame
+// read the JSON after the prose as dialogue (live 2026-09-26). The retry runs when mvu-helper's last turn
+// phase closes, for the replies that deferred for their envelope and no other.
+describe('envelope repair retried when the turn finishes (§4d)', () => {
+  it('every deferral shapeMessage gives for an envelope awaits the repair', () => {
+    const deferrals = [
+      shapeMessage('prose\n<UpdateVariable>x</UpdateVariable>', mint()).deferred,
+      shapeMessage('<gametxt>\n<p>half a reply', mint()).deferred,
+      shapeMessage('<maintext>\n<p>half a reply', mint()).deferred,
+    ];
+    expect(deferrals).toEqual(['no-envelope', 'gametxt-unclosed', 'maintext-unclosed']);
+    for (const reason of deferrals) expect(awaitsEnvelopeRepair(reason)).toBe(true);
+  });
+
+  // MUTATION TARGET: return true for any truthy reason and the plain chat message is retried.
+  it('a reply that deferred for nothing, or for another reason, is never retried', () => {
+    expect(shapeMessage('just chatting', mint()).deferred).toBe(null);
+    expect(awaitsEnvelopeRepair(null)).toBe(false);
+    expect(awaitsEnvelopeRepair('something-else')).toBe(false);
+  });
+
+  // MUTATION TARGET: invert the chat comparison and a message of another chat is shaped.
+  it('only replies deferred in THIS chat run; another chat’s ids are dropped', () => {
+    const pending = new Map([[18, 'chatA'], [7, 'chatB'], [16, 'chatA']]);
+    expect(envelopeRepairsToRun(pending, 'chatA')).toEqual({ run: [18, 16], drop: [7] });
+    expect(envelopeRepairsToRun(new Map([[3, null]]), null)).toEqual({ run: [3], drop: [] });
+    expect(envelopeRepairsToRun(new Map(), 'chatA')).toEqual({ run: [], drop: [] });
+  });
+
+  it('the shaper retries from the turn-phase-closed hook, and the hook runs after the phase flag clears', () => {
+    const shaper = readFileSync(new URL('../src/features/beat-shaper/beat-shaper.js', import.meta.url), 'utf8');
+    expect(shaper).toMatch(/onTurnPhaseClosed\(retryPendingEnvelopeRepairs\)/);
+    const indicator = readFileSync(new URL('../src/features/galgame-quirks/generating-indicator.js', import.meta.url), 'utf8');
+    const flagCleared = indicator.indexOf('phaseOpenAt = busy ? Date.now() : 0;');
+    const listenersRun = indicator.indexOf('for (const listener of phaseClosedListeners)');
+    expect(flagCleared).toBeGreaterThan(-1);
+    expect(listenersRun).toBeGreaterThan(flagCleared);
   });
 });

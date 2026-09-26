@@ -1,9 +1,9 @@
-// galgame-companion v0.9.6
+// galgame-companion v0.9.7
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.9.6";
-  var BUILD = "59254e5";
+  var VERSION = "0.9.7";
+  var BUILD = "80ecb69";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -2347,6 +2347,11 @@
   var POLL_MS = 750;
   var TURN_PHASE_EVENT = "mvu_helper_turn_phase";
   var PHASE_MAX_MS = 3e5;
+  var phaseClosedListeners = [];
+  function onTurnPhaseClosed(listener) {
+    if (typeof listener === "function") phaseClosedListeners.push(listener);
+    else log.warn("generating-indicator: onTurnPhaseClosed needs a function — ignored:", listener);
+  }
   var generating = false;
   var phaseOpenAt = 0;
   var phaseOverranReported = false;
@@ -2422,6 +2427,14 @@
           if (busy) phaseOverranReported = false;
           log.info(`generating-indicator: mvu-helper turn phase ${busy ? "OPEN" : "closed"} (${payload && payload.phase || "?"})`);
           reconcile();
+          if (busy) return;
+          for (const listener of phaseClosedListeners) {
+            try {
+              listener();
+            } catch (e) {
+              log.warn("generating-indicator: a turn-phase-closed listener threw:", e);
+            }
+          }
         });
       } catch (e) {
         log.warn(`generating-indicator: bind ${TURN_PHASE_EVENT} failed — the PRE/POST half of the turn will be invisible:`, e);
@@ -2845,6 +2858,16 @@ ${out.slice(proseAt)}`;
     }
     return { text: out, inserted };
   }
+  var ENVELOPE_REPAIR_DEFERRALS = Object.freeze(["no-envelope", "gametxt-unclosed", "maintext-unclosed"]);
+  function awaitsEnvelopeRepair(deferred) {
+    return ENVELOPE_REPAIR_DEFERRALS.includes(deferred);
+  }
+  function envelopeRepairsToRun(pending2, chatKey) {
+    const run = [];
+    const drop = [];
+    for (const [id, deferredInChat] of pending2) (deferredInChat === chatKey ? run : drop).push(id);
+    return { run, drop };
+  }
   function shapeMessage(raw, mintUid) {
     const blankStats = () => ({
       wrapped: 0,
@@ -3096,6 +3119,7 @@ ${inner.replace(/^\n+/, "")}`;
     return keys.map((k) => k.slice(k.indexOf(KEY_SEPARATOR) + 1));
   }
   var deferralLogged = /* @__PURE__ */ new Set();
+  var pendingEnvelopeRepairs = /* @__PURE__ */ new Map();
   var incompleteToasted = /* @__PURE__ */ new Set();
   var RE_HAS_UPDATEVAR = /<UpdateVariable>/i;
   var RE_ENVELOPE_CLOSE = /<\/maintext>|<\/gametxt>/i;
@@ -3184,7 +3208,7 @@ ${cot}` : cot;
   }
   function shapeWithRepair(id, raw, mintUid) {
     let { text, changed, deferred, stats } = shapeMessage(raw, mintUid);
-    if ((deferred === "maintext-unclosed" || deferred === "gametxt-unclosed" || deferred === "no-envelope") && !isTurnBusy()) {
+    if (awaitsEnvelopeRepair(deferred) && !isTurnBusy()) {
       const repair = deferred === "no-envelope" ? null : repairTruncatedEnvelope(raw);
       const synth = repair ? null : synthesizeEnvelope(raw);
       if (!repair && synth) {
@@ -3235,13 +3259,17 @@ ${cot}` : cot;
         }
       });
       if (outcome === "deferred") {
+        const waitsForTurn = awaitsEnvelopeRepair(result.deferred) && isTurnBusy();
+        if (waitsForTurn) pendingEnvelopeRepairs.set(id, currentChatKey());
+        else pendingEnvelopeRepairs.delete(id);
         const key = `${id}:${result.deferred}`;
         if (!deferralLogged.has(key)) {
           deferralLogged.add(key);
-          log.image(`beat-shaper msg=${id}: deferred (${result.deferred}) — will retry on next message event`);
+          log.image(`beat-shaper msg=${id}: deferred (${result.deferred}) — ${waitsForTurn ? "the envelope repair runs when the turn finishes" : "will retry on next message event"}`);
         }
         return;
       }
+      pendingEnvelopeRepairs.delete(id);
       deferralLogged.forEach((k) => {
         if (k.startsWith(`${id}:`)) deferralLogged.delete(k);
       });
@@ -3274,6 +3302,18 @@ ${cot}` : cot;
       log.warn(`beat-shaper msg=${id}: shaping or writing the reply failed — the message is left as it was:`, e);
     } finally {
       inFlight.delete(id);
+    }
+  }
+  function retryPendingEnvelopeRepairs() {
+    if (!pendingEnvelopeRepairs.size) return;
+    const { run, drop } = envelopeRepairsToRun(pendingEnvelopeRepairs, currentChatKey());
+    for (const id of drop) {
+      pendingEnvelopeRepairs.delete(id);
+      log.image(`beat-shaper msg=${id}: envelope repair dropped — it was deferred in another chat`);
+    }
+    for (const id of run) {
+      log.image(`beat-shaper msg=${id}: turn finished — running the envelope repair it deferred`);
+      void onMessageEvent(id);
     }
   }
   function startBeatShaper() {
@@ -3315,7 +3355,8 @@ ${cot}` : cot;
       log.warn("beat-shaper: no tavern message events available — shaper disabled");
       return;
     }
-    log.image(`beat-shaper active (${bound} event(s) bound)`);
+    onTurnPhaseClosed(retryPendingEnvelopeRepairs);
+    log.image(`beat-shaper active (${bound} event(s) bound, envelope repair retried when mvu-helper's turn phase closes)`);
   }
 
   // src/features/image/image-seam-core.js

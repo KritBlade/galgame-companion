@@ -1,5 +1,5 @@
 // galgame-companion · generating-indicator — own the visible window of galgame's "正在生成内容…"
-// (Generating) popup: up when the turn starts, down when the turn is finished. v0.1
+// (Generating) popup: up when the turn starts, down when the turn is finished. v0.2
 //
 // WHAT THIS REPLACES, AND WHY THE OLD SHAPE COULD NOT WORK. This file used to be a GUARD: galgame
 // latched the indicator on with no generation running (a load-time race, or its own 120s self-heal),
@@ -48,6 +48,15 @@ const TURN_PHASE_EVENT = 'mvu_helper_turn_phase';
 // and inheriting it from the other side would be no better. Sized well above mvu-helper's own bound:
 // its per-call timeout defaults to 60s and a pass can run several calls in sequence.
 const PHASE_MAX_MS = 300000; // 5 min
+
+// Run when mvu-helper's last turn phase closes. Called AFTER the phase flag is cleared, so isTurnBusy()
+// inside a listener already reads the closed phase — an order only this file can guarantee, since it
+// owns both the flag and the event.
+const phaseClosedListeners = [];
+export function onTurnPhaseClosed(listener) {
+  if (typeof listener === 'function') phaseClosedListeners.push(listener);
+  else log.warn('generating-indicator: onTurnPhaseClosed needs a function — ignored:', listener);
+}
 
 let generating = false;        // a REAL (loud, non-dry) ST generation is in flight, per tracked TH events
 let phaseOpenAt = 0;           // epoch ms when mvu-helper's first phase opened; 0 = none open
@@ -155,6 +164,10 @@ export function startGeneratingIndicator() {
         if (busy) phaseOverranReported = false;
         log.info(`generating-indicator: mvu-helper turn phase ${busy ? 'OPEN' : 'closed'} (${(payload && payload.phase) || '?'})`);
         reconcile();
+        if (busy) return;
+        for (const listener of phaseClosedListeners) {
+          try { listener(); } catch (e) { log.warn('generating-indicator: a turn-phase-closed listener threw:', e); }
+        }
       });
     } catch (e) {
       log.warn(`generating-indicator: bind ${TURN_PHASE_EVENT} failed — the PRE/POST half of the turn will be invisible:`, e);
