@@ -1,4 +1,4 @@
-// galgame-companion · style — small CSS overrides injected into the parent document. v0.7
+// galgame-companion · style — small CSS overrides injected into the parent document. v0.8
 // Only cosmetic nudges that a dictionary swap can't express. Keep tiny; anything galgame
 // renames simply stops matching (graceful).
 
@@ -110,6 +110,14 @@ const CSS = `
    survives the flex squeeze and displays inline (below the chat) even with immersive off.
    Keyed on .active — only present while the overlay is meant to be shown. */
 #gal-global-overlay.active { flex-shrink: 0 !important; min-height: 70vh !important; }
+
+/* Free-input text colour, every screen size — galgame gives its textarea no colours of its own, so it
+   inherits SillyTavern's theme: pale body text (220,220,210) on a 30%-black box, drawn inside galgame's
+   WHITE pop-up, which comes out at about 1.6:1 contrast. Use galgame's own dark ink (the pop-up title's
+   colour) for the text and a mid grey for the placeholder — !important there because SillyTavern marks
+   its own textarea::placeholder colour !important. ONLY #gal-free-input-modal. */
+#gal-free-input-modal .gal-input-field { color: var(--gal-dark, #2b2e38); }
+#gal-free-input-modal .gal-input-field::placeholder { color: #5f6270 !important; opacity: 1; }
 
 /* Free-input box, desktop only — galgame sizes every .gal-input-box the same (max-width 31.25rem,
    textarea min-height 5rem). That fits a one-line reply, not the multi-paragraph turns this card is

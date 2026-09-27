@@ -1,9 +1,9 @@
-// galgame-companion v0.9.7
+// galgame-companion v0.9.8
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.9.7";
-  var BUILD = "80ecb69";
+  var VERSION = "0.9.8";
+  var BUILD = "8e09fc5";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -313,6 +313,14 @@
    survives the flex squeeze and displays inline (below the chat) even with immersive off.
    Keyed on .active — only present while the overlay is meant to be shown. */
 #gal-global-overlay.active { flex-shrink: 0 !important; min-height: 70vh !important; }
+
+/* Free-input text colour, every screen size — galgame gives its textarea no colours of its own, so it
+   inherits SillyTavern's theme: pale body text (220,220,210) on a 30%-black box, drawn inside galgame's
+   WHITE pop-up, which comes out at about 1.6:1 contrast. Use galgame's own dark ink (the pop-up title's
+   colour) for the text and a mid grey for the placeholder — !important there because SillyTavern marks
+   its own textarea::placeholder colour !important. ONLY #gal-free-input-modal. */
+#gal-free-input-modal .gal-input-field { color: var(--gal-dark, #2b2e38); }
+#gal-free-input-modal .gal-input-field::placeholder { color: #5f6270 !important; opacity: 1; }
 
 /* Free-input box, desktop only — galgame sizes every .gal-input-box the same (max-width 31.25rem,
    textarea min-height 5rem). That fits a one-line reply, not the multi-paragraph turns this card is
@@ -2468,6 +2476,35 @@
     log.info("generating-indicator active");
   }
 
+  // src/features/galgame-quirks/free-input-patch-core.js
+  var FREE_INPUT_ID = "gal-free-input-text";
+  var FREE_INPUT_MODAL_ID = "gal-free-input-modal";
+  function isFreeInputNewline({ key, targetId, ctrlKey = false, metaKey = false } = {}) {
+    return key === "Enter" && targetId === FREE_INPUT_ID && !ctrlKey && !metaKey;
+  }
+  function isFreeInputBackdropClick({ targetId } = {}) {
+    return targetId === FREE_INPUT_MODAL_ID;
+  }
+
+  // src/features/galgame-quirks/free-input-patch.js
+  function startFreeInputPatch() {
+    if (!DOC) {
+      log.warn("free-input-patch: no parent document — skipping");
+      return;
+    }
+    DOC.addEventListener("keydown", (e) => {
+      const target = e.target;
+      if (!isFreeInputNewline({ key: e.key, targetId: target && target.id, ctrlKey: e.ctrlKey, metaKey: e.metaKey })) return;
+      e.stopPropagation();
+    }, true);
+    DOC.addEventListener("click", (e) => {
+      const target = e.target;
+      if (!isFreeInputBackdropClick({ targetId: target && target.id })) return;
+      e.stopPropagation();
+    }, true);
+    log.info("free-input-patch active (Enter = new line, Ctrl+Enter = send, only the ✕ closes)");
+  }
+
   // src/features/menu/menu-modal.js
   var MODAL_ID = "school-companion-modal";
   var STYLE_ID2 = "school-companion-modal-css";
@@ -4529,6 +4566,7 @@ ${cot}` : cot;
   startI18n();
   startToolbar();
   startFullscreenGuard();
+  startFreeInputPatch();
   startBeatShaper();
   startImageSeam();
   startGeneratingIndicator();
