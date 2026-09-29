@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import {
   shapeMessage, sceneName, sceneUid, shortHash, uidOfSceneName, chatKeyOfSceneName,
   SCENE_NAME_RE, LEGACY_SCENE_NAME_RE, parseCombatLog, countCombatLogStrayTags, repairTruncatedEnvelope, synthesizeEnvelope,
-  shapeAndWriteWhenSettled, awaitsEnvelopeRepair, envelopeRepairsToRun,
+  shapeAndWriteWhenSettled, awaitsEnvelopeRepair, envelopeRepairsToRun, locateEnvelope, incompleteReplyReason,
 } from '../src/features/beat-shaper/beat-shaper-core.js';
 
 // A rendered image block exactly as mvu-helper's imagegen REPLACE path writes it.
@@ -435,6 +435,142 @@ describe('leaked-reasoning strip (Fix §0b)', () => {
     expect(r.stats.strippedThinkText).toContain('second thought');
     expect(r.stats.strippedThinkText).not.toContain('</think>');
     expect(r.text.startsWith('<maintext>')).toBe(true);
+  });
+});
+
+// THE QUOTED ENVELOPE (live 2026-09-29, a preset that makes the CoT visible): the reasoning block planned
+// its output by QUOTING the reply's tags. The first-<maintext> lookup took the quote for the envelope, §0b
+// cut the CoT in half at it, and the rest of the CoT — "` → `<combat_log>` → …" — became the first story beat.
+// MUTATION TARGETS: make reasoningSpans return [] (the matched/orphan cases fail), or take the FIRST open
+// before the close instead of the last (the unclosed case fails).
+describe('§0 envelope location — a tag the reasoning quotes is text, not structure', () => {
+  const quotedPlan = '- 輸出規範：順序：`<DateAndTime/>` → `<location/>` → `<maintext>` → `<combat_log>` → `<reply_cast>` → `<UpdateVariable>`。\n- 正文用 `<gametxt>` 包裹。';
+  const reply = (think) => [
+    `<${think}>`,
+    '**確認基調**：歡脫喜劇。',
+    quotedPlan,
+    `</${think}>`,
+    '<tuiyan>\n📚 [長篇进度]：第 1 卷\n</tuiyan>',
+    '',
+    '[ 🗓️ Date: 2026-04-08 (Wed) | 🕰️ Time: 13:50 ]',
+    '',
+    '<gametxt>',
+    '客廳中央堆積的紙箱像是一座座小山。',
+    '',
+    '美月: "笨蛋！"<生氣>',
+    '</gametxt>',
+    '',
+    '<combat_log>\n[PhysicalRequest] on Mitsuki — DC 16, RawDie 8 +2 = 10 → Failure\n</combat_log>',
+    '<UpdateVariable>\n<JSONPatch>[{"op":"replace","path":"/Intent/check/0","value":"x"}]</JSONPatch>\n</UpdateVariable>',
+  ].join('\n');
+
+  it.each(['think', 'thinking'])('a closed <%s> block quoting the envelope tags is stripped WHOLE, and the real envelope is shaped', (think) => {
+    const r = shapeMessage(reply(think), mint());
+    expect(r.deferred).toBe(null);
+    expect(r.stats.renamed).toBe(true);                               // the REAL <gametxt> pair became the envelope
+    expect(r.stats.strippedThink).toBe(1);
+    expect(r.stats.strippedThinkText).toContain(quotedPlan);          // the plan leaves in ONE piece
+    expect(r.text).not.toContain('`<combat_log>`');                   // …and none of it is left behind as a beat
+    expect(r.text).not.toContain(`</${think}>`);
+    expect(r.text.match(/<maintext>/g)).toHaveLength(1);
+    const inner = r.text.match(/<maintext>([\s\S]*?)<\/maintext>/)[1];
+    expect(inner).toContain('<p>客廳中央堆積的紙箱像是一座座小山。</p>');
+    expect(inner).not.toContain('tuiyan');                            // the head keeps what followed the CoT
+    expect(r.text.indexOf('<tuiyan>')).toBeLessThan(r.text.indexOf('<maintext>'));
+    expect(r.text).toContain('"path":"/Intent/check/0"');             // tail untouched
+  });
+
+  // The plan quotes a CLOSE too, which the pair rule alone cannot survive — only the mask does.
+  it.each(['think', 'thinking'])('an ORPHAN </%s> masks the quotes before it, closes included', (think) => {
+    const raw = `planning: emit ${quotedPlan} and end with \`</maintext>\`\n</${think}>\n<maintext>\n<p>beat</p>\n</maintext>\n<UpdateVariable>x</UpdateVariable>`;
+    const r = shapeMessage(raw, mint());
+    expect(r.text.startsWith('<maintext>')).toBe(true);
+    expect(r.text.match(/<maintext>/g)).toHaveLength(1);
+    expect(r.stats.strippedThinkText).toContain(quotedPlan);
+  });
+
+  it.each(['think', 'thinking'])('an UNCLOSED <%s> quoting <maintext> ahead of the real one: the LAST open before the close wins', (think) => {
+    const raw = `<${think}>plan: ${quotedPlan}\n<maintext>\n<p>beat</p>\n</maintext>\n<UpdateVariable>x</UpdateVariable>`;
+    const r = shapeMessage(raw, mint());
+    expect(r.stats.strippedThink).toBe(1);
+    expect(r.stats.strippedThinkText).toContain(quotedPlan);
+    expect(r.text.startsWith('<maintext>')).toBe(true);
+    expect(r.text).not.toContain('`<combat_log>`');
+    expect(r.text).toContain('<p>beat</p>');
+  });
+
+  // The live path: the old rename took the FIRST <gametxt> in the text — the one the plan quotes — and
+  // left the real open inside the envelope as text. The rename must land on the located pair.
+  it('the <gametxt> rename lands on the real pair, never on a quote in the reasoning', () => {
+    const r = shapeMessage(reply('thinking'), mint());
+    expect(r.text).not.toMatch(/<\/?gametxt>/);                        // the real pair was renamed…
+    expect(r.stats.strippedThinkText).toContain('正文用 `<gametxt>` 包裹');  // …and the quote left with the plan
+  });
+
+  it('a </gametxt> inside a <maintext> envelope does not close it', () => {
+    const env = locateEnvelope('<maintext>\n<gametxt>meta</gametxt>\n<p>beat</p>');
+    expect(env.kind).toBe('maintext');
+    expect(env.close).toBe(null);
+  });
+
+  it('a <gametxt> the reasoning quotes never blocks the real <maintext>, and nothing is renamed', () => {
+    const raw = '<thinking>wrap the body in `<gametxt>`</thinking>\n<maintext>\n<p>beat</p>\n</maintext>';
+    const r = shapeMessage(raw, mint());
+    expect(r.stats.renamed).toBe(false);
+    expect(r.text.startsWith('<maintext>')).toBe(true);
+  });
+
+  it('a <think> pair INSIDE the story masks only itself, so the envelope around it still counts', () => {
+    const env = locateEnvelope('<maintext>\n<p>a</p>\n<think>her private thought</think>\n<p>b</p>\n</maintext>');
+    expect(env.kind).toBe('maintext');
+    expect(env.open.at).toBe(0);
+    expect(env.close).not.toBe(null);
+  });
+
+  it('the reshaped reply is stable — a second shape changes nothing', () => {
+    const once = shapeMessage(reply('thinking'), mint());
+    const twice = shapeMessage(once.text, mint());
+    expect(twice.text).toBe(once.text);
+  });
+
+  it('§4c closes a lost envelope at the REAL machinery, never at a tag the reasoning quotes', () => {
+    const raw = `<thinking>${quotedPlan}</thinking>\nShe left.\n<combat_log>\n[Probe] on X\n</combat_log>`;
+    const out = synthesizeEnvelope(raw);
+    const afterReasoning = out.text.slice(out.text.indexOf('</thinking>'));
+    expect(afterReasoning).toMatch(/^<\/thinking>\n<maintext>\s*She left\.\s*<\/maintext>\n<combat_log>\n/);
+  });
+
+  it('§4b closes a truncated <gametxt> with its own tag even when the reasoning quotes <maintext>', () => {
+    const raw = `<thinking>${quotedPlan}</thinking>\n<gametxt>\n<p>one</p>\n<p>tw`;
+    const out = repairTruncatedEnvelope(raw);
+    expect(out.closeTag).toBe('</gametxt>');
+    expect(out.text).toContain('<p>one</p>\n</gametxt>');
+  });
+});
+
+// The toast that tells the player a turn applied no state. Moved out of the host file so it can be tested
+// (L6); the quoted-tag case is why: a CoT listing `<UpdateVariable>` vouched for a block the reply lacked.
+describe('incompleteReplyReason (§4e)', () => {
+  it('a complete reply is not incomplete', () => {
+    expect(incompleteReplyReason('<maintext>\n<p>a</p>\n</maintext>\n<UpdateVariable>x</UpdateVariable>', 5)).toBe(null);
+  });
+  it('an envelope with no close is cut off', () => {
+    expect(incompleteReplyReason('<maintext>\n<p>a</p>', 5)).toBe('envelope');
+  });
+  it('a closed envelope with no <UpdateVariable> applied no state', () => {
+    expect(incompleteReplyReason('<gametxt>\n<p>a</p>\n</gametxt>', 5)).toBe('no-updatevar');
+  });
+  it('an <UpdateVariable> the reasoning only QUOTES does not count', () => {
+    const raw = '<thinking>I will end with `<UpdateVariable>`.</thinking>\n<maintext>\n<p>a</p>\n</maintext>';
+    expect(incompleteReplyReason(raw, 5)).toBe('no-updatevar');
+  });
+  it('a </maintext> the reasoning only QUOTES does not close a truncated reply', () => {
+    const raw = '<thinking>close with `</maintext>`</thinking>\n<maintext>\n<p>a</p>';
+    expect(incompleteReplyReason(raw, 5)).toBe('envelope');
+  });
+  it('the greeting and ordinary chat messages are exempt', () => {
+    expect(incompleteReplyReason('<maintext>\n<p>a</p>', 0)).toBe(null);
+    expect(incompleteReplyReason('Hello there.', 5)).toBe(null);
   });
 });
 

@@ -1,10 +1,10 @@
-// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v1.3
+// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v1.4
 //
 // Deterministically reshapes an AI reply into galgame's beat contract (plan: mvu-helper
 // plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). galgame's standard parser builds display beats ONLY
 // from closed <p>…</p> tags, and resolves each beat's backdrop to the nearest PRECEDING
 // <background scene="X"/> tag — so we (0) rename the engine's <gametxt> envelope to <maintext>
-// when no <maintext> exists (presets without galgame's COT keep the engine-native tag, which
+// when no <maintext> exists outside a reasoning block (presets without galgame's COT keep the engine-native tag, which
 // galgame's parser ignores), (1) wrap bare prose in <p>, (2) strip every scene tag the
 // narrator/galgame-COT emitted PLUS engine display-noise (<bgimg> prompt stripped;
 // <classmate_trait_check> hidden in an HTML comment so POST's inputRegex still reads it while
@@ -17,7 +17,7 @@
 // prose, then img1 img2), which would leave image #2's scene governing no beat, so it never shows. Every
 // image is guaranteed >=1 beat (a starved tail image steals a trailing beat). A leaked reasoning block
 // before <maintext> is stripped too — anchored on a </think> close (matched or orphan) OR on an unclosed
-// <think> open; either half can arrive alone. The write-back (shapeAndWriteWhenSettled) settles its async
+// <think> open; either half can arrive alone. A tag the reasoning QUOTES is never taken for the envelope (§0). The write-back (shapeAndWriteWhenSettled) settles its async
 // prerequisites first and then reads, shapes and writes in one synchronous step, so it never overwrites
 // an edit another writer made while the shaper waited.
 // Scene names are keyed by a per-message UID, never the chat index (§2.1 says why the index is wrong).
@@ -122,9 +122,6 @@ function imgSrcOf(block) {
 // ── tag patterns ──────────────────────────────────────────────────────────────
 const RE_MAINTEXT_OPEN = /<maintext>/i;
 const RE_MAINTEXT_CLOSE = /<\/maintext>/i;
-// Engine-native display envelope (School v3 output.txt). galgame parses ONLY <maintext>; presets
-// carrying galgame's COT teach the model <maintext>, but any other preset keeps <gametxt> and the
-// GUI renders nothing scene-wise. Renamed to <maintext> ONLY when no <maintext> exists.
 // BLOCK MACHINERY THAT LIVES OUTSIDE THE ENVELOPE — the anchor §4c closes against.
 // These are the blocks a finished reply puts AFTER </maintext>, and the pipeline already assumes it:
 // parseCombatLog reads <combat_log> off the TAIL. So closing the envelope before the first of them
@@ -132,8 +129,6 @@ const RE_MAINTEXT_CLOSE = /<\/maintext>/i;
 // <classmate_trait_check> is deliberately ABSENT: it is comment-hidden INSIDE inner (step 1), so
 // treating it as a boundary would move it to the tail and lose the hide.
 const RE_TAIL_MACHINERY = /<(?:combat_log|choices|UpdateVariable|POSTUpdateVariable|RES_Variable|RES_POST_Variable|StoryAnalysis|combat_calculation)\b/i;
-const RE_GAMETXT_OPEN = /<gametxt>/i;
-const RE_GAMETXT_CLOSE = /<\/gametxt>/i;
 // Engine/galgame-COT realtime-bg-gen prompt (<bgimg>TAGS</bgimg>, parser.js pairs it with the
 // PRECEDING <background> tag). Unused in our pipeline (backdrops come from the image-seam DB) and
 // ST's markdown renderer p-wraps the bare line → the raw prompt shows as a beat (proven live
@@ -210,6 +205,81 @@ const RE_THINK_TAG = /^think(?:ing)?$/i;
 // its later text replacement has, so it must stay in the reply rather than go out with the CoT.
 const RE_TRAILING_SELF_CLOSING_RUN = /(?:\s*<[A-Za-z][\w:.-]*(?:\s[^<>]*)?\/>)+\s*$/;
 const RE_SELF_CLOSING_TAG = /<[A-Za-z][\w:.-]*(?:\s[^<>]*)?\/>/g;
+const RE_ENVELOPE_TAG_NAME = /^(?:maintext|gametxt)$/i;
+const RE_ENVELOPE_CLOSE_ANY = /<\/(?:maintext|gametxt)>/i;
+const RE_UPDATEVAR_OPEN = /<UpdateVariable>/i;
+
+// ── §0 where the envelope is ─────────────────────────────────────────────────
+// A reasoning block QUOTES the reply's own tags while it plans its output — a <thinking> block listed
+// "`<DateAndTime/>` → `<location/>` → `<gametxt>` → `<combat_log>` → `<UpdateVariable>`" (live
+// 2026-09-29, a preset that makes the CoT visible). The <gametxt> rename took the FIRST <gametxt> in the
+// text — that quote — so the quote became the envelope: §0b cut the CoT in half at it, and the second
+// half, quoted tags and all, was <p>-wrapped into story beats (the real <gametxt> open rode inside as
+// text). So an envelope tag inside a closed reasoning block is text, not structure:
+//   • a matched <think>/<thinking> pair masks everything from its open through its close;
+//   • an orphan close masks everything before it (its open was consumed upstream).
+// An UNCLOSED open masks nothing, because nothing says where it ends. The pair rule covers it instead:
+// the envelope is the LAST open before the first close, so a quote ahead of the real open lands in the
+// head, where §0b strips it with the rest of the reasoning.
+function reasoningSpans(events) {
+  const spans = [];
+  for (const e of events) {
+    if (!RE_THINK_TAG.test(e.tag)) continue;
+    if (e.kind === 'open' && e.status === 'matched') spans.push([e.at, e.pairEnd]);
+    else if (e.kind === 'close' && e.status === 'orphan-close') spans.push([0, e.end]);
+  }
+  return spans;
+}
+
+function insideReasoning(spans, at) {
+  return spans.some(([from, to]) => at >= from && at < to);
+}
+
+// First match of `re` at or after `from` that no reasoning span covers; null when there is none.
+function firstOutsideReasoning(re, text, from, spans) {
+  const g = new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`);
+  g.lastIndex = from;
+  let m;
+  while ((m = g.exec(text)) !== null) {
+    if (!insideReasoning(spans, m.index)) return m;
+  }
+  return null;
+}
+
+/**
+ * Locate the reply's display envelope, ignoring every tag a reasoning block merely quotes.
+ * <gametxt> is the engine-native envelope (School v3 output.txt). galgame parses ONLY <maintext>, and
+ * presets carrying galgame's COT teach the model <maintext>, so <maintext> outranks <gametxt>: a reply
+ * carrying both keeps its <gametxt> as-is, and shapeMessage renames a located <gametxt> pair only when
+ * no <maintext> exists outside the reasoning.
+ * @param {string} text
+ * @returns {{ kind: 'maintext'|'gametxt'|null, open: {at: number, end: number}|null,
+ *   close: {at: number, end: number}|null, reasoning: Array<[number, number]> }}
+ *   close is null while the envelope is unclosed; open is then the FIRST open of its kind.
+ *   reasoning = the masked spans, for callers that search the text for other tags.
+ */
+export function locateEnvelope(text) {
+  const src = String(text == null ? '' : text);
+  const { events } = scanTagBalance(src);
+  const reasoning = reasoningSpans(events);
+  const tags = events.filter((e) =>
+    (e.kind === 'open' || e.kind === 'close') && RE_ENVELOPE_TAG_NAME.test(e.tag) && !insideReasoning(reasoning, e.at));
+  for (const kind of ['maintext', 'gametxt']) {
+    const own = tags.filter((e) => e.tag.toLowerCase() === kind);
+    const opens = own.filter((e) => e.kind === 'open');
+    const first = opens[0];
+    if (!first) continue;
+    const close = own.find((e) => e.kind === 'close' && e.at >= first.end) || null;
+    const open = close ? opens.filter((e) => e.at < close.at).pop() : first;
+    return {
+      kind,
+      open: { at: open.at, end: open.end },
+      close: close ? { at: close.at, end: close.end } : null,
+      reasoning,
+    };
+  }
+  return { kind: null, open: null, close: null, reasoning };
+}
 
 // Blocks whose CONTENT must never be re-wrapped (protected verbatim during the <p>-wrap pass).
 // Built as alternatives of one scanning regex; order matters only for overlap (none in practice).
@@ -460,11 +530,10 @@ export function renderUnplacedRolls(rolls) {
 // caller then keeps deferring, which is still better than closing an envelope around nothing.
 export function repairTruncatedEnvelope(raw) {
   const text = String(raw == null ? '' : raw);
-  const openMatch = text.match(RE_MAINTEXT_OPEN) || text.match(RE_GAMETXT_OPEN);
-  if (!openMatch) return null;
-  const isGametxt = !RE_MAINTEXT_OPEN.test(text);
-  const closeTag = isGametxt ? '</gametxt>' : '</maintext>';
-  const innerStart = openMatch.index + openMatch[0].length;
+  const env = locateEnvelope(text);
+  if (!env.kind) return null;
+  const closeTag = `</${env.kind}>`;
+  const innerStart = env.open.end;
 
   // The last COMPLETE paragraph inside the envelope. Anything after it is the truncation.
   const RE_P_CLOSE = /<\/p>/gi;
@@ -497,14 +566,17 @@ export function repairTruncatedEnvelope(raw) {
 // chat message, which carries no machinery and must stay untouched.
 export function synthesizeEnvelope(raw) {
   const text = String(raw == null ? '' : raw);
-  const openM = text.match(RE_MAINTEXT_OPEN);
-  const closeM = text.match(RE_MAINTEXT_CLOSE);
+  // Every anchor below skips the tags a reasoning block quotes (§0) — a quoted <combat_log> would
+  // otherwise close the envelope inside the CoT.
+  const { reasoning } = locateEnvelope(text);
+  const openM = firstOutsideReasoning(RE_MAINTEXT_OPEN, text, 0, reasoning);
+  const closeM = firstOutsideReasoning(RE_MAINTEXT_CLOSE, text, 0, reasoning);
   if (openM && closeM) return null;
 
   const machFrom = openM ? openM.index + openM[0].length : 0;
-  const machRel = RE_TAIL_MACHINERY.exec(text.slice(machFrom));
-  if (!machRel) return null;
-  const machAt = machFrom + machRel.index;
+  const machM = firstOutsideReasoning(RE_TAIL_MACHINERY, text, machFrom, reasoning);
+  if (!machM) return null;
+  const machAt = machM.index;
 
   // WHERE THE SYNTHESIZED OPEN GOES, when a reasoning block leaked into the head. It must land AFTER
   // the think tag, so step 0b (which only reads the head) still sees the leak and strips it; opening
@@ -545,6 +617,31 @@ export function awaitsEnvelopeRepair(deferred) {
   return ENVELOPE_REPAIR_DEFERRALS.includes(deferred);
 }
 
+// ── §4e incomplete-reply detection ───────────────────────────────────────────
+// TWO independent ways a generation can end without a usable turn, and the player must be told
+// about BOTH because the consequence is identical and invisible: the prose advanced the story and
+// the ENGINE DID NOT MOVE. Next turn the narrator reads that prose as fact while stat_data says it
+// never happened, and the divergence compounds silently from there.
+//
+//   • envelope    — no </maintext>|</gametxt> after the open. Cut off mid-output; also breaks galgame's parser.
+//   • no-updatevar— envelope closed, but no <UpdateVariable> after its open. Either the cut landed after
+//                   the closing tag, or the narrator simply omitted it. Either way RES gets no
+//                   Intent, resolves nothing, and the reply LOOKS complete — which makes this the
+//                   more dangerous of the two.
+// Tags a reasoning block quotes (§0) count for neither: a CoT that lists `<UpdateVariable>` among the
+// blocks it plans to write would otherwise vouch for a block the reply never carries.
+//
+// A greeting / imported first message legitimately has no <UpdateVariable>, so id 0 is exempt.
+export function incompleteReplyReason(raw, id) {
+  if (id === 0) return null;                            // greeting: no engine turn is expected
+  const text = String(raw == null ? '' : raw);
+  const env = locateEnvelope(text);
+  if (!env.kind) return null;                           // not a galgame-format reply at all
+  if (!firstOutsideReasoning(RE_ENVELOPE_CLOSE_ANY, text, env.open.end, env.reasoning)) return 'envelope';
+  if (!firstOutsideReasoning(RE_UPDATEVAR_OPEN, text, env.open.end, env.reasoning)) return 'no-updatevar';
+  return null;
+}
+
 // Which owed repairs to run when the turn finishes. `pending` maps message id → the chat key it was
 // deferred in. An id deferred in ANOTHER chat names a different message here, so it is dropped and
 // never shaped.
@@ -571,25 +668,29 @@ export function shapeMessage(raw, mintUid) {
 
   if (typeof raw !== 'string' || raw.length === 0) return unchanged();
 
-  // 0) Engine→galgame envelope bridge: no <maintext> but a closed <gametxt> pair → rename BOTH tags,
-  //    then shape normally. A reply that already has <maintext> keeps its <gametxt> (if any) as-is.
-  let text0 = raw;
-  if (!RE_MAINTEXT_OPEN.test(raw)) {
+  // 0) Locate the envelope (§0 above), so a tag a reasoning block quotes is never taken for it.
+  //    Engine→galgame bridge: a <gametxt> envelope is renamed to <maintext> at the located pair, then
+  //    shaped normally. A reply whose envelope is <maintext> keeps its <gametxt> (if any) as-is.
+  const env = locateEnvelope(raw);
+  if (!env.kind) {
     // No envelope of either kind. A reply carrying tail machinery is this game's and has LOST its
     // envelope (§4c repairs it once the turn is over); anything else is an ordinary message.
-    if (!RE_GAMETXT_OPEN.test(raw)) return unchanged(RE_TAIL_MACHINERY.test(raw) ? 'no-envelope' : null);
-    if (!RE_GAMETXT_CLOSE.test(raw)) return unchanged('gametxt-unclosed'); // still streaming — retry later
-    text0 = raw.replace(RE_GAMETXT_OPEN, '<maintext>').replace(RE_GAMETXT_CLOSE, '</maintext>');
+    const owesEnvelope = firstOutsideReasoning(RE_TAIL_MACHINERY, raw, 0, env.reasoning) !== null;
+    return unchanged(owesEnvelope ? 'no-envelope' : null);
+  }
+  if (!env.close) return unchanged(`${env.kind}-unclosed`); // still streaming — retry later
+
+  let text0 = raw;
+  const openAt = env.open.at;
+  let innerStart = env.open.end;
+  let innerEnd = env.close.at;
+  if (env.kind === 'gametxt') {
+    const body = raw.slice(env.open.end, env.close.at);
+    text0 = `${raw.slice(0, openAt)}<maintext>${body}</maintext>${raw.slice(env.close.end)}`;
+    innerStart = openAt + '<maintext>'.length;
+    innerEnd = innerStart + body.length;
     stats.renamed = true;
   }
-
-  const openMatch = text0.match(RE_MAINTEXT_OPEN);
-  const closeMatch = text0.match(RE_MAINTEXT_CLOSE);
-  if (!closeMatch) return unchanged('maintext-unclosed'); // still streaming — retry later
-
-  const innerStart = openMatch.index + openMatch[0].length;
-  const innerEnd = closeMatch.index;
-  if (innerEnd < innerStart) return unchanged(); // malformed (close before open) — leave alone
   let head = text0.slice(0, innerStart);
   let tail = text0.slice(innerEnd);
   let inner = text0.slice(innerStart, innerEnd);
@@ -659,8 +760,9 @@ export function shapeMessage(raw, mintUid) {
     // thinking beautifier rendered the block as a <style> element, galgame's parser fell through to
     // the raw floor, and no <background scene> was ever requested. Text before the open (usually
     // nothing) is kept — and so is the <maintext> open tag, by construction the LAST thing in `head`.
-    const envM = head.match(RE_MAINTEXT_OPEN);
-    const end = envM ? envM.index : head.length;
+    // The boundary is THAT tag's position, never a search of the head: a quoted <maintext> inside the
+    // span would cut the reasoning in half.
+    const end = openAt;
     if (end > thinkOpen.at) {
       const span = head.slice(thinkOpen.end, end);
       const markup = span.match(RE_TRAILING_SELF_CLOSING_RUN);

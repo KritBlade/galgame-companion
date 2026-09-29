@@ -1,9 +1,9 @@
-// galgame-companion v0.9.8
+// galgame-companion v0.9.10
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.9.8";
-  var BUILD = "8e09fc5";
+  var VERSION = "0.9.10";
+  var BUILD = "3e56baf";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -2748,8 +2748,6 @@
   var RE_MAINTEXT_OPEN = /<maintext>/i;
   var RE_MAINTEXT_CLOSE = /<\/maintext>/i;
   var RE_TAIL_MACHINERY = /<(?:combat_log|choices|UpdateVariable|POSTUpdateVariable|RES_Variable|RES_POST_Variable|StoryAnalysis|combat_calculation)\b/i;
-  var RE_GAMETXT_OPEN = /<gametxt>/i;
-  var RE_GAMETXT_CLOSE = /<\/gametxt>/i;
   var RE_BGIMG_TAG = /[ \t]*<bgimg>[\s\S]*?<\/bgimg>[ \t]*\r?\n?/gi;
   var RE_TRAIT_CHECK = /<classmate_trait_check>[\s\S]*?<\/classmate_trait_check>/gi;
   var RE_GC_HIDDEN = /<!--gc:hidden\n([\s\S]*?)\n-->/g;
@@ -2763,6 +2761,51 @@
   var RE_THINK_TAG = /^think(?:ing)?$/i;
   var RE_TRAILING_SELF_CLOSING_RUN = /(?:\s*<[A-Za-z][\w:.-]*(?:\s[^<>]*)?\/>)+\s*$/;
   var RE_SELF_CLOSING_TAG = /<[A-Za-z][\w:.-]*(?:\s[^<>]*)?\/>/g;
+  var RE_ENVELOPE_TAG_NAME = /^(?:maintext|gametxt)$/i;
+  var RE_ENVELOPE_CLOSE_ANY = /<\/(?:maintext|gametxt)>/i;
+  var RE_UPDATEVAR_OPEN = /<UpdateVariable>/i;
+  function reasoningSpans(events) {
+    const spans = [];
+    for (const e of events) {
+      if (!RE_THINK_TAG.test(e.tag)) continue;
+      if (e.kind === "open" && e.status === "matched") spans.push([e.at, e.pairEnd]);
+      else if (e.kind === "close" && e.status === "orphan-close") spans.push([0, e.end]);
+    }
+    return spans;
+  }
+  function insideReasoning(spans, at) {
+    return spans.some(([from, to]) => at >= from && at < to);
+  }
+  function firstOutsideReasoning(re, text, from, spans) {
+    const g = new RegExp(re.source, re.flags.includes("g") ? re.flags : `${re.flags}g`);
+    g.lastIndex = from;
+    let m;
+    while ((m = g.exec(text)) !== null) {
+      if (!insideReasoning(spans, m.index)) return m;
+    }
+    return null;
+  }
+  function locateEnvelope(text) {
+    const src = String(text == null ? "" : text);
+    const { events } = scanTagBalance(src);
+    const reasoning = reasoningSpans(events);
+    const tags = events.filter((e) => (e.kind === "open" || e.kind === "close") && RE_ENVELOPE_TAG_NAME.test(e.tag) && !insideReasoning(reasoning, e.at));
+    for (const kind of ["maintext", "gametxt"]) {
+      const own = tags.filter((e) => e.tag.toLowerCase() === kind);
+      const opens = own.filter((e) => e.kind === "open");
+      const first = opens[0];
+      if (!first) continue;
+      const close = own.find((e) => e.kind === "close" && e.at >= first.end) || null;
+      const open = close ? opens.filter((e) => e.at < close.at).pop() : first;
+      return {
+        kind,
+        open: { at: open.at, end: open.end },
+        close: close ? { at: close.at, end: close.end } : null,
+        reasoning
+      };
+    }
+    return { kind: null, open: null, close: null, reasoning };
+  }
   var PROTECTED_BLOCK_RE = new RegExp(
     [
       "<p(?:\\s[^>]*)?>[\\s\\S]*?<\\/p>",
@@ -2841,11 +2884,10 @@
   }
   function repairTruncatedEnvelope(raw) {
     const text = String(raw == null ? "" : raw);
-    const openMatch = text.match(RE_MAINTEXT_OPEN) || text.match(RE_GAMETXT_OPEN);
-    if (!openMatch) return null;
-    const isGametxt = !RE_MAINTEXT_OPEN.test(text);
-    const closeTag = isGametxt ? "</gametxt>" : "</maintext>";
-    const innerStart = openMatch.index + openMatch[0].length;
+    const env = locateEnvelope(text);
+    if (!env.kind) return null;
+    const closeTag = `</${env.kind}>`;
+    const innerStart = env.open.end;
     const RE_P_CLOSE = /<\/p>/gi;
     RE_P_CLOSE.lastIndex = innerStart;
     let lastEnd = -1;
@@ -2863,13 +2905,14 @@ ${closeTag}${text.slice(lastEnd)}`,
   }
   function synthesizeEnvelope(raw) {
     const text = String(raw == null ? "" : raw);
-    const openM = text.match(RE_MAINTEXT_OPEN);
-    const closeM = text.match(RE_MAINTEXT_CLOSE);
+    const { reasoning } = locateEnvelope(text);
+    const openM = firstOutsideReasoning(RE_MAINTEXT_OPEN, text, 0, reasoning);
+    const closeM = firstOutsideReasoning(RE_MAINTEXT_CLOSE, text, 0, reasoning);
     if (openM && closeM) return null;
     const machFrom = openM ? openM.index + openM[0].length : 0;
-    const machRel = RE_TAIL_MACHINERY.exec(text.slice(machFrom));
-    if (!machRel) return null;
-    const machAt = machFrom + machRel.index;
+    const machM = firstOutsideReasoning(RE_TAIL_MACHINERY, text, machFrom, reasoning);
+    if (!machM) return null;
+    const machAt = machM.index;
     let proseAt = 0;
     if (!openM) {
       const thinkEvents = scanTagBalance(text.slice(0, machAt)).events.filter((e) => RE_THINK_TAG.test(e.tag));
@@ -2898,6 +2941,15 @@ ${out.slice(proseAt)}`;
   var ENVELOPE_REPAIR_DEFERRALS = Object.freeze(["no-envelope", "gametxt-unclosed", "maintext-unclosed"]);
   function awaitsEnvelopeRepair(deferred) {
     return ENVELOPE_REPAIR_DEFERRALS.includes(deferred);
+  }
+  function incompleteReplyReason(raw, id) {
+    if (id === 0) return null;
+    const text = String(raw == null ? "" : raw);
+    const env = locateEnvelope(text);
+    if (!env.kind) return null;
+    if (!firstOutsideReasoning(RE_ENVELOPE_CLOSE_ANY, text, env.open.end, env.reasoning)) return "envelope";
+    if (!firstOutsideReasoning(RE_UPDATEVAR_OPEN, text, env.open.end, env.reasoning)) return "no-updatevar";
+    return null;
   }
   function envelopeRepairsToRun(pending2, chatKey) {
     const run = [];
@@ -2934,19 +2986,23 @@ ${out.slice(proseAt)}`;
       stats: blankStats()
     });
     if (typeof raw !== "string" || raw.length === 0) return unchanged();
+    const env = locateEnvelope(raw);
+    if (!env.kind) {
+      const owesEnvelope = firstOutsideReasoning(RE_TAIL_MACHINERY, raw, 0, env.reasoning) !== null;
+      return unchanged(owesEnvelope ? "no-envelope" : null);
+    }
+    if (!env.close) return unchanged(`${env.kind}-unclosed`);
     let text0 = raw;
-    if (!RE_MAINTEXT_OPEN.test(raw)) {
-      if (!RE_GAMETXT_OPEN.test(raw)) return unchanged(RE_TAIL_MACHINERY.test(raw) ? "no-envelope" : null);
-      if (!RE_GAMETXT_CLOSE.test(raw)) return unchanged("gametxt-unclosed");
-      text0 = raw.replace(RE_GAMETXT_OPEN, "<maintext>").replace(RE_GAMETXT_CLOSE, "</maintext>");
+    const openAt = env.open.at;
+    let innerStart = env.open.end;
+    let innerEnd = env.close.at;
+    if (env.kind === "gametxt") {
+      const body = raw.slice(env.open.end, env.close.at);
+      text0 = `${raw.slice(0, openAt)}<maintext>${body}</maintext>${raw.slice(env.close.end)}`;
+      innerStart = openAt + "<maintext>".length;
+      innerEnd = innerStart + body.length;
       stats.renamed = true;
     }
-    const openMatch = text0.match(RE_MAINTEXT_OPEN);
-    const closeMatch = text0.match(RE_MAINTEXT_CLOSE);
-    if (!closeMatch) return unchanged("maintext-unclosed");
-    const innerStart = openMatch.index + openMatch[0].length;
-    const innerEnd = closeMatch.index;
-    if (innerEnd < innerStart) return unchanged();
     let head = text0.slice(0, innerStart);
     let tail = text0.slice(innerEnd);
     let inner = text0.slice(innerStart, innerEnd);
@@ -2977,8 +3033,7 @@ ${rescued.join("\n\n")}
       head = head.slice(cutEnd).replace(/^\s+/, "");
       stats.strippedThink = 1;
     } else if (thinkOpen) {
-      const envM = head.match(RE_MAINTEXT_OPEN);
-      const end = envM ? envM.index : head.length;
+      const end = openAt;
       if (end > thinkOpen.at) {
         const span = head.slice(thinkOpen.end, end);
         const markup = span.match(RE_TRAILING_SELF_CLOSING_RUN);
@@ -3158,16 +3213,6 @@ ${inner.replace(/^\n+/, "")}`;
   var deferralLogged = /* @__PURE__ */ new Set();
   var pendingEnvelopeRepairs = /* @__PURE__ */ new Map();
   var incompleteToasted = /* @__PURE__ */ new Set();
-  var RE_HAS_UPDATEVAR = /<UpdateVariable>/i;
-  var RE_ENVELOPE_CLOSE = /<\/maintext>|<\/gametxt>/i;
-  var RE_ENVELOPE_OPEN = /<maintext>|<gametxt>/i;
-  function incompleteReplyReason(raw, id) {
-    if (id === 0) return null;
-    if (!RE_ENVELOPE_OPEN.test(raw)) return null;
-    if (!RE_ENVELOPE_CLOSE.test(raw)) return "envelope";
-    if (!RE_HAS_UPDATEVAR.test(raw)) return "no-updatevar";
-    return null;
-  }
   function toastIncompleteReply(id, reason) {
     const key = `${id}:${reason}`;
     if (incompleteToasted.has(key)) return;

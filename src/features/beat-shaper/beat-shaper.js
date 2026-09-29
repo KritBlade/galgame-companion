@@ -1,5 +1,5 @@
 // galgame-companion · beat-shaper — deterministic reshaping of AI replies into galgame's beat
-// contract (plan: mvu-helper plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). v0.7
+// contract (plan: mvu-helper plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). v0.8
 //
 // Event-driven wrapper around the pure transform in beat-shaper-core.js: on MESSAGE_RECEIVED /
 // MESSAGE_UPDATED, read the floor's raw text (TH getChatMessages), shape it, and write it back
@@ -34,7 +34,7 @@
 import { topWindow, log, warnToast } from '../../env.js';
 import {
   shapeMessage, sceneUid, shortHash, repairTruncatedEnvelope, synthesizeEnvelope, shapeAndWriteWhenSettled,
-  awaitsEnvelopeRepair, envelopeRepairsToRun,
+  awaitsEnvelopeRepair, envelopeRepairsToRun, incompleteReplyReason,
 } from './beat-shaper-core.js';
 import { isTurnBusy, onTurnPhaseClosed } from '../galgame-quirks/index.js';
 
@@ -77,32 +77,8 @@ const pendingEnvelopeRepairs = new Map();
 // retry + every later MESSAGE_UPDATED (image splices) would each re-toast the same dead turn.
 const incompleteToasted = new Set();
 
-// ── incomplete-reply detection (§4b) ─────────────────────────────────────────
-// TWO independent ways a generation can end without a usable turn, and the player must be told
-// about BOTH because the consequence is identical and invisible: the prose advanced the story and
-// the ENGINE DID NOT MOVE. Next turn the narrator reads that prose as fact while stat_data says it
-// never happened, and the divergence compounds silently from there.
-//
-//   • envelope    — no </maintext>|</gametxt>. Cut off mid-output; also breaks galgame's parser.
-//   • no-updatevar— envelope closed, but no <UpdateVariable> at all. Either the cut landed after
-//                   the closing tag, or the narrator simply omitted it. Either way RES gets no
-//                   Intent, resolves nothing, and the reply LOOKS complete — which makes this the
-//                   more dangerous of the two.
-//
-// A greeting / imported first message legitimately has no <UpdateVariable>, so id 0 is exempt.
-const RE_HAS_UPDATEVAR = /<UpdateVariable>/i;
-const RE_ENVELOPE_CLOSE = /<\/maintext>|<\/gametxt>/i;
-const RE_ENVELOPE_OPEN = /<maintext>|<gametxt>/i;
-
-function incompleteReplyReason(raw, id) {
-  if (id === 0) return null;                            // greeting: no engine turn is expected
-  if (!RE_ENVELOPE_OPEN.test(raw)) return null;         // not a galgame-format reply at all
-  if (!RE_ENVELOPE_CLOSE.test(raw)) return 'envelope';
-  if (!RE_HAS_UPDATEVAR.test(raw)) return 'no-updatevar';
-  return null;
-}
-
-// The player-facing half. Deliberately says REGENERATE rather than "continue": a continue can
+// ── incomplete-reply toast (§4e) ─────────────────────────────────────────────
+// The decision lives in core (incompleteReplyReason). The player-facing half. Deliberately says REGENERATE rather than "continue": a continue can
 // truncate again at the same ceiling and leaves a stitched reply, while a regenerate is one action
 // with a clean result. Nothing is auto-recovered — that is the user's call to make, not ours.
 function toastIncompleteReply(id, reason) {
