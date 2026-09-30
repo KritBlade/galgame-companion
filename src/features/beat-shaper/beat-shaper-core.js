@@ -1,4 +1,4 @@
-// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v1.4
+// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v1.5
 //
 // Deterministically reshapes an AI reply into galgame's beat contract (plan: mvu-helper
 // plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). galgame's standard parser builds display beats ONLY
@@ -17,7 +17,8 @@
 // prose, then img1 img2), which would leave image #2's scene governing no beat, so it never shows. Every
 // image is guaranteed >=1 beat (a starved tail image steals a trailing beat). A leaked reasoning block
 // before <maintext> is stripped too — anchored on a </think> close (matched or orphan) OR on an unclosed
-// <think> open; either half can arrive alone. A tag the reasoning QUOTES is never taken for the envelope (§0). The write-back (shapeAndWriteWhenSettled) settles its async
+// <think> open; either half can arrive alone. A tag the reasoning QUOTES is never taken for the envelope (§0).
+// An image never rides inside a beat: a pending <pic> splits its paragraph, and one already in a beat is lifted out. The write-back (shapeAndWriteWhenSettled) settles its async
 // prerequisites first and then reads, shapes and writes in one synchronous step, so it never overwrites
 // an edit another writer made while the shaper waited.
 // Scene names are keyed by a per-message UID, never the chat index (§2.1 says why the index is wrong).
@@ -198,7 +199,11 @@ const RE_EXISTING_UID = /<background\s+scene="(gc[0-9a-z]+-[0-9a-z]+)_scene_\d+_
 // Which balance events are a leaked reasoning block. Detection itself is the shared tag-balance
 // scanner (shared/tag-balance-core.js — every mis-emitted-tag shape used to grow its own regex fork
 // here); this file keeps only the POLICY: which tags are reasoning, and how a leak is repaired.
-const RE_THINK_TAG = /^think(?:ing)?$/i;
+// Reasoning is <think>, <thinking>, and the <thinking_*> family — a preset that splits its CoT into
+// <thinking_left>/<thinking_right> blocks (live 2026-09-30) otherwise lands in the story as beats.
+const RE_THINK_TAG = /^think(?:ing)?(?:_[a-z0-9]+)*$/i;
+// The same family as markup, for removing the tags from the CoT that §0b hands back.
+const RE_THINK_MARKUP = /<\/?think(?:ing)?(?:_[a-z0-9]+)*>/gi;
 // A run of bare self-closing tags (`<Name/>`, `<Name attr="x"/>`) at the very END of an unclosed
 // <think> span, right before the envelope: the reply's own markup, which the model wrote after its
 // thinking and before <maintext>. A placeholder such as a card's bare caption tag is the only anchor
@@ -287,6 +292,11 @@ const PROTECTED_BLOCK_RE = new RegExp(
   [
     '<p(?:\\s[^>]*)?>[\\s\\S]*?<\\/p>', // existing beats — never nest/double-wrap
     RE_IMG_WRAP.source, // rendered images
+    // An UN-RENDERED <pic>, for the same reason: the shape runs while an image is still generating
+    // (§3b), and mvu-helper later swaps the tag for the image IN PLACE. A <pic> the narrator put on the
+    // line right above its prose shares that paragraph, so wrapping the paragraph put the finished
+    // image INSIDE a beat — galgame printed the <img> markup as narration (live 2026-09-30).
+    '<pic\\b[^>]*>',
     '<styled\\b[^>]*>[\\s\\S]*?<\\/styled>',
     '<弹窗一>[\\s\\S]*?<\\/弹窗一>',
     '<弹窗二>[\\s\\S]*?<\\/弹窗二>',
@@ -500,7 +510,9 @@ export function renderUnplacedRolls(rolls) {
  *                     renamed: boolean, strippedBgimg: number, hidden: number,
  *                     strippedThink: number, strippedThinkText: string, thinkMarkupKept: number,
  *                     uid: string|null, picsPending: boolean,
- *                     rolls: number, rollsPlaced: number, rollsUnplaced: number, logStrayTags: number } }}
+ *                     rolls: number, rollsPlaced: number, rollsUnplaced: number, logStrayTags: number,
+ *                     imagesRehomed: number, imagesLifted: number } }}
+ *   imagesLifted counts image blocks moved OUT of a beat they sat inside (§2).
  *   strippedThinkText carries the CoT §0b removed — '' when nothing was stripped. The caller is
  *   expected to preserve it somewhere readable; this module only refuses to be the thing that
  *   destroys it (see §0b). thinkMarkupKept counts the bare self-closing tags an unclosed <think>
@@ -656,7 +668,7 @@ export function shapeMessage(raw, mintUid) {
   const blankStats = () => ({
     wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false,
     strippedBgimg: 0, hidden: 0, strippedThink: 0, strippedThinkText: '', thinkMarkupKept: 0, uid: null, uidMinted: false, picsPending: false,
-    rolls: 0, rollsPlaced: 0, rollsUnplaced: 0, logStrayTags: 0, imagesRehomed: 0,
+    rolls: 0, rollsPlaced: 0, rollsUnplaced: 0, logStrayTags: 0, imagesRehomed: 0, imagesLifted: 0,
   });
   const stats = blankStats();
   const unchanged = (deferred = null) => ({
@@ -745,7 +757,7 @@ export function shapeMessage(raw, mintUid) {
     // actual reasoning and the ONE copy in existence (ST's parser needs both tags), so deleting here
     // deleted it everywhere. The caller stashes it where a human can read it.
     const cutEnd = thinkCloses[thinkCloses.length - 1].end;
-    stats.strippedThinkText = head.slice(0, cutEnd).replace(/<\/?think(?:ing)?>/gi, '').trim();
+    stats.strippedThinkText = head.slice(0, cutEnd).replace(RE_THINK_MARKUP, '').trim();
     head = head.slice(cutEnd).replace(/^\s+/, '');
     stats.strippedThink = 1;
   } else if (thinkOpen) {
@@ -826,7 +838,9 @@ export function shapeMessage(raw, mintUid) {
   stats.rollsPlaced = placement.placed;
   stats.rollsUnplaced = placement.unplaced.length;
 
-  // 2) <p>-wrap bare prose between protected blocks, per natural paragraph (blank-line split).
+  // 2) <p>-wrap bare prose between protected blocks, per natural paragraph (blank-line split). First,
+  //    any image already inside a beat is lifted out of it — the wrap never reopens a beat.
+  inner = liftImagesFromBeats(inner, stats);
   inner = wrapBareProse(inner, stats);
 
   // 3) Inject our scenes, bound to BEATS not raw image offsets. galgame resolves a beat's backdrop to the
@@ -905,6 +919,33 @@ export function shapeMessage(raw, mintUid) {
 // Wrap every bare-prose paragraph in <p>…</p>, leaving protected blocks and tag-only command
 // lines untouched. Splits free text on blank lines (one natural paragraph = one beat; galgame's
 // own pagination handles long beats).
+// Image machinery (a rendered wrap or an un-rendered <pic>) that already sits INSIDE a beat: a reply
+// shaped before the <pic> above was protected, or a narrator that writes its own <p> around one. The
+// wrap pass never reopens an existing beat, so without this the image stays in it for good.
+const RE_BEAT = /(<p(?:\s[^>]*)?>)([\s\S]*?)<\/p>/gi;
+const RE_IMAGE_MACHINERY = new RegExp(`${RE_IMG_WRAP.source}|<pic\\b[^>]*>`, 'gi');
+
+// Split every beat that holds image machinery around it: the text on each side keeps its own beat
+// (same <p> open tag), and the image stands between them, outside any beat.
+function liftImagesFromBeats(inner, stats) {
+  return inner.replace(RE_BEAT, (beat, open, body) => {
+    const images = body.match(RE_IMAGE_MACHINERY);
+    if (!images) return beat;
+    const pieces = [];
+    let cursor = 0;
+    for (const m of body.matchAll(RE_IMAGE_MACHINERY)) {
+      const text = body.slice(cursor, m.index).trim();
+      if (text) pieces.push(`${open}${text}</p>`);
+      pieces.push(m[0]);
+      cursor = m.index + m[0].length;
+    }
+    const rest = body.slice(cursor).trim();
+    if (rest) pieces.push(`${open}${rest}</p>`);
+    stats.imagesLifted += images.length;
+    return pieces.join('\n\n');
+  });
+}
+
 function wrapBareProse(inner, stats) {
   const out = [];
   let cursor = 0;

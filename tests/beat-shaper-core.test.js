@@ -548,6 +548,94 @@ describe('§0 envelope location — a tag the reasoning quotes is text, not stru
   });
 });
 
+// A preset that splits its CoT into <thinking_left>/<thinking_right> and writes NO envelope (live 2026-09-30,
+// msg 38): neither tag was reasoning to the shaper, so §4c opened the envelope at 0 and every line of the
+// CoT became a narration beat. MUTATION TARGET: RE_THINK_TAG back to /^think(?:ing)?$/.
+describe('the <thinking_*> family is reasoning too', () => {
+  const split = [
+    '<thinking_left>\n1. 上一輪時空：主角公寓內。\n</thinking_left>',
+    '',
+    '<thinking_right>\n一、她（美月）是誰：青梅竹馬。\n</thinking_right>',
+    '',
+    '她抬起頭。',
+    '',
+    '<combat_log>\n[Probe] on Mitsuki — DC 11, RawDie 13 +2 = 15 → Success\n</combat_log>',
+    '<UpdateVariable>x</UpdateVariable>',
+  ].join('\n');
+
+  it('an envelope synthesized for a reply with no envelope opens AFTER the last <thinking_*> block', () => {
+    const out = synthesizeEnvelope(split);
+    expect(out.text.indexOf('</thinking_right>')).toBeLessThan(out.text.indexOf('<maintext>'));
+    const shaped = shapeMessage(out.text, mint());
+    expect(shaped.stats.strippedThink).toBe(1);
+    expect(shaped.text).not.toMatch(/thinking_(left|right)/);
+    expect(shaped.text).not.toContain('上一輪時空');
+    expect(shaped.stats.strippedThinkText).toContain('上一輪時空');
+    expect(shaped.stats.strippedThinkText).toContain('她（美月）是誰');
+    expect(shaped.stats.strippedThinkText).not.toMatch(/<\/?thinking_/);  // the tags are packaging
+    expect(shaped.text).toContain('<p>她抬起頭。</p>');
+  });
+
+  it.each(['thinking_left', 'thinking_right', 'thinking_director'])('a closed <%s> block ahead of the envelope is stripped', (tag) => {
+    const r = shapeMessage(`<${tag}>\nplan the scene\n</${tag}>\n<maintext>\n<p>a</p>\n</maintext>`, mint());
+    expect(r.stats.strippedThink).toBe(1);
+    expect(r.text.startsWith('<maintext>')).toBe(true);
+    expect(r.stats.strippedThinkText).toBe('plan the scene');
+  });
+
+  it('a tag quoted inside a <thinking_*> block is masked like one inside <thinking>', () => {
+    const env = locateEnvelope('<thinking_right>wrap it in `<maintext>`</thinking_right>\n<gametxt>\n<p>a</p>\n</gametxt>');
+    expect(env.kind).toBe('gametxt');
+  });
+
+  it('a tag that only STARTS with "think" is not reasoning', () => {
+    const r = shapeMessage('<thinker>kept</thinker>\n<maintext>\n<p>a</p>\n</maintext>', mint());
+    expect(r.stats.strippedThink).toBe(0);
+    expect(r.text).toContain('<thinker>kept</thinker>');
+  });
+});
+
+// galgame builds a narration line from a <p>'s text, so an image INSIDE a beat prints its <img> markup as
+// narration (live 2026-09-30, msg 36). The narrator put its <pic> on the line right above the prose, the
+// shape ran while the image was still generating, and mvu-helper swapped the tag for the image in place.
+describe('an image never rides inside a beat', () => {
+  const picTag = '<pic char="美月" outfit="default" type="scene" prompt="1girl, 1boy, mitsuki throwing a book">';
+  const pending = `<maintext>\n「笨、笨蛋勇希——！」\n\n${picTag}\n她整張臉紅透了。\n\n我慌忙抬手接住。\n</maintext>`;
+
+  // MUTATION TARGET: drop the <pic> alternative from PROTECTED_BLOCK_RE.
+  it('a pending <pic> sharing a paragraph with prose splits it, so the swapped-in image lands outside a beat', () => {
+    const r = shapeMessage(pending, mint());
+    expect(r.stats.picsPending).toBe(true);
+    expect(r.text).not.toMatch(/<p>[^<]*<pic/);
+    expect(r.text).toContain(`${picTag}\n<p>她整張臉紅透了。</p>`);
+    expect(r.text).toContain('<p>「笨、笨蛋勇希——！」</p>');
+  });
+
+  // MUTATION TARGET: drop the liftImagesFromBeats call.
+  it('an image already inside a beat is lifted out, and each side keeps its own beat', () => {
+    const inBeat = `<maintext>\n<p>「笨、笨蛋勇希——！」</p>\n\n<p>\n${img(1)}\n她整張臉紅透了。</p>\n</maintext>`;
+    const r = shapeMessage(inBeat, mint());
+    expect(r.stats.imagesLifted).toBe(1);
+    const beats = [...r.text.matchAll(/<p>([\s\S]*?)<\/p>/g)].map((m) => m[1]);
+    expect(beats.some((b) => b.includes('<img'))).toBe(false);
+    expect(r.text).toContain('<p>她整張臉紅透了。</p>');
+    expect(r.stats.scenes).toBe(1);                                   // the lifted image still gets its backdrop
+  });
+
+  it('text on BOTH sides of an image in one beat stays in two beats, with the beat\'s own open tag', () => {
+    const inBeat = `<maintext>\n<p class="x">before ${picTag} after</p>\n</maintext>`;
+    const r = shapeMessage(inBeat, mint());
+    expect(r.text).toContain(`<p class="x">before</p>\n\n${picTag}\n\n<p class="x">after</p>`);
+  });
+
+  it('lifting is stable — a second shape changes nothing', () => {
+    const once = shapeMessage(`<maintext>\n<p>\n${img(1)}\n她整張臉紅透了。</p>\n</maintext>`, mint());
+    const twice = shapeMessage(once.text, mint());
+    expect(twice.text).toBe(once.text);
+    expect(twice.stats.imagesLifted).toBe(0);
+  });
+});
+
 // The toast that tells the player a turn applied no state. Moved out of the host file so it can be tested
 // (L6); the quoted-tag case is why: a CoT listing `<UpdateVariable>` vouched for a block the reply lacked.
 describe('incompleteReplyReason (§4e)', () => {

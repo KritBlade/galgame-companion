@@ -1,9 +1,9 @@
-// galgame-companion v0.9.10
+// galgame-companion v0.9.11
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.9.10";
-  var BUILD = "3e56baf";
+  var VERSION = "0.9.11";
+  var BUILD = "c8a56cb";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -2758,7 +2758,8 @@
   var RE_HAS_IMG = /<img\b/i;
   var RE_P_OPEN = /<p(?:\s[^>]*)?>/gi;
   var RE_EXISTING_UID = /<background\s+scene="(gc[0-9a-z]+-[0-9a-z]+)_scene_\d+_[0-9a-z]+"/i;
-  var RE_THINK_TAG = /^think(?:ing)?$/i;
+  var RE_THINK_TAG = /^think(?:ing)?(?:_[a-z0-9]+)*$/i;
+  var RE_THINK_MARKUP = /<\/?think(?:ing)?(?:_[a-z0-9]+)*>/gi;
   var RE_TRAILING_SELF_CLOSING_RUN = /(?:\s*<[A-Za-z][\w:.-]*(?:\s[^<>]*)?\/>)+\s*$/;
   var RE_SELF_CLOSING_TAG = /<[A-Za-z][\w:.-]*(?:\s[^<>]*)?\/>/g;
   var RE_ENVELOPE_TAG_NAME = /^(?:maintext|gametxt)$/i;
@@ -2812,6 +2813,11 @@
       // existing beats — never nest/double-wrap
       RE_IMG_WRAP.source,
       // rendered images
+      // An UN-RENDERED <pic>, for the same reason: the shape runs while an image is still generating
+      // (§3b), and mvu-helper later swaps the tag for the image IN PLACE. A <pic> the narrator put on the
+      // line right above its prose shares that paragraph, so wrapping the paragraph put the finished
+      // image INSIDE a beat — galgame printed the <img> markup as narration (live 2026-09-30).
+      "<pic\\b[^>]*>",
       "<styled\\b[^>]*>[\\s\\S]*?<\\/styled>",
       "<弹窗一>[\\s\\S]*?<\\/弹窗一>",
       "<弹窗二>[\\s\\S]*?<\\/弹窗二>",
@@ -2975,7 +2981,8 @@ ${out.slice(proseAt)}`;
       rollsPlaced: 0,
       rollsUnplaced: 0,
       logStrayTags: 0,
-      imagesRehomed: 0
+      imagesRehomed: 0,
+      imagesLifted: 0
     });
     const stats = blankStats();
     const unchanged = (deferred = null) => ({
@@ -3029,7 +3036,7 @@ ${rescued.join("\n\n")}
     const thinkOpen = thinkEvents.find((e) => e.kind === "open" && e.status === "unclosed-open");
     if (thinkCloses.length) {
       const cutEnd = thinkCloses[thinkCloses.length - 1].end;
-      stats.strippedThinkText = head.slice(0, cutEnd).replace(/<\/?think(?:ing)?>/gi, "").trim();
+      stats.strippedThinkText = head.slice(0, cutEnd).replace(RE_THINK_MARKUP, "").trim();
       head = head.slice(cutEnd).replace(/^\s+/, "");
       stats.strippedThink = 1;
     } else if (thinkOpen) {
@@ -3077,6 +3084,7 @@ ${inner.replace(/^\n+/, "")}`;
     stats.logStrayTags = countCombatLogStrayTags(tail);
     stats.rollsPlaced = placement.placed;
     stats.rollsUnplaced = placement.unplaced.length;
+    inner = liftImagesFromBeats(inner, stats);
     inner = wrapBareProse(inner, stats);
     const imgs = [];
     RE_IMG_WRAP.lastIndex = 0;
@@ -3124,6 +3132,26 @@ ${inner.replace(/^\n+/, "")}`;
     }
     const text = head + inner + tail;
     return { text, changed: text !== raw, deferred: null, stats };
+  }
+  var RE_BEAT = /(<p(?:\s[^>]*)?>)([\s\S]*?)<\/p>/gi;
+  var RE_IMAGE_MACHINERY = new RegExp(`${RE_IMG_WRAP.source}|<pic\\b[^>]*>`, "gi");
+  function liftImagesFromBeats(inner, stats) {
+    return inner.replace(RE_BEAT, (beat, open, body) => {
+      const images = body.match(RE_IMAGE_MACHINERY);
+      if (!images) return beat;
+      const pieces = [];
+      let cursor = 0;
+      for (const m of body.matchAll(RE_IMAGE_MACHINERY)) {
+        const text = body.slice(cursor, m.index).trim();
+        if (text) pieces.push(`${open}${text}</p>`);
+        pieces.push(m[0]);
+        cursor = m.index + m[0].length;
+      }
+      const rest = body.slice(cursor).trim();
+      if (rest) pieces.push(`${open}${rest}</p>`);
+      stats.imagesLifted += images.length;
+      return pieces.join("\n\n");
+    });
   }
   function wrapBareProse(inner, stats) {
     const out = [];
@@ -3363,7 +3391,7 @@ ${cot}` : cot;
       }
       const { stats } = result;
       log.image(
-        `beat-shaper msg=${id}:${stats.renamed ? " gametxt→maintext" : ""} wrapped=${stats.wrapped}p scenes=${stats.scenes}${stats.scenes ? " (hoisted #1)" : ""}${stats.picsPending ? " [scene binding HELD BACK — raw <pic> still un-rendered]" : ""} strippedScenes=${stats.strippedScenes}${stats.uid ? ` uid=${stats.uid}(${stats.uidMinted ? "minted" : "kept"})` : ""}${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ""}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ""}${stats.strippedThink ? ` strippedThink=1 (${stats.strippedThinkText.length}c leaked CoT moved to extra.reasoning${stats.thinkMarkupKept ? `; ${stats.thinkMarkupKept} bare tag(s) before the envelope kept in the reply` : ""})` : ""} rolls=${stats.rolls}(placed=${stats.rollsPlaced} unplaced=${stats.rollsUnplaced})${stats.imagesRehomed ? ` imagesRehomed=${stats.imagesRehomed} (were OUTSIDE <maintext>)` : ""}${settledRounds ? ` prerequisiteRounds=${settledRounds} (settled before the write; the written text is a fresh read after them)` : ""}`
+        `beat-shaper msg=${id}:${stats.renamed ? " gametxt→maintext" : ""} wrapped=${stats.wrapped}p scenes=${stats.scenes}${stats.scenes ? " (hoisted #1)" : ""}${stats.picsPending ? " [scene binding HELD BACK — raw <pic> still un-rendered]" : ""} strippedScenes=${stats.strippedScenes}${stats.uid ? ` uid=${stats.uid}(${stats.uidMinted ? "minted" : "kept"})` : ""}${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ""}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ""}${stats.strippedThink ? ` strippedThink=1 (${stats.strippedThinkText.length}c leaked CoT moved to extra.reasoning${stats.thinkMarkupKept ? `; ${stats.thinkMarkupKept} bare tag(s) before the envelope kept in the reply` : ""})` : ""} rolls=${stats.rolls}(placed=${stats.rollsPlaced} unplaced=${stats.rollsUnplaced})${stats.imagesRehomed ? ` imagesRehomed=${stats.imagesRehomed} (were OUTSIDE <maintext>)` : ""}${stats.imagesLifted ? ` imagesLifted=${stats.imagesLifted} (were INSIDE a beat)` : ""}${settledRounds ? ` prerequisiteRounds=${settledRounds} (settled before the write; the written text is a fresh read after them)` : ""}`
       );
       if (stats.imagesRehomed) {
         log.warn(
