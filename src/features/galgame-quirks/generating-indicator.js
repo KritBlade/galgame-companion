@@ -28,8 +28,8 @@
 // WE OWN BOTH EDGES. galgame only ever shows the popup on GENERATION_STARTED (enhanced-mode.js) or a
 // regenerate click — i.e. never during PRE, which is the half the player most needs to see. So this
 // adds `.active` as well as removing it, and RECONCILES on a poll rather than trusting edges alone:
-// the same lesson image-seam's ForceImageType latch learned the hard way — an edge-driven flag is
-// only ever as correct as the last edge it happened to see, and galgame rebuilds this element.
+// an edge-driven flag is only ever as correct as the last edge it happened to see, and galgame
+// rebuilds this element.
 
 import { DOC, topWindow, log } from '../../env.js';
 

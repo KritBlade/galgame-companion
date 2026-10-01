@@ -1,5 +1,5 @@
 // galgame-companion · image-seam (G4b) — feed mvu-helper's generated images into galgame's own
-// backdrop library, and flip the ForceImageType latch on immersive enter/exit. GCP §10.3 / VPP §3. v0.12
+// backdrop library. GCP §10.3 / VPP §3. v0.13
 //
 // PIPELINE: the narrator writes `<background scene="X">` beats; mvu-helper draws each `<pic>` and
 // stamps `<span class="auto-img-wrap"><img src="…"></span>` into the message (then emits
@@ -30,10 +30,10 @@
 // saveBackground(); packId from localStorage `galgame-ui-plugin_current_pack` (default
 // `pack_default`), db/image-packs.js.
 
-import { DOC, topWindow, log } from '../../env.js';
+import { topWindow, log } from '../../env.js';
 import { uidOfSceneName, currentChatKey, registerWritePrerequisite } from '../beat-shaper/index.js';
 import {
-  staleSiblingKeys, deadBackgroundKeys, pairImagesToScenes, unboundImageReport, decideForceReconcile, latchFloors,
+  staleSiblingKeys, deadBackgroundKeys, pairImagesToScenes, unboundImageReport,
   missingBackdropPairs, pairSignature, backdropScenesOwed,
 } from './image-seam-core.js';
 import {
@@ -45,11 +45,6 @@ import {
 // Background Manager patch needs the same library, and one name for one store is the point.
 const CURRENT_PACK_LS = 'galgame-ui-plugin_current_pack';
 const DEFAULT_PACK_ID = 'pack_default';
-const OVERLAY_ID = 'gal-global-overlay';
-
-// EXPORTED for tests/schoolv4-contract-core.mjs — see the note on next-block.js's BIND_PATH.
-export const FORCE_PATH = 'Preferences.ForceImageType'; // dot-path WITHOUT the stat_data. prefix (Mvu API)
-const FLOOR_LOOKBACK = 30;
 
 // ── galgame IndexedDB write ───────────────────────────────────────────────────
 function currentPackId() {
@@ -320,193 +315,6 @@ function scheduleSweep(why) {
   }, SWEEP_DEBOUNCE_MS);
 }
 
-// ── ForceImageType latch flip (paired with mvu-helper G4a) ────────────────────
-function topMvu() {
-  try { return topWindow.Mvu || null; } catch (e) { log.warn('image-seam: reaching top Mvu threw:', e); return null; }
-}
-
-// The floors the latch is written to — newest-first, the newest floor holding stat_data and the one
-// beneath it (image-seam-core latchFloors says why two: a regenerate or swipe of the newest reply
-// derives its state from the floor beneath, and mvu-helper's draw pass reads the latch there). The
-// newest is also the floor the reconcile reads. [] when no floor holds stat_data yet.
-function latchTargetFloors() {
-  let last = -1;
-  try { const n = Number(window.getLastMessageId ? window.getLastMessageId() : NaN); if (Number.isFinite(n) && n >= 0) last = n; }
-  catch (e) { log.warn('image-seam: getLastMessageId threw — falling back to the chat length:', e); }
-  if (last < 0) {
-    try { const chat = topWindow.SillyTavern && topWindow.SillyTavern.getContext && topWindow.SillyTavern.getContext().chat; if (Array.isArray(chat)) last = chat.length - 1; }
-    catch (e) { log.warn('image-seam: reading the chat length threw — no data floor this attempt:', e); }
-  }
-  if (typeof window.getVariables !== 'function') return [];
-  const hasStatData = (id) => {
-    try { const v = window.getVariables({ type: 'message', message_id: id }); return !!(v && v.stat_data); }
-    catch (e) { log.warn(`image-seam: getVariables(message ${id}) threw — treating that floor as holding no stat_data:`, e); return false; }
-  };
-  return latchFloors(last, hasStatData, FLOOR_LOOKBACK);
-}
-
-// Single flip attempt. Returns 'ok' (written) | 'retry' (transient — Mvu/floor not ready yet, worth
-// trying again) | 'skip' (PERMANENT — setMvuVariable returned false, meaning this card has no
-// ForceImageType path at all; retrying can never create it).
-//
-// LOG LEVELS HERE ARE DELIBERATE (fixed 2026-08-02). Every 'retry' reason below is EXPECTED on a
-// cold page load: JS-Slash-Runner attaches top-window Mvu asynchronously, and galgame-mode entry
-// routinely wins that race — so a first-attempt miss is the retry loop working, not a fault. These
-// used to be log.warn (always printed) while the SUCCESS was gated behind the imagegen debug
-// domain: the console shouted about a self-healing race and stayed silent about the recovery, so a
-// reader with the domain off saw only the alarm. That is backwards, and it cost a real
-// "what is this?" investigation. Now:
-//   transient miss  → log.image  (diagnostic detail, gated)
-//   recovery/result → log.image  (same channel as the misses, so the pair reads together)
-//   gave up / skip  → log.warn   (ungated — the only outcomes a user can act on)
-async function attemptForceImageType(on) {
-  const Mvu = topMvu();
-  if (!Mvu || typeof Mvu.setMvuVariable !== 'function') {
-    log.image('image-seam: top-window Mvu not attached yet — ForceImageType flip deferred to the retry loop');
-    return 'retry';
-  }
-  const floors = latchTargetFloors();
-  if (!floors.length) { log.image('image-seam: no data floor yet — ForceImageType flip deferred to the retry loop'); return 'retry'; }
-  try {
-    const written = [];
-    for (const id of floors) {
-      // eslint-disable-next-line no-await-in-loop -- serial on purpose: two floors, and the second write must not race the first
-      const data = Mvu.getMvuData({ type: 'message', message_id: id });
-      if (!data || !data.stat_data) { log.image(`image-seam: floor ${id} has no stat_data yet — ForceImageType flip deferred to the retry loop`); return 'retry'; }
-      // setMvuVariable returns false on an unknown path — i.e. a card WITHOUT the G4a init. Tri-state
-      // on the mvu-helper side means that's fine (absent latch = honor the tag); we just skip for good.
-      const okSet = Mvu.setMvuVariable(data, FORCE_PATH, on, { reason: `galgame ${on ? 'enter' : 'exit'}` });
-      if (okSet === false) {
-        log.warn(`image-seam: ${FORCE_PATH} not on this card (card-side init missing) — skip flip`);
-        return 'skip';
-      }
-      // eslint-disable-next-line no-await-in-loop -- see above
-      await Mvu.replaceMvuData(data, { type: 'message', message_id: id });
-      written.push(id);
-    }
-    log.image(`image-seam: ForceImageType → ${on} (floors ${written.join(', ')}: the newest and the one beneath, so a regenerate or swipe of the newest reply reads it too)`);
-    return 'ok';
-  } catch (e) {
-    // NOT the async-attach race — a real throw from the MVU API. Kept ungated with its error object:
-    // it can repeat 10 times, but a silent exception is worse than a repeated one.
-    log.warn('image-seam: ForceImageType flip threw (will retry):', e);
-    return 'retry';
-  }
-}
-
-// RETRY WRAPPER (live-verified bug, 2026-07-22): topMvu() reads window.top.Mvu, which JS-Slash-Runner
-// attaches ASYNCHRONOUSLY — a syncGalState() firing right on galgame-mode ENTRY (e.g. page just loaded,
-// or the overlay opens before the iframe script finishes) can hit "Mvu unavailable" and the OLD
-// single-shot setForceImageType just gave up silently. Since the caller only re-invokes on the NEXT
-// active-class edge (an exit→enter cycle), one bad-timing miss meant EVERY image for that whole galgame
-// session generated at the narrator's own (unforced) <pic type=> — e.g. a "portrait" tag rendered
-// full-bleed as the stage backdrop. Mirrors mvu-helper's OWN index.js initial-load-race retry shape
-// (bounded loop, 1.5s spacing) — this is the SAME race, just on the other side of the seam.
-const FORCE_RETRY_MS = 1500;
-const FORCE_RETRY_MAX = 10;
-let desiredForceState = null;   // the MOST RECENT requested on-value — a rapid exit-before-retry-lands must chase this, not a stale target
-let forceRetryRunning = false;
-function setForceImageType(on) {
-  desiredForceState = on;
-  if (forceRetryRunning) return;   // a loop is already chasing — it re-reads desiredForceState every attempt
-  forceRetryRunning = true;
-  (async () => {
-    for (let i = 0; i < FORCE_RETRY_MAX; i++) {
-      const target = desiredForceState;
-      // eslint-disable-next-line no-await-in-loop -- intentionally serial: each attempt must see the latest desired state
-      const result = await attemptForceImageType(target);
-      if ((result === 'ok' || result === 'skip') && desiredForceState === target) { forceRetryRunning = false; return; }
-      if (result === 'ok' || result === 'skip') continue;   // desired changed mid-write — loop again for the new target now
-      // eslint-disable-next-line no-await-in-loop -- bounded retry delay, not a busy loop
-      await new Promise((res) => setTimeout(res, FORCE_RETRY_MS));
-    }
-    // THE line that matters: every transient miss above is silent by design, so this is the only
-    // signal that the race did NOT self-heal. Says how long it tried, so "10 attempts" cannot be
-    // misread as instant.
-    log.warn(`image-seam: ForceImageType flip GAVE UP after ${FORCE_RETRY_MAX} attempts over ~${Math.round((FORCE_RETRY_MAX * FORCE_RETRY_MS) / 1000)}s (target=${desiredForceState}) — ` +
-      'top-window Mvu never became available. The galgame stage may receive non-uniform image types this session.');
-    forceRetryRunning = false;
-  })();
-}
-
-// ── immersive enter/exit detection (overlay .active) ──────────────────────────
-function overlayActive() {
-  const ov = DOC.getElementById(OVERLAY_ID);
-  if (!ov) return false;
-  try { if (DOC.defaultView && DOC.defaultView.getComputedStyle(ov).display === 'none') return false; } catch (e) { /* ignore */ }
-  return ov.classList.contains('active');
-}
-
-let galActive = false;
-function syncGalState() {
-  const now = overlayActive();
-  if (now === galActive) return;
-  galActive = now;
-  setForceImageType(now); // enter → true, exit → false
-}
-
-// ── the reconcile (see image-seam-core.js decideForceReconcile for WHY) ───────
-// The edge tracker above is fast but only as correct as the last edge it saw, and it can both misread
-// the first one and miss a later one entirely. This is the backstop: read what is STORED, look at what
-// is really on screen, write only on disagreement.
-//
-// WHY IT WAITS. Reconciling the instant the seam starts would just re-read the same lie the edge
-// tracker read — galgame is still initialising, so the honest answer to "is the player immersive?" is
-// not available yet. The delay is the whole mechanism, not a hedge against slowness.
-const RECONCILE_SETTLE_MS = 5000;
-let reconcileTimer = null;
-
-// The stored latch, resolved through FORCE_PATH. `{ok: false}` for "not readable yet" (Mvu not attached,
-// no data floor) — distinct from a resolved `undefined`, which means the card genuinely has no latch.
-function readStoredForceImageType() {
-  const Mvu = topMvu();
-  if (!Mvu || typeof Mvu.getMvuData !== 'function') return { ok: false };
-  const id = latchTargetFloors()[0];
-  if (id === undefined) return { ok: false };
-  try {
-    const data = Mvu.getMvuData({ type: 'message', message_id: id });
-    if (!data || !data.stat_data) return { ok: false };
-    let cursor = data.stat_data;
-    for (const segment of FORCE_PATH.split('.')) {
-      if (cursor == null || typeof cursor !== 'object') return { ok: true, value: undefined, floor: id };
-      cursor = cursor[segment];
-    }
-    return { ok: true, value: cursor, floor: id };
-  } catch (e) {
-    // Not the async-attach race (that is the !Mvu branch above) — a real throw from the MVU API.
-    log.warn('image-seam: could not read the stored ForceImageType latch — reconcile skipped:', e);
-    return { ok: false };
-  }
-}
-
-function reconcileForceImageType(why) {
-  const read = readStoredForceImageType();
-  if (!read.ok) {
-    // Expected on a cold load; the next trigger (chat load) runs it again.
-    log.image(`image-seam: ForceImageType reconcile (${why}) — state not readable yet, skipped`);
-    return;
-  }
-  const live = overlayActive();
-  const decision = decideForceReconcile({ stored: read.value, live });
-  // Resync the edge tracker either way: leaving it stale would make the NEXT edge compute from a base
-  // we have just proven wrong, which is how a missed edge turns into a permanently wrong latch.
-  galActive = live;
-  if (!decision.write) {
-    log.image(`image-seam: ForceImageType reconcile (${why}) — ${decision.reason}`);
-    return;
-  }
-  // Ungated: a drift means every image generated since the latch went wrong used the wrong aspect, and
-  // nothing else in the log says so. Names both sides so it cannot be misread as a routine flip.
-  log.warn(`image-seam: ForceImageType DRIFTED — ${decision.reason} (${why}, floor ${read.floor}). `
-    + `Correcting to ${decision.to}. Images generated since it drifted used the wrong aspect.`);
-  setForceImageType(decision.to);
-}
-
-function scheduleReconcile(why) {
-  if (reconcileTimer) topWindow.clearTimeout(reconcileTimer);
-  reconcileTimer = topWindow.setTimeout(() => { reconcileTimer = null; reconcileForceImageType(why); }, RECONCILE_SETTLE_MS);
-}
-
 // ── wiring ────────────────────────────────────────────────────────────────────
 export function startImageSeam() {
   if (typeof window.getChatMessages !== 'function' || typeof window.eventOn !== 'function') {
@@ -549,35 +357,6 @@ export function startImageSeam() {
     }
   }
   backfillChat('seam start').catch((e) => log.warn('image-seam: start-up backfill rejected:', e)); // the chat already loaded before we wired up
-
-  // The latch lives in a SAVE, so a chat load is when a previous session's stale value first becomes
-  // ours to correct. Bound separately from the sweep above: they share a trigger, not a purpose.
-  if (te.CHAT_CHANGED) {
-    try { window.eventOn(te.CHAT_CHANGED, () => scheduleReconcile('chat loaded')); }
-    catch (e) { log.warn('image-seam: eventOn(CHAT_CHANGED) failed — ForceImageType reconcile not bound to a chat load:', e); }
-  }
-
-  // Immersive enter/exit → flip the latch. Observe the parent doc for the overlay's presence + its
-  // `active` class; a cheap rAF-coalesced overlayActive() check per burst (mirrors i18n's observer).
-  let scheduled = false;
-  const obs = new MutationObserver(() => {
-    if (scheduled) return;
-    scheduled = true;
-    (topWindow.requestAnimationFrame || setTimeout)(() => { scheduled = false; syncGalState(); }, 0);
-  });
-  try {
-    obs.observe(DOC.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] });
-  } catch (e) {
-    log.warn('image-seam: could not observe for immersive enter/exit:', e);
-  }
-  // Seed the edge tracker WITHOUT writing. This used to be a syncGalState() call, and that is precisely
-  // where the stuck latch came from: galgame is mid-init here, so its overlay can still read as active,
-  // and the seam wrote `true` over a save whose player was never immersive. Seeding costs nothing if the
-  // read is wrong — the observer corrects it on the next real edge, and the reconcile below corrects it
-  // even when no edge ever arrives. The WRITE decision belongs to the reconcile, which waits for the
-  // truth instead of racing it.
-  galActive = overlayActive();
-  scheduleReconcile('seam start');
 
   log.image('image-seam active');
 }

@@ -7,7 +7,7 @@
 // imported from CDN untouched — zero upstream coupling (GCP §1).
 //
 // Capabilities (GCP): 1 i18n overlay · 2 toolbar Menu button · 3 StatusMenu popup (G3)
-//                     · 4 image seam: saveBackground writer + ForceImageType flip (G4b)
+//                     · 4 image seam: saveBackground writer (G4b)
 // ============================================================
 
 import { SCRIPT_NAME, VERSION, BUILD, topWindow, log } from '../env.js';
@@ -58,7 +58,7 @@ startFreeInputPatch();  // galgame's free-input pop-up: Enter writes a new line 
 // (ST awaits listeners sequentially) the text is already shaped — uid-scoped scene names in place —
 // when the seam scans it. Seam-side SCENE_NAME_RE filter is the belt-and-braces for other orders.
 startBeatShaper();      // dumb-terminal C1: <p>-wrap prose + inject uid-scoped <background scene> per image (scene #1 hoisted)
-startImageSeam();       // G4b: mvu-helper images → galgame backdrop DB (uid-scoped names only) + ForceImageType flip
+startImageSeam();       // G4b: mvu-helper images → galgame backdrop DB (uid-scoped names only)
 startGeneratingIndicator(); // own galgame's "Generating" popup: up from mvu-helper's PRE pass, down when its POST pass ends (ST's own gen covers the middle)
 startLocationTimeBridge(); // feed galgame's location/time pills from stat_data.World (AutoCardUpdaterAPI shim; MVU cards have none)
 startChoices();            // A2 all-genre: inject a <choices> format instruction + feed galgame's Story-choices UI via the same shim's 选项表 sheet
@@ -69,7 +69,6 @@ startImageRegen();         // top-right button (under 🖼) → click mvu-helper
 startBackgroundManager();  // galgame's Background Manager pane: sort newest-first + bulk select/delete (our unique scene names made its A-Z order useless)
 // G3: StatusMenu bridge wires into menu-modal.js
 // G4b: image-seam writer (saveBackground keyed by nearest-preceding <background scene>)
-//      + Preferences.ForceImageType flip on immersive enter/exit
 
 logActiveGenre();          // say which genre profile is live — the fastest answer to 'why is that control missing'
 log.info(`v${VERSION} ready`);

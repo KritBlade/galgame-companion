@@ -1,12 +1,10 @@
 // tests/schoolv4-contract-core.mjs — does the card this companion drives still HAVE the paths we drive?
 //
 // WHY THIS EXISTS (live 2026-08-07). School v4 split its `World_Calc` catch-all into owner-scoped roots.
-// Both stat_data paths hardcoded here moved with it, and NOTHING caught it:
-//   • next-block queried input[data-bind-checked="World_Calc.BlockDone"] → no such element → the chip
-//     logged "checkbox not found" and the Next-Block control was simply dead;
-//   • image-seam wrote World_Calc.ForceImageType → setMvuVariable returns false on an unknown path,
-//     which that code reads as "this card has no G4a init" and gives up PERMANENTLY, by design.
-// Both degrade quietly, on the seam, in a way that looks like a card problem. The card's own build was
+// A stat_data path hardcoded here moved with it, and NOTHING caught it: next-block queried
+// input[data-bind-checked="World_Calc.BlockDone"] → no such element → the chip logged "checkbox not
+// found" and the Next-Block control was simply dead. It degraded quietly, on the seam, in a way that
+// looks like a card problem. The card's own build was
 // green the whole time — it is self-consistent; we are the ones holding a stale copy of its schema.
 //
 // SO THIS IS A PLAIN MODULE, NOT ONLY A VITEST FILE. The thing that BREAKS this contract is a change in
@@ -22,7 +20,6 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { schoolv4Dir } from './schoolv4-card-path.mjs';
 import { SCHOOL } from '../src/genre/genre-profile-core.js';
-import { FORCE_PATH } from '../src/features/image/image-seam.js';
 
 // Fields location-time-bridge reads off stat_data.World for galgame's pills. Declared rather than
 // imported: they are destructured inline (W.Location, W.Date…), not named by a constant.
@@ -59,7 +56,6 @@ export function runContractCheck() {
     // 1. Every path we drive must EXIST in the card's shipped seed.
     const paths = [
         [SCHOOL.advanceControl.bindPath, 'genre/school advanceControl.bindPath', 'the Next-Block chip drives this checkbox; an absent path means the chip is dead'],
-        [FORCE_PATH, 'image-seam.js FORCE_PATH', 'Mvu.setMvuVariable returns false on an unknown path and the seam then gives up permanently'],
         ...WORLD_PILL_FIELDS.map((f) => ['World.' + f, 'location-time-bridge.js pills', "galgame's location/time pills read this"]),
     ];
     for (const [path, owner, why] of paths) {

@@ -1,9 +1,9 @@
-// galgame-companion v0.9.11
+// galgame-companion v0.9.12
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.9.11";
-  var BUILD = "c8a56cb";
+  var VERSION = "0.9.12";
+  var BUILD = "25f0623";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -3558,22 +3558,6 @@ ${cot}` : cot;
       return chatKeyOfSceneName(k) === chatKey;
     });
   }
-  function decideForceReconcile({ stored, live } = {}) {
-    const on = Boolean(live);
-    const value = Array.isArray(stored) ? stored[0] : stored;
-    if (value === void 0 || value === null) return { write: false, to: on, reason: "latch absent on this card" };
-    if (typeof value !== "boolean") return { write: true, to: on, reason: `stored value is not a boolean (${typeof value})` };
-    if (value === on) return { write: false, to: on, reason: "already in sync" };
-    return { write: true, to: on, reason: `stored ${value} but galgame is ${on ? "OPEN" : "CLOSED"}` };
-  }
-  function latchFloors(lastId, hasStatData, lookback = 30) {
-    const out = [];
-    if (!Number.isFinite(lastId) || lastId < 0) return out;
-    for (let id = lastId; id >= 0 && id > lastId - lookback && out.length < 2; id--) {
-      if (hasStatData(id) === true) out.push(id);
-    }
-    return out;
-  }
 
   // src/features/image/background-store.js
   var DB_NAME = "GalgameUIPluginDB";
@@ -3654,9 +3638,6 @@ ${cot}` : cot;
   // src/features/image/image-seam.js
   var CURRENT_PACK_LS = "galgame-ui-plugin_current_pack";
   var DEFAULT_PACK_ID = "pack_default";
-  var OVERLAY_ID = "gal-global-overlay";
-  var FORCE_PATH = "Preferences.ForceImageType";
-  var FLOOR_LOOKBACK2 = 30;
   function currentPackId() {
     try {
       return topWindow.localStorage.getItem(CURRENT_PACK_LS) || DEFAULT_PACK_ID;
@@ -3861,159 +3842,6 @@ ${cot}` : cot;
       }).catch((e) => log.warn("image-seam: orphan sweep rejected:", e));
     }, SWEEP_DEBOUNCE_MS);
   }
-  function topMvu() {
-    try {
-      return topWindow.Mvu || null;
-    } catch (e) {
-      log.warn("image-seam: reaching top Mvu threw:", e);
-      return null;
-    }
-  }
-  function latchTargetFloors() {
-    let last = -1;
-    try {
-      const n = Number(window.getLastMessageId ? window.getLastMessageId() : NaN);
-      if (Number.isFinite(n) && n >= 0) last = n;
-    } catch (e) {
-      log.warn("image-seam: getLastMessageId threw — falling back to the chat length:", e);
-    }
-    if (last < 0) {
-      try {
-        const chat = topWindow.SillyTavern && topWindow.SillyTavern.getContext && topWindow.SillyTavern.getContext().chat;
-        if (Array.isArray(chat)) last = chat.length - 1;
-      } catch (e) {
-        log.warn("image-seam: reading the chat length threw — no data floor this attempt:", e);
-      }
-    }
-    if (typeof window.getVariables !== "function") return [];
-    const hasStatData = (id) => {
-      try {
-        const v = window.getVariables({ type: "message", message_id: id });
-        return !!(v && v.stat_data);
-      } catch (e) {
-        log.warn(`image-seam: getVariables(message ${id}) threw — treating that floor as holding no stat_data:`, e);
-        return false;
-      }
-    };
-    return latchFloors(last, hasStatData, FLOOR_LOOKBACK2);
-  }
-  async function attemptForceImageType(on) {
-    const Mvu = topMvu();
-    if (!Mvu || typeof Mvu.setMvuVariable !== "function") {
-      log.image("image-seam: top-window Mvu not attached yet — ForceImageType flip deferred to the retry loop");
-      return "retry";
-    }
-    const floors = latchTargetFloors();
-    if (!floors.length) {
-      log.image("image-seam: no data floor yet — ForceImageType flip deferred to the retry loop");
-      return "retry";
-    }
-    try {
-      const written = [];
-      for (const id of floors) {
-        const data = Mvu.getMvuData({ type: "message", message_id: id });
-        if (!data || !data.stat_data) {
-          log.image(`image-seam: floor ${id} has no stat_data yet — ForceImageType flip deferred to the retry loop`);
-          return "retry";
-        }
-        const okSet = Mvu.setMvuVariable(data, FORCE_PATH, on, { reason: `galgame ${on ? "enter" : "exit"}` });
-        if (okSet === false) {
-          log.warn(`image-seam: ${FORCE_PATH} not on this card (card-side init missing) — skip flip`);
-          return "skip";
-        }
-        await Mvu.replaceMvuData(data, { type: "message", message_id: id });
-        written.push(id);
-      }
-      log.image(`image-seam: ForceImageType → ${on} (floors ${written.join(", ")}: the newest and the one beneath, so a regenerate or swipe of the newest reply reads it too)`);
-      return "ok";
-    } catch (e) {
-      log.warn("image-seam: ForceImageType flip threw (will retry):", e);
-      return "retry";
-    }
-  }
-  var FORCE_RETRY_MS = 1500;
-  var FORCE_RETRY_MAX = 10;
-  var desiredForceState = null;
-  var forceRetryRunning = false;
-  function setForceImageType(on) {
-    desiredForceState = on;
-    if (forceRetryRunning) return;
-    forceRetryRunning = true;
-    (async () => {
-      for (let i = 0; i < FORCE_RETRY_MAX; i++) {
-        const target = desiredForceState;
-        const result = await attemptForceImageType(target);
-        if ((result === "ok" || result === "skip") && desiredForceState === target) {
-          forceRetryRunning = false;
-          return;
-        }
-        if (result === "ok" || result === "skip") continue;
-        await new Promise((res) => setTimeout(res, FORCE_RETRY_MS));
-      }
-      log.warn(`image-seam: ForceImageType flip GAVE UP after ${FORCE_RETRY_MAX} attempts over ~${Math.round(FORCE_RETRY_MAX * FORCE_RETRY_MS / 1e3)}s (target=${desiredForceState}) — top-window Mvu never became available. The galgame stage may receive non-uniform image types this session.`);
-      forceRetryRunning = false;
-    })();
-  }
-  function overlayActive() {
-    const ov = DOC.getElementById(OVERLAY_ID);
-    if (!ov) return false;
-    try {
-      if (DOC.defaultView && DOC.defaultView.getComputedStyle(ov).display === "none") return false;
-    } catch (e) {
-    }
-    return ov.classList.contains("active");
-  }
-  var galActive = false;
-  function syncGalState() {
-    const now = overlayActive();
-    if (now === galActive) return;
-    galActive = now;
-    setForceImageType(now);
-  }
-  var RECONCILE_SETTLE_MS = 5e3;
-  var reconcileTimer = null;
-  function readStoredForceImageType() {
-    const Mvu = topMvu();
-    if (!Mvu || typeof Mvu.getMvuData !== "function") return { ok: false };
-    const id = latchTargetFloors()[0];
-    if (id === void 0) return { ok: false };
-    try {
-      const data = Mvu.getMvuData({ type: "message", message_id: id });
-      if (!data || !data.stat_data) return { ok: false };
-      let cursor = data.stat_data;
-      for (const segment of FORCE_PATH.split(".")) {
-        if (cursor == null || typeof cursor !== "object") return { ok: true, value: void 0, floor: id };
-        cursor = cursor[segment];
-      }
-      return { ok: true, value: cursor, floor: id };
-    } catch (e) {
-      log.warn("image-seam: could not read the stored ForceImageType latch — reconcile skipped:", e);
-      return { ok: false };
-    }
-  }
-  function reconcileForceImageType(why) {
-    const read = readStoredForceImageType();
-    if (!read.ok) {
-      log.image(`image-seam: ForceImageType reconcile (${why}) — state not readable yet, skipped`);
-      return;
-    }
-    const live = overlayActive();
-    const decision = decideForceReconcile({ stored: read.value, live });
-    galActive = live;
-    if (!decision.write) {
-      log.image(`image-seam: ForceImageType reconcile (${why}) — ${decision.reason}`);
-      return;
-    }
-    log.warn(`image-seam: ForceImageType DRIFTED — ${decision.reason} (${why}, floor ${read.floor}). Correcting to ${decision.to}. Images generated since it drifted used the wrong aspect.`);
-    setForceImageType(decision.to);
-  }
-  function scheduleReconcile(why) {
-    if (reconcileTimer) topWindow.clearTimeout(reconcileTimer);
-    reconcileTimer = topWindow.setTimeout(() => {
-      reconcileTimer = null;
-      reconcileForceImageType(why);
-    }, RECONCILE_SETTLE_MS);
-  }
   function startImageSeam() {
     if (typeof window.getChatMessages !== "function" || typeof window.eventOn !== "function") {
       log.warn("image-seam: TH globals (getChatMessages/eventOn) absent — seam disabled");
@@ -4057,29 +3885,6 @@ ${cot}` : cot;
       }
     }
     backfillChat("seam start").catch((e) => log.warn("image-seam: start-up backfill rejected:", e));
-    if (te.CHAT_CHANGED) {
-      try {
-        window.eventOn(te.CHAT_CHANGED, () => scheduleReconcile("chat loaded"));
-      } catch (e) {
-        log.warn("image-seam: eventOn(CHAT_CHANGED) failed — ForceImageType reconcile not bound to a chat load:", e);
-      }
-    }
-    let scheduled3 = false;
-    const obs = new MutationObserver(() => {
-      if (scheduled3) return;
-      scheduled3 = true;
-      (topWindow.requestAnimationFrame || setTimeout)(() => {
-        scheduled3 = false;
-        syncGalState();
-      }, 0);
-    });
-    try {
-      obs.observe(DOC.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "style"] });
-    } catch (e) {
-      log.warn("image-seam: could not observe for immersive enter/exit:", e);
-    }
-    galActive = overlayActive();
-    scheduleReconcile("seam start");
     log.image("image-seam active");
   }
 

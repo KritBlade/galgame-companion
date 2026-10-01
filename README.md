@@ -16,8 +16,8 @@ Five capabilities:
    with a TH-globals bridge.
 4. **Image seam** — writes [mvu-helper](https://github.com/KritBlade/mvu-helper-dev)-generated
    images into galgame's own background library (`saveBackground`, keyed by the
-   nearest-preceding `<background scene>`), and flips `Preferences.ForceImageType` on
-   immersive enter/exit so every image matches the user's chosen aspect.
+   nearest-preceding `<background scene>`). Every image already arrives in one shape: mvu-helper
+   draws all of them at the card's Image type.
 5. **Background Manager patch** — the seam fills galgame's library with unique machine-minted scene
    names, which makes its alphabetical grid unbrowsable; this sorts the cards newest-first by each
    record's `lastModified` and adds a select mode (checkboxes, select-all, one confirm, one
@@ -27,10 +27,10 @@ Five capabilities:
 ## Install (Tavern Helper script library)
 
 ```js
-import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.9.11/dist/galgame-companion.dist.js'
+import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.9.12/dist/galgame-companion.dist.js'
 ```
 
-Add AFTER the galgame script entry. `@v0.9.11` pins a release tag — bump it to update.
+Add AFTER the galgame script entry. `@v0.9.12` pins a release tag — bump it to update.
 
 **Versionless (auto-latest)** — resolves to the newest semver tag, so the TH entry never needs editing:
 

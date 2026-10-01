@@ -1,5 +1,5 @@
 // image-seam-core unit tests — the seam's pure decisions: the two DELETE predicates for galgame's
-// shared background store, and the ForceImageType reconcile and floor choice. v0.3
+// shared background store, and how images bind to their scenes. v0.4
 //
 // These are the only functions in the companion that remove someone else's data, so the tests lean hard
 // on what must NEVER be deleted: another chat's records, a foreign scene name, or anything at all when
@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
-  staleSiblingKeys, deadBackgroundKeys, pairImagesToScenes, unboundImageReport, decideForceReconcile, latchFloors,
+  staleSiblingKeys, deadBackgroundKeys, pairImagesToScenes, unboundImageReport,
   missingBackdropPairs, pairSignature, backdropScenesOwed,
 } from '../src/features/image/image-seam-core.js';
 import { sceneName, sceneUid, shortHash } from '../src/features/beat-shaper/beat-shaper-core.js';
@@ -157,61 +157,6 @@ describe('pairImagesToScenes (scene↔image binding)', () => {
   });
 });
 
-// The latch is edge-driven in the live seam, and an edge-driven latch is only as correct as the last
-// edge it happened to see. This decision is the backstop that needs no edge — so the cases that matter
-// are the ones where the two sources disagree, and the ones where writing would be presumptuous.
-describe('decideForceReconcile (the ForceImageType backstop)', () => {
-  it('CORRECTS a latch left true while galgame is closed — the live 2026-08-09 bug', () => {
-    // Stuck true from a misread at seam start: every image generated since was forced to the backdrop
-    // aspect while the player was reading the normal chat.
-    const d = decideForceReconcile({ stored: [true, '強制圖片比例'], live: false });
-    expect(d.write).toBe(true);
-    expect(d.to).toBe(false);
-    expect(d.reason).toMatch(/CLOSED/);
-  });
-
-  it('CORRECTS the other direction too — galgame open, latch false', () => {
-    const d = decideForceReconcile({ stored: [false, 'label'], live: true });
-    expect(d.write).toBe(true);
-    expect(d.to).toBe(true);
-    expect(d.reason).toMatch(/OPEN/);
-  });
-
-  it('writes NOTHING when the two already agree (both directions)', () => {
-    expect(decideForceReconcile({ stored: [false, 'l'], live: false }).write).toBe(false);
-    expect(decideForceReconcile({ stored: [true, 'l'], live: true }).write).toBe(false);
-  });
-
-  it('unwraps the MVU tuple — a bare boolean is equally valid', () => {
-    // Comparing a tuple to a boolean would never be equal, so a correct latch would be rewritten on
-    // every single pass. Both shapes must read the same.
-    expect(decideForceReconcile({ stored: true, live: true }).write).toBe(false);
-    expect(decideForceReconcile({ stored: false, live: false }).write).toBe(false);
-    expect(decideForceReconcile({ stored: true, live: false })).toMatchObject({ write: true, to: false });
-  });
-
-  it('NEVER writes when the card has no such path — the platform must not create a consumer field', () => {
-    for (const stored of [undefined, null, [undefined, 'label']]) {
-      const d = decideForceReconcile({ stored, live: true });
-      expect(d.write).toBe(false);
-      expect(d.reason).toMatch(/absent/);
-    }
-  });
-
-  it('corrects a stored value that is not a boolean — an uninterpretable latch is not a latch', () => {
-    for (const stored of ['true', 1, {}, ['on', 'label']]) {
-      const d = decideForceReconcile({ stored, live: false });
-      expect(d.write).toBe(true);
-      expect(d.to).toBe(false);
-    }
-  });
-
-  it('treats a missing/garbage live flag as CLOSED rather than throwing', () => {
-    expect(decideForceReconcile({ stored: [true, 'l'] })).toMatchObject({ write: true, to: false });
-    expect(decideForceReconcile()).toMatchObject({ write: false });
-  });
-});
-
 // ── unboundImageReport — the line that was missing when EVERY image was orphaned ──────────────
 // Live 2026-08-11: a <pic> emitted OUTSIDE <maintext> (after the RES blocks) got no scene tag, so
 // pairs was empty — and the old `pairs.length && …` gate then said nothing at all. The stage rendered
@@ -268,41 +213,6 @@ describe('unboundImageReport — a fully orphaned message must not fail silently
     expect(r).toMatch(/EVERY image is unbound/);
     expect(r).toMatch(/drifted/);
     expect(r).not.toMatch(/outside the envelope/);
-  });
-});
-
-// The latch used to land on ONE floor, and a regenerate of that very reply reads the floor beneath it.
-describe('latchFloors (which floors carry the ForceImageType latch)', () => {
-  it('THE REGRESSION (live 2026-09-08): a regenerate of the newest reply reads the floor beneath — it is written too', () => {
-    // chat: 0 greeting · 1 user · 2 reply — latch flipped at floor 2, then floor 2 is regenerated.
-    const floors = latchFloors(2, () => true);
-    expect(floors).toEqual([2, 1]);
-    const floorARegenerateDerivesFrom = 2 - 1;
-    expect(floors).toContain(floorARegenerateDerivesFrom);
-  });
-
-  it('skips floors that hold no stat_data and keeps looking for the second', () => {
-    expect(latchFloors(5, (id) => id !== 4 && id !== 3)).toEqual([5, 2]);
-  });
-
-  it('a chat with a single data floor gets that one floor', () => {
-    expect(latchFloors(0, () => true)).toEqual([0]);
-    expect(latchFloors(3, (id) => id === 3)).toEqual([3]);
-  });
-
-  it('never goes below the lookback, and never reports a floor that has no stat_data', () => {
-    expect(latchFloors(40, (id) => id === 5, 30)).toEqual([]);
-    expect(latchFloors(40, (id) => id === 11 || id === 5, 30)).toEqual([11]);
-  });
-
-  it('no chat, or no data floor at all, is an empty answer — the caller defers, it never guesses', () => {
-    expect(latchFloors(-1, () => true)).toEqual([]);
-    expect(latchFloors(NaN, () => true)).toEqual([]);
-    expect(latchFloors(4, () => false)).toEqual([]);
-  });
-
-  it('is newest-first, so the reconcile can read the head as THE current floor', () => {
-    expect(latchFloors(9, () => true)[0]).toBe(9);
   });
 });
 

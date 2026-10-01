@@ -97,11 +97,8 @@ function regenForCurrentBg() {
 // from galgame's Background Manager. The message still HOLDS the image; only galgame's copy is gone,
 // so there is a perfectly good regen control to press, just nothing on screen to match it against.
 //
-// WHY THIS IS WORTH A FALLBACK rather than "press the SillyTavern button instead": leaving galgame
-// drops the ForceImageType latch (image-seam flips it on the overlay's active edge), so the
-// replacement generates at the narrator's own aspect. Live 2026-07-28 — the exit-and-regen workaround
-// produced a 768×1152 PORTRAIT image that then had to serve as a landscape backdrop. Keeping the
-// player inside galgame keeps the latch on, so this is an aspect-correctness fix, not a convenience.
+// WHY A FALLBACK rather than "press the SillyTavern button instead": the player stays on the stage the
+// replacement is for, with no trip out of galgame and back.
 // Scans BACKWARDS rather than reading wraps[last] blindly: mvu-helper gives an UNRENDERED <pic> (failed
 // generation / over the per-reply cap) the same auto-img-wrap envelope, and that placeholder carries no
 // regen control — so the newest wrap in the chat is quite often not the newest IMAGE.
