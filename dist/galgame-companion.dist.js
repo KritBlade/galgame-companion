@@ -1,9 +1,9 @@
-// galgame-companion v0.9.12
+// galgame-companion v0.9.13
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.9.12";
-  var BUILD = "25f0623";
+  var VERSION = "0.9.13";
+  var BUILD = "5f55b4a";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -2505,6 +2505,76 @@
     log.info("free-input-patch active (Enter = new line, Ctrl+Enter = send, only the ✕ closes)");
   }
 
+  // src/features/galgame-quirks/format-rule-trim-core.js
+  var GALGAME_FORMAT_WORLD = "galgame界面插件";
+  var GALGAME_FORMAT_ENTRY = "Galgame输出格式规范";
+  var PARAGRAPH_CAP_LINE = /^- 每段字数: 不大于\d+字[ \t]*(?:\r?\n|$)/m;
+  var EMPTY_FORMAT_HEADING = /^## 输出格式要求[ \t]*\r?\n(?:[ \t]*\r?\n)+(?=## )/m;
+  var SAMPLE_SECTION = /^## 输出结构示例[ \t]*\r?\n[\s\S]*?(?=^## )/m;
+  var TTS_PARAGRAPH_CAP_LINE = /^- 每个<p><\/p>的字数: /m;
+  function isGalgameFormatEntry(entry) {
+    return Boolean(entry) && entry.world === GALGAME_FORMAT_WORLD && entry.comment === GALGAME_FORMAT_ENTRY;
+  }
+  function trimFormatRule(rule) {
+    let content = String(rule == null ? "" : rule);
+    if (TTS_PARAGRAPH_CAP_LINE.test(content)) return { content, isTts: true, cut: [], missing: [] };
+    const cut = [];
+    const missing2 = [];
+    if (PARAGRAPH_CAP_LINE.test(content)) {
+      content = content.replace(PARAGRAPH_CAP_LINE, "");
+      cut.push("cap");
+    } else missing2.push("cap");
+    if (EMPTY_FORMAT_HEADING.test(content)) {
+      content = content.replace(EMPTY_FORMAT_HEADING, "");
+      cut.push("empty-heading");
+    }
+    if (SAMPLE_SECTION.test(content)) {
+      content = content.replace(SAMPLE_SECTION, "");
+      cut.push("sample");
+    } else missing2.push("sample");
+    return { content, isTts: false, cut, missing: missing2 };
+  }
+
+  // src/features/galgame-quirks/format-rule-trim.js
+  var lastReport = null;
+  function report({ isTts, cut, missing: missing2 }) {
+    const key = isTts ? "tts" : cut.join(",") + "|" + missing2.join(",");
+    if (key === lastReport) return;
+    lastReport = key;
+    if (isTts) {
+      log.info(`format-rule-trim: ${GALGAME_FORMAT_ENTRY} is galgame's TTS rule — left as galgame wrote it`);
+      return;
+    }
+    if (cut.length) log.info(`format-rule-trim: cut ${cut.join(", ")} from ${GALGAME_FORMAT_ENTRY} — the preset sets the reply length`);
+    if (missing2.length) log.warn(`format-rule-trim: ${GALGAME_FORMAT_ENTRY} no longer carries the ${missing2.join(" or the ")} this trim recognizes — galgame reworded its rule, so whatever replaced it reaches the prompt and may shorten replies again`);
+  }
+  function onEntriesLoaded(lores) {
+    if (!lores || typeof lores !== "object") return;
+    for (const list of [lores.globalLore, lores.characterLore, lores.chatLore, lores.personaLore]) {
+      if (!Array.isArray(list)) continue;
+      for (const entry of list) {
+        if (!isGalgameFormatEntry(entry)) continue;
+        const result = trimFormatRule(entry.content);
+        entry.content = result.content;
+        report(result);
+      }
+    }
+  }
+  function startFormatRuleTrim() {
+    const te = window.tavern_events || {};
+    if (typeof window.eventOn !== "function" || !te.WORLDINFO_ENTRIES_LOADED) {
+      log.warn("format-rule-trim: eventOn / tavern_events.WORLDINFO_ENTRIES_LOADED are not on this window — galgame's format rule reaches the prompt untrimmed and shortens replies");
+      return;
+    }
+    try {
+      window.eventOn(te.WORLDINFO_ENTRIES_LOADED, onEntriesLoaded);
+    } catch (e) {
+      log.warn("format-rule-trim: eventOn(WORLDINFO_ENTRIES_LOADED) failed — galgame's format rule reaches the prompt untrimmed and shortens replies:", e);
+      return;
+    }
+    log.info("format-rule-trim active (galgame's paragraph cap and sample reply are cut from its format rule; a TTS rule is left whole)");
+  }
+
   // src/features/menu/menu-modal.js
   var MODAL_ID = "school-companion-modal";
   var STYLE_ID2 = "school-companion-modal-css";
@@ -3724,8 +3794,8 @@ ${cot}` : cot;
   async function processText(id, raw, why) {
     const scan = pairImagesToScenes(raw);
     const { pairs } = scan;
-    const report = unboundImageReport(raw, scan);
-    if (report) log.image(`image-seam: message ${id} — ${report}`);
+    const report2 = unboundImageReport(raw, scan);
+    if (report2) log.image(`image-seam: message ${id} — ${report2}`);
     if (!pairs.length) return;
     const signature = pairSignature(pairs);
     if (filed.get(id) === signature) {
@@ -4445,6 +4515,7 @@ ${cot}` : cot;
   startToolbar();
   startFullscreenGuard();
   startFreeInputPatch();
+  startFormatRuleTrim();
   startBeatShaper();
   startImageSeam();
   startGeneratingIndicator();

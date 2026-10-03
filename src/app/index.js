@@ -15,7 +15,7 @@ import { startGalgameDefaults } from './galgame-defaults.js';
 import { injectStyle } from './style.js';
 import { startI18n } from '../features/i18n/index.js';
 import { startToolbar } from '../features/menu/index.js';
-import { startFullscreenGuard, startGeneratingIndicator, startFreeInputPatch } from '../features/galgame-quirks/index.js';
+import { startFullscreenGuard, startGeneratingIndicator, startFreeInputPatch, startFormatRuleTrim } from '../features/galgame-quirks/index.js';
 import { startImageSeam, startImageViewer, startImageRegen, startBackgroundManager } from '../features/image/index.js';
 import { startBeatShaper } from '../features/beat-shaper/index.js';
 import { startChoices, startLocationTimeBridge, startNextBlock, startMeterPanel } from '../features/galgame-bridge/index.js';
@@ -54,6 +54,7 @@ startI18n();
 startToolbar();
 startFullscreenGuard(); // release native fullscreen galgame leaks when its "quit mode" is clicked
 startFreeInputPatch();  // galgame's free-input pop-up: Enter writes a new line (Ctrl+Enter or Send sends), only the ✕ closes it
+startFormatRuleTrim();  // cut galgame's paragraph cap and sample reply from its format rule, so the preset sets the reply length (a TTS rule stays whole)
 // Order matters: the shaper MUST register before the seam so that on the same MESSAGE_UPDATED
 // (ST awaits listeners sequentially) the text is already shaped — uid-scoped scene names in place —
 // when the seam scans it. Seam-side SCENE_NAME_RE filter is the belt-and-braces for other orders.

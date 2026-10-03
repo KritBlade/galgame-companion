@@ -1,7 +1,9 @@
 // features/galgame-quirks — workarounds for galgame misbehaviour we can't fix upstream
 // (it is imported from CDN untouched, GCP §1): leaked native fullscreen on "quit mode",
-// a "Generating" popup whose visible window never matched the real turn, and a free-input
-// pop-up that sends on the first Enter and closes on any stray click outside it.
+// a "Generating" popup whose visible window never matched the real turn, a free-input
+// pop-up that sends on the first Enter and closes on any stray click outside it, and a
+// format rule whose paragraph cap and short sample reply narrators read as a length rule
+// for the whole reply.
 //
 // currentFullscreenEl is exported because image/ and menu/ must not mount over a
 // fullscreen element — the quirk owns that state, so it owns the query.
@@ -13,3 +15,4 @@ export { startFullscreenGuard, currentFullscreenEl } from './fullscreen-guard.js
 // reply once mvu-helper's POST call, the last writer of the turn, is done.
 export { startGeneratingIndicator, isTurnBusy, onTurnPhaseClosed } from './generating-indicator.js';
 export { startFreeInputPatch } from './free-input-patch.js';
+export { startFormatRuleTrim } from './format-rule-trim.js';
