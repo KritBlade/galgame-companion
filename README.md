@@ -39,10 +39,10 @@ VN presentation needs no per-user setup, and logs which genre profile is live.
 ## Install (Tavern Helper script library)
 
 ```js
-import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.9.13/dist/galgame-companion.dist.js'
+import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.9.14/dist/galgame-companion.dist.js'
 ```
 
-Add AFTER the galgame script entry. `@v0.9.13` pins a release tag — bump it to update.
+Add AFTER the galgame script entry. `@v0.9.14` pins a release tag — bump it to update.
 
 **Versionless (auto-latest)** — resolves to the newest semver tag, so the TH entry never needs editing:
 
@@ -84,8 +84,8 @@ same model as galgame's own `dist/数据库界面插件.dist.js`.
 The companion rides on `bigmalove/galgame` untouched, so an upstream release can shift selectors or
 the IndexedDB schema. After each `git pull` of the galgame clone, run this loop:
 
-1. **Re-harvest i18n** — set `HARVEST = true` (`src/i18n.js`), load in ST, exercise the chrome, run
-   `__galI18nDump()` in the console, curate genuine galgame-chrome strings into `src/i18n-dict.js`
+1. **Re-harvest i18n** — set `HARVEST = true` (`src/features/i18n/i18n.js`), load in ST, exercise the chrome, run
+   `__galI18nDump()` in the console, curate genuine galgame-chrome strings into `src/features/i18n/i18n-dict.js`
    (skip story text / ST presets / TH's own UI / TTS voice names), then flip `HARVEST` back to `false`.
 2. **Spot-check the two anchor selectors** the companion hooks: `.gal-bottom-toolbar` (button injection)
    and `#gal-global-overlay` (immersive-mode detection). If renamed upstream, update and re-test.

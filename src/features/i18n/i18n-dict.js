@@ -1,10 +1,10 @@
-// galgame-companion · i18n dictionary — exact-match 中文→EN + pattern rules. v0.3
+// galgame-companion · i18n dictionary — exact-match 中文→EN + pattern rules. v0.4
 // ⚠️ Seeded from the prototype harvest against an OLDER galgame UI. Phase G1 refreshes
 // this file: run harvest mode live against v2.1, machine-translate, paste the long tail
 // here (GCP §2, §9-G1). Keyed by the exact RENDERED on-screen text, never source literals.
 // Later galgame releases add their strings in a dated/versioned block at the end rather than
 // scattering them into the topic sections — so "what did this upstream bump bring in" stays
-// answerable from the file alone. Newest block: v2.2.
+// answerable from the file alone. Newest block: v2.5.1.
 
 export const DICT = {
   // --- common actions / buttons ---
@@ -688,6 +688,108 @@ export const DICT = {
   // twin (剧情出现新…) is already in the wizard block above — one string, one entry, and the two
   // differ by their opening clause, so neither can stand in for the other.
   '新主要角色/重要配角登场时，AI 自动从内置图包挑选气质匹配的立绘模板套用。': 'When a new main/supporting character appears, the AI auto-picks a matching sprite template from the built-in pack.',
+
+  // --- galgame v2.5.1 (upstream 479aa08): skins, visual staging, voice cache, enhanced-mode LLM, backlog ---
+  // Built-in skin list (the old 默认/经典 names were renamed in this release).
+  '默认 · 晴空': 'Default · Clear Sky',
+  '默认 · 夜航（深色）': 'Default · Night Voyage (dark)',
+  '默认 · 柔光': 'Default · Soft Light',
+  '经典 Cyber Pop': 'Classic Cyber Pop',
+  '经典 Cyber Pop · 深色': 'Classic Cyber Pop · Dark',
+  // Settings rows render the label and its <small> hint as separate text nodes, so each half is its own key.
+  '标点停顿': 'Punctuation pause',
+  '(句读处稍作停留)': '(Brief stop at punctuation)',
+  '辉光滤镜': 'Bloom filter',
+  '(萤火/光斑/雷电等，Mobile 档不生效)': '(Fireflies, light spots, lightning etc.; off on the Mobile tier)',
+  '视觉演出': 'Visual staging',
+  '背景转场': 'Background transition',
+  '电影叠化（默认）': 'Cinematic dissolve (default)',
+  '斜切擦除': 'Diagonal wipe',
+  '光圈展开': 'Iris open',
+  '硬切条带': 'Hard-cut strips',
+  '墨迹溶解': 'Ink dissolve',
+  '随机轮换': 'Random rotation',
+  'AI 指定转场': 'AI-chosen transitions',
+  '(换章/时间跳跃用黑场字幕)': '(Black title card for chapter changes and time skips)',
+  '背景漂移': 'Background drift',
+  '(缓慢推拉镜头)': '(Slow camera push and pull)',
+  '景深视差': 'Depth parallax',
+  '(鼠标/陀螺仪)': '(Mouse or gyroscope)',
+  '推镜跟随说话人': 'Camera pushes toward the speaker',
+  '环境光匹配立绘': 'Ambient light matches sprites',
+  '(按背景自动调色)': '(Tinted from the background)',
+  '控件动效': 'Control animations',
+  '(逐字点亮/按钮涟漪/选项翻入等，所有皮肤)': '(Per-character light-up, button ripples, choice flip-in etc.; all skins)',
+  '加载皮肤字体': 'Load skin fonts',
+  '(jsDelivr，关闭省流量)': '(jsDelivr; turn off to save data)',
+  '镜头效果仅在背景「填满裁剪」模式下生效；系统开启「减少动态效果」时自动关闭。': 'Camera effects work only in the "Cover (fill / crop)" background mode, and turn off by themselves when the system "Reduce motion" setting is on.',
+  '(背光 + 轮廓光)': '(Backlight + rim light)',
+  // Voice cache (TTS pane). 语音缓存 / EdgeTTS 直连 / 小白X are also the source labels inside the
+  // "… 播放失败" toasts, which the patterns below translate through these keys.
+  '语音缓存': 'Voice cache',
+  '倒退时播放已缓存语音': 'Play cached voice when rewinding',
+  '缓存上限': 'Cache limit',
+  '清空': 'Clear',
+  '合成过的台词会存到本地，点名牌旁的喇叭、剧情回顾的「对话记录」、倒退回看时直接播放，不再重复请求合成。': 'Synthesized lines are stored locally, so the speaker icon by the name plate, the "Dialogue log" in Story recap and rewinding all play them straight from the cache without another synthesis request.',
+  'GPT-SoVITS 开启流式模式时不缓存；关闭缓存后小白X 恢复为由它自己朗读。': 'Nothing is cached while GPT-SoVITS streaming mode is on. With the cache off, LittleWhiteBox reads aloud by itself again.',
+  '语音缓存已清空': 'Voice cache cleared',
+  '清空语音缓存失败': 'Failed to clear the voice cache',
+  'EdgeTTS 直连': 'EdgeTTS direct',
+  '小白X': 'LittleWhiteBox',
+  // Enhanced mode: second-pass LLM settings.
+  '第一次生成专注内容，第二次生成把正文转换为 Galgame 格式。格式化结果只保存在楼层附加数据里、仅在 Galgame 界面中显示，关闭界面后酒馆聊天里仍是原来的正文。': 'The first pass writes the content and the second pass converts it into Galgame format. The formatted result is kept only in the message\'s extra data and shows only in the Galgame interface, so the SillyTavern chat still holds the original text after you close it.',
+  '第二次生成（格式化）使用的 LLM': 'LLM for the second pass (formatting)',
+  '跟随酒馆当前 API 与预设': "Follow SillyTavern's current API and preset",
+  '使用酒馆连接配置（独立请求，不切换酒馆当前连接）': "Use a SillyTavern connection profile (a separate request; SillyTavern's current connection stays as it is)",
+  '发送世界书内容': 'Send worldbook content',
+  '附带按原文激活的世界书条目（角色定义前/后位置），帮助识别角色、地点等名称；会增加 token 消耗': 'Adds the worldbook entries the original text activates (before/after character definition positions) to help recognize character and place names; costs more tokens',
+  '未找到可用的连接配置：请先在酒馆「API 连接」页面用「连接配置」保存一个配置（Connection Profile）。': 'No connection profile available. Save one first on the SillyTavern "API Connections" page with "Connection Profile".',
+  '刷新连接配置列表': 'Refresh connection profile list',
+  '从该连接配置的 API 获取模型列表': "Fetch the model list from this connection profile's API",
+  '输入模型 ID，回车或失焦后保存': 'Enter a model ID; it saves on Enter or when the field loses focus',
+  '最大回复长度': 'Max response length',
+  '(0 = 跟随连接配置的预设)': "(0 = follow the connection profile's preset)",
+  '模型列表来自该连接配置对应的 API；获取失败时可选「手动输入模型名」。请求使用连接配置绑定的密钥与预设参数，不发送角色卡和聊天记录。': 'The model list comes from this connection profile\'s API; if fetching fails, choose "Enter model name manually". Requests use the key and preset parameters bound to the profile and send neither the character card nor the chat history.',
+  '请选择连接配置': 'Select a connection profile',
+  '跟随连接配置': 'Follow connection profile',
+  '手动输入模型名…': 'Enter model name manually…',
+  '请先选择连接配置': 'Select a connection profile first',
+  '正在获取模型列表…': 'Fetching model list…',
+  '该 API 未返回任何模型，可选「手动输入模型名」': 'This API returned no models; you can choose "Enter model name manually"',
+  '请求成功，但模型返回了空内容': 'The request succeeded, but the model returned empty content',
+  // Enhanced mode: the progress card. 准备格式化... and 加强模式完成 predate v2.5.1 but share the card
+  // with its new lines, so the card reads in one language.
+  '第一次生成完成': 'First pass complete',
+  '准备格式化...': 'Preparing to format...',
+  '第二次生成（格式化）': 'Second pass (formatting)',
+  '正在格式化...': 'Formatting...',
+  '加强模式完成': 'Enhanced mode complete',
+  '格式化文本仅在 Galgame 界面中显示': 'Formatted text shows only in the Galgame interface',
+  '酒馆当前 API': "SillyTavern's current API",
+  '未知连接配置': 'Unknown connection profile',
+  '原文已变化或已切换到其他回复，本次格式化结果未保存': 'The original text changed or another reply was selected, so this formatting result was not saved',
+  // Enhanced mode: the prompt viewer's worldbook status.
+  '世界书已附带': 'Worldbook attached',
+  '世界书已发送（由酒馆按预设注入）': 'Worldbook sent (SillyTavern injects it per the preset)',
+  '世界书未发送': 'Worldbook not sent',
+  // Enhanced mode: errors that reach a toast or the model status line inside a pattern below.
+  '格式化结果为空': 'The formatting result is empty',
+  '已选择「使用酒馆连接配置」，但尚未选择连接配置': '"Use a SillyTavern connection profile" is selected, but no profile is chosen',
+  '该连接配置未设置 API 地址': 'This connection profile has no API URL',
+  '上游 /models 请求失败（密钥无效或 API 地址不可用，详见酒馆服务端日志）': 'The upstream /models request failed (invalid key or unreachable API URL; see the SillyTavern server log)',
+  '无法访问酒馆上下文': 'Cannot reach the SillyTavern context',
+  '未找到该连接配置': 'Connection profile not found',
+  '酒馆的连接配置管理（Connection Manager）扩展已被禁用': "SillyTavern's Connection Manager extension is disabled",
+  '当前酒馆版本不支持按连接配置独立请求，请更新酒馆或改用「跟随酒馆当前 API」': 'This SillyTavern version cannot send a separate request per connection profile. Update SillyTavern or switch to "Follow SillyTavern\'s current API".',
+  // Story recap: the new dialogue-log tab, its empty states and voice buttons; the cue on the name plate.
+  '对话记录': 'Dialogue log',
+  '剧情纪要': 'Story summary',
+  '暂无对话记录': 'No dialogue log yet',
+  '暂无剧情纪要': 'No story summary yet',
+  '播放语音': 'Play voice',
+  '播放语音（已缓存）': 'Play voice (cached)',
+  '合成并播放语音': 'Synthesize and play voice',
+  '重播语音': 'Replay voice',
 };
 
 // Pattern rules for interpolated strings — applied only when a text node is NOT an
@@ -728,5 +830,26 @@ export const PATTERNS = [
   [/^1\.\s*每行一首歌，保存后会更新 COT：模型只能从该歌单中输出$/,
     () => '1. One song per line; on save the COT updates so the model can only output'],
   [/^构建信息:\s*(.+)$/, (m) => `Build: ${m[1]}`],
+  // galgame v2.5.1 — toasts and status lines with interpolated values. `t` translates a capture that is
+  // itself on-screen text (a playback source label, an error message), through DICT and these patterns.
+  [/^(.+) 播放失败$/, (m, t) => `${t(m[1])} playback failed`],
+  [/^(.+) 播放被浏览器拦截，请先进行一次页面交互$/, (m, t) => `${t(m[1])} playback was blocked by the browser; interact with the page once first`],
+  [/^「(.+)」已不存在，请重新选择$/, (m) => `"${m[1]}" no longer exists; select again`],
+  [/^跟随连接配置（(.+)）$/, (m) => `Follow connection profile (${m[1]})`],
+  [/^已获取 (\d+) 个模型$/, (m) => `Fetched ${m[1]} model(s)`],
+  [/^获取模型列表失败：(.+)；可选「手动输入模型名」$/, (m, t) => `Failed to fetch the model list: ${t(m[1])}; you can choose "Enter model name manually"`],
+  [/^获取模型列表失败：(.+)$/, (m, t) => `Failed to fetch the model list: ${t(m[1])}`],
+  [/^已刷新，共 (\d+) 个连接配置$/, (m) => `Refreshed: ${m[1]} connection profile(s)`],
+  [/^已设置模型：(.+)$/, (m) => `Model set: ${m[1]}`],
+  [/^连接成功，模型回复：([\s\S]+)$/, (m) => `Connected; the model replied: ${m[1]}`],
+  [/^连接失败：(.+)$/, (m, t) => `Connection failed: ${t(m[1])}`],
+  [/^格式化处理失败: (.+)$/, (m, t) => `Formatting failed: ${t(m[1])}`],
+  [/^当前已缓存 (\d+) 句，约 ([\d.]+) MB。$/, (m) => `${m[1]} line(s) cached, about ${m[2]} MB.`],
+  [/^酒馆后端返回 HTTP (\d+)（该 API 类型可能不支持获取模型列表）$/, (m) => `The SillyTavern backend returned HTTP ${m[1]} (this API type may not support fetching the model list)`],
+  [/^未知的 API 类型: (.+)$/, (m) => `Unknown API type: ${m[1] === '（空）' ? '(empty)' : m[1]}`],
+  [/^未找到连接配置「(.*)」$/, (m) => `Connection profile "${m[1] === '未选择' ? 'not selected' : m[1]}" not found`],
+  // The second-pass LLM label: "<profile> / <model>", or a bare label; the prompt viewer appends " ·".
+  [/^未知连接配置 \/ (.+)$/, (m) => `Unknown connection profile / ${m[1]}`],
+  [/^(酒馆当前 API|未知连接配置)( \/ .+)? ·$/, (m) => `${DICT[m[1]]}${m[2] || ''} ·`],
   // … add more as harvest surfaces them …
 ];

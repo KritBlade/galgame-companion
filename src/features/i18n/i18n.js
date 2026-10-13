@@ -1,7 +1,9 @@
-// galgame-companion · i18n — GUI translation overlay for bigmalove/galgame. v0.1
+// galgame-companion · i18n — GUI translation overlay for bigmalove/galgame. v0.2
 // MutationObserver over the PARENT document + exact-match dictionary keyed by the RENDERED
 // Chinese text. Only replaces explicit dictionary/pattern hits → can never corrupt ST's own
 // UI or dynamic content (GCP §2). Untranslated new strings just stay Chinese.
+// A pattern rule receives this translator as its second argument, so a capture that is itself
+// on-screen text (an error message inside a toast) gets the dictionary and every pattern too.
 // Harvest mode records every miss → __galI18nDump() downloads the key list (phase G1 loop).
 
 import { DOC, log } from '../../env.js';
@@ -43,10 +45,15 @@ function translate(raw) {
   }
   for (const [re, fn] of PATTERNS) {
     const m = key.match(re);
-    if (m) return raw.replace(key, fn(m));
+    if (m) return raw.replace(key, fn(m, translateInner));
   }
   if (HARVEST) missing.add(key); // record the miss
   return null;
+}
+
+// The translation of a captured piece, or the piece itself when nothing matches.
+function translateInner(text) {
+  return translate(text) ?? text;
 }
 
 function doTextNode(node) {
