@@ -1,13 +1,13 @@
 // ============================================================
-// galgame-companion — School v3's HUD layer over bigmalove/galgame. v0.3
+// galgame-companion — a HUD layer over bigmalove/galgame for MVU cards. v0.4
 // ------------------------------------------------------------
 // A Tavern-Helper script (SAME runtime as galgame — NOT an ST extension). Third
 // independent entry in TH's script library alongside galgame + mvu; reaches galgame's
 // GUI in the parent ST document via window.parent.document (same origin). galgame is
 // imported from CDN untouched — zero upstream coupling (GCP §1).
 //
-// Capabilities (GCP): 1 i18n overlay · 2 toolbar Menu button · 3 StatusMenu popup (G3)
-//                     · 4 image seam: saveBackground writer (G4b)
+// This file only starts the features; what each one does is the README's feature list,
+// one entry per folder under src/features/.
 // ============================================================
 
 import { SCRIPT_NAME, VERSION, BUILD, topWindow, log } from '../env.js';
@@ -15,7 +15,7 @@ import { startGalgameDefaults } from './galgame-defaults.js';
 import { injectStyle } from './style.js';
 import { startI18n } from '../features/i18n/index.js';
 import { startToolbar } from '../features/menu/index.js';
-import { startFullscreenGuard, startGeneratingIndicator, startFreeInputPatch, startFormatRuleTrim } from '../features/galgame-quirks/index.js';
+import { startFullscreenGuard, startGeneratingIndicator, startFreeInputPatch, startFormatRuleTrim, startStyledCardDismiss } from '../features/galgame-quirks/index.js';
 import { startImageSeam, startImageViewer, startImageRegen, startBackgroundManager } from '../features/image/index.js';
 import { startBeatShaper } from '../features/beat-shaper/index.js';
 import { startChoices, startLocationTimeBridge, startNextBlock, startMeterPanel } from '../features/galgame-bridge/index.js';
@@ -55,6 +55,7 @@ startToolbar();
 startFullscreenGuard(); // release native fullscreen galgame leaks when its "quit mode" is clicked
 startFreeInputPatch();  // galgame's free-input pop-up: Enter writes a new line (Ctrl+Enter or Send sends), only the ✕ closes it
 startFormatRuleTrim();  // cut galgame's paragraph cap and sample reply from its format rule, so the preset sets the reply length (a TTS rule stays whole)
+startStyledCardDismiss(); // a styled card closing the newest reply hides on a click outside it, and comes back on the next
 // Order matters: the shaper MUST register before the seam so that on the same MESSAGE_UPDATED
 // (ST awaits listeners sequentially) the text is already shaped — uid-scoped scene names in place —
 // when the seam scans it. Seam-side SCENE_NAME_RE filter is the belt-and-braces for other orders.

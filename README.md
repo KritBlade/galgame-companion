@@ -29,9 +29,11 @@ What it does, one folder each under `src/features/`:
 6. **galgame-quirks** — workarounds for galgame behaviour we can't change upstream: releases the
    native fullscreen its "quit mode" leaks; raises and drops the "Generating" popup with the real
    turn, mvu-helper's PRE pass through its POST pass; makes the free-input pop-up write a new line
-   on Enter (Ctrl+Enter or Send sends) and close only on ✕; and cuts the paragraph cap and sample
+   on Enter (Ctrl+Enter or Send sends) and close only on ✕; cuts the paragraph cap and sample
    reply from galgame's format rule so the card's preset sets the reply length (a TTS rule stays
-   whole).
+   whole); and lets a click outside a styled card (a terminal, an SMS…) that closes the newest reply
+   hide it to show the backdrop, where galgame's own NEXT has nowhere to go — the next click brings
+   it back.
 
 On start it also seeds galgame's display settings (`src/app/galgame-defaults.js`), so the card's
 VN presentation needs no per-user setup, and logs which genre profile is live.
@@ -39,10 +41,10 @@ VN presentation needs no per-user setup, and logs which genre profile is live.
 ## Install (Tavern Helper script library)
 
 ```js
-import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.9.14/dist/galgame-companion.dist.js'
+import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.9.15/dist/galgame-companion.dist.js'
 ```
 
-Add AFTER the galgame script entry. `@v0.9.14` pins a release tag — bump it to update.
+Add AFTER the galgame script entry. `@v0.9.15` pins a release tag — bump it to update.
 
 **Versionless (auto-latest)** — resolves to the newest semver tag, so the TH entry never needs editing:
 

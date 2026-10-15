@@ -1,9 +1,9 @@
-// galgame-companion v0.9.14
+// galgame-companion v0.9.15
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.9.14";
-  var BUILD = "4895182";
+  var VERSION = "0.9.15";
+  var BUILD = "acae206";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -370,6 +370,14 @@
 @media screen and (max-width: 48rem) {
   #gal-global-overlay .companion-meters { width: 118px; top: 40px; left: 8px; }
   #gal-global-overlay .companion-meter-group { font-size: 0.6rem; padding: 4px 6px; }
+}
+
+/* Dismissed styled card (styled-card-dismiss.js) — the stage holding a card the player clicked away
+   fades out with galgame's own 0.5s opacity transition and lets clicks through to the backdrop. Keyed
+   on a class on the card element, which galgame replaces on every page change, so the card shows
+   again by itself. */
+#gal-global-overlay .gal-styled-stage:has(> .gal-styled-stage-content > .companion-styled-card-dismissed) {
+  opacity: 0 !important; pointer-events: none !important;
 }
 `;
   function injectStyle() {
@@ -2151,6 +2159,23 @@
     log.info("next-block watching (the chip appears once a genre declaring a manual advance is loaded)");
   }
 
+  // src/features/galgame-bridge/stage-floors.js
+  var STAGE_SEL = "#gal-global-overlay .gal-game-container";
+  var AI_ROWS_SEL = '#chat > .mes:not([is_user="true"])';
+  function floorNumber(raw) {
+    if (raw == null || raw === "") return -1;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : -1;
+  }
+  function displayedFloor() {
+    const stage = DOC.querySelector(STAGE_SEL);
+    return floorNumber(stage && stage.getAttribute("data-mes-id"));
+  }
+  function lastAiFloor() {
+    const rows = DOC.querySelectorAll(AI_ROWS_SEL);
+    return rows.length ? floorNumber(rows[rows.length - 1].getAttribute("mesid")) : -1;
+  }
+
   // src/features/galgame-bridge/meter-panel-core.js
   var PANEL_CLASS = "companion-meters";
   var GROUP_CLASS = "companion-meter-group";
@@ -2259,15 +2284,7 @@
 
   // src/features/galgame-bridge/meter-panel.js
   var OVERLAY_SEL2 = "#gal-global-overlay";
-  var STAGE_SEL = "#gal-global-overlay .gal-game-container";
   var MVU_UPDATE_ENDED = "mag_variable_update_ended";
-  function displayedFloor() {
-    const stage = DOC.querySelector(STAGE_SEL);
-    const raw = stage && stage.getAttribute("data-mes-id");
-    if (raw == null || raw === "") return -1;
-    const n = Number(raw);
-    return Number.isFinite(n) && n >= 0 ? n : -1;
-  }
   var reported = /* @__PURE__ */ new Set();
   function reportOnce(message) {
     if (reported.has(message)) return;
@@ -2700,6 +2717,87 @@
     log.info("format-rule-trim active (galgame's paragraph cap and sample reply are cut from its format rule; a TTS rule is left whole)");
   }
 
+  // src/features/galgame-quirks/styled-card-dismiss-core.js
+  var DISMISSED_CLASS = "companion-styled-card-dismissed";
+  var NOT_OUTSIDE_SELECTOR = [
+    ".gal-bottom-toolbar",
+    ".gal-interaction-bar",
+    ".gal-name-badge",
+    ".gal-location-bar",
+    ".gal-time-bar",
+    ".gal-status-bar-container",
+    ".gal-bgm-widget",
+    ".gal-fullscreen-btn",
+    ".gal-styled-stage-content",
+    ".gal-choice-layer",
+    ".gal-popup-modal",
+    ".gal-embedded-viewer",
+    ".gal-cg-viewer",
+    ".gal-special-cg-overlay",
+    "button",
+    "a",
+    "input",
+    "textarea",
+    "select",
+    "[data-action]",
+    '[contenteditable="true"]',
+    "label"
+  ].join(", ");
+  function isProgressAtEnd(widthStyle) {
+    const percent = Number.parseFloat(widthStyle);
+    return Number.isFinite(percent) && percent >= 100;
+  }
+  function styledCardClickAction({
+    isStyledMode = false,
+    hasCard = false,
+    isOutsideCard = false,
+    isCardDismissed = false,
+    isLastSegment = false,
+    hasLaterAiFloor = true
+  } = {}) {
+    if (!isStyledMode || !hasCard || !isOutsideCard) return "pass";
+    if (isCardDismissed) return "restore";
+    if (isLastSegment && !hasLaterAiFloor) return "dismiss";
+    return "pass";
+  }
+
+  // src/features/galgame-quirks/styled-card-dismiss.js
+  var OVERLAY_SEL4 = "#gal-global-overlay";
+  var STYLED_MODE_CLASS = "gal-mode-styled";
+  var STAGE_SEL2 = ".gal-styled-stage";
+  var STAGE_SHOWN_CLASS = "show";
+  var CARD_SEL = ".gal-styled-stage-content > .gal-styled";
+  var PROGRESS_SEL = ".gal-progress-bar";
+  function onClick(e) {
+    const target = e.target;
+    if (!target || typeof target.closest !== "function") return;
+    const overlay = target.closest(OVERLAY_SEL4);
+    if (!overlay) return;
+    const stage = overlay.querySelector(STAGE_SEL2);
+    const card = stage && stage.classList.contains(STAGE_SHOWN_CLASS) ? stage.querySelector(CARD_SEL) : null;
+    const progress = overlay.querySelector(PROGRESS_SEL);
+    const action = styledCardClickAction({
+      isStyledMode: overlay.classList.contains(STYLED_MODE_CLASS),
+      hasCard: !!card,
+      isOutsideCard: !target.closest(NOT_OUTSIDE_SELECTOR),
+      isCardDismissed: !!card && card.classList.contains(DISMISSED_CLASS),
+      isLastSegment: isProgressAtEnd(progress && progress.style.width),
+      hasLaterAiFloor: displayedFloor() < lastAiFloor()
+    });
+    if (action === "pass") return;
+    e.stopPropagation();
+    card.classList.toggle(DISMISSED_CLASS, action === "dismiss");
+    log.info(`styled-card-dismiss: ${action === "dismiss" ? "hid" : "brought back"} the card closing floor ${displayedFloor()}`);
+  }
+  function startStyledCardDismiss() {
+    if (!DOC) {
+      log.warn("styled-card-dismiss: no parent document — skipping");
+      return;
+    }
+    DOC.addEventListener("click", onClick, true);
+    log.info("styled-card-dismiss active (a click outside a styled card that closes the newest reply hides it; the next click brings it back)");
+  }
+
   // src/features/menu/menu-modal.js
   var MODAL_ID = "school-companion-modal";
   var STYLE_ID2 = "school-companion-modal-css";
@@ -2801,7 +2899,7 @@
 
   // src/features/menu/toolbar.js
   var ACTION = "school-stats";
-  var OVERLAY_SEL4 = "#gal-global-overlay";
+  var OVERLAY_SEL5 = "#gal-global-overlay";
   var MOBILE_MENU_SEL = "#gal-global-overlay #gal-mobile-menu";
   var CORNER_CLASS = "school-corner-btn";
   var CORNER_BTN_HTML = `<button class="gal-footer-btn ${CORNER_CLASS}" data-action="${ACTION}" title="School Menu"><i class="fa-solid fa-users"></i> <span class="gal-btn-text">MENU</span></button>`;
@@ -2813,7 +2911,7 @@
     return true;
   }
   function injectAll() {
-    const a = injectInto2(OVERLAY_SEL4, `.${CORNER_CLASS}`, CORNER_BTN_HTML);
+    const a = injectInto2(OVERLAY_SEL5, `.${CORNER_CLASS}`, CORNER_BTN_HTML);
     const b = injectInto2(MOBILE_MENU_SEL, `[data-action="${ACTION}"]`, MOBILE_BTN_HTML);
     if (a || b) log.info(`button injected (corner=${a}, mobile=${b})`);
   }
@@ -4099,7 +4197,7 @@ ${cot}` : cot;
   }
 
   // src/features/image/image-viewer.js
-  var OVERLAY_SEL5 = "#gal-global-overlay";
+  var OVERLAY_SEL6 = "#gal-global-overlay";
   var BTN_CLASS = "school-imgview-btn";
   var MODAL_ID2 = "school-imgview-modal";
   var Z_INDEX2 = 2147483e3;
@@ -4107,7 +4205,7 @@ ${cot}` : cot;
     return currentFullscreenEl() || DOC.body;
   }
   function currentBgUrl() {
-    const ov = DOC.querySelector(OVERLAY_SEL5);
+    const ov = DOC.querySelector(OVERLAY_SEL6);
     if (!ov) return null;
     return displayedBackdropUrl([".gal-bg-front", ".gal-bg-base"].map((sel) => {
       const el = ov.querySelector(sel);
@@ -4164,7 +4262,7 @@ ${cot}` : cot;
     log.image("image-viewer: opened (" + (url ? "showing current backdrop" : "no image") + ")");
   }
   function injectButton() {
-    const overlay = DOC.querySelector(OVERLAY_SEL5);
+    const overlay = DOC.querySelector(OVERLAY_SEL6);
     if (!overlay || overlay.querySelector("." + BTN_CLASS)) return false;
     const btn = DOC.createElement("button");
     btn.type = "button";
@@ -4220,7 +4318,7 @@ ${cot}` : cot;
   }
 
   // src/features/image/image-regen.js
-  var OVERLAY_SEL6 = "#gal-global-overlay";
+  var OVERLAY_SEL7 = "#gal-global-overlay";
   var BTN_CLASS2 = "school-imgregen-btn";
   var WRAP_SEL = '[class*="auto-img-wrap"]';
   var REGEN_SEL = '[class*="auto-img-regen"]';
@@ -4240,10 +4338,6 @@ ${cot}` : cot;
   function imgSrcOf2(wrap) {
     const img = wrap && wrap.querySelector("img");
     return img ? img.getAttribute("src") || img.src || null : null;
-  }
-  function lastAiFloor() {
-    const rows = DOC.querySelectorAll('#chat > .mes:not([is_user="true"])');
-    return rows.length ? floorOf(rows[rows.length - 1]) : -1;
   }
   function controlOf(wrap) {
     const regen = wrap && wrap.querySelector(REGEN_SEL);
@@ -4367,7 +4461,7 @@ ${cot}` : cot;
     if (paintStage(newSrc)) log.image(`image-regen: stage repainted with ${basename(newSrc)} — ${decision.reason}`);
   }
   function injectButton2() {
-    const overlay = DOC.querySelector(OVERLAY_SEL6);
+    const overlay = DOC.querySelector(OVERLAY_SEL7);
     if (!overlay || overlay.querySelector("." + BTN_CLASS2)) return false;
     const btn = DOC.createElement("button");
     btn.type = "button";
@@ -4433,7 +4527,7 @@ ${cot}` : cot;
   // src/features/image/background-manager.js
   var PANE_SEL = '.gal-tab-pane[data-pane="backgrounds"]';
   var GRID_SEL = ".gal-bg-grid";
-  var CARD_SEL = ".gal-bg-card";
+  var CARD_SEL2 = ".gal-bg-card";
   var HEADER_SEL = ".gal-pane-header";
   var ACTIONS_SEL = ".gal-pane-actions";
   var STAT_SEL = ".gal-pane-stat";
@@ -4445,7 +4539,7 @@ ${cot}` : cot;
   var BAR_CLASS2 = "companion-bg-selectbar";
   var COUNT_CLASS = "companion-bg-selected-count";
   function cardsIn(pane) {
-    return Array.from(pane.querySelectorAll(CARD_SEL));
+    return Array.from(pane.querySelectorAll(CARD_SEL2));
   }
   function pickedIn(pane) {
     return cardsIn(pane).filter((card) => card.classList.contains(PICKED_CLASS));
@@ -4572,7 +4666,7 @@ ${cot}` : cot;
     if (!grid) return;
     grid.addEventListener("click", (event) => {
       if (!pane.classList.contains(SELECTING_CLASS)) return;
-      const card = event.target.closest(CARD_SEL);
+      const card = event.target.closest(CARD_SEL2);
       if (!card || !grid.contains(card)) return;
       event.preventDefault();
       event.stopPropagation();
@@ -4641,6 +4735,7 @@ ${cot}` : cot;
   startFullscreenGuard();
   startFreeInputPatch();
   startFormatRuleTrim();
+  startStyledCardDismiss();
   startBeatShaper();
   startImageSeam();
   startGeneratingIndicator();

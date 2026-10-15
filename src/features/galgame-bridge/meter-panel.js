@@ -1,4 +1,4 @@
-// galgame-companion · meter-panel — the genre profile's live bars, drawn over galgame's stage. v0.2
+// galgame-companion · meter-panel — the genre profile's live bars, drawn over galgame's stage. v0.3
 //
 // GENRE-GATED, like next-block. Which bars exist, what they read and when the panel shows at all
 // come from the active genre profile (src/genre/<name>/ — School declares its intimacy meters there);
@@ -25,24 +25,14 @@
 import { DOC, log } from '../../env.js';
 import { activeGenre } from '../../genre/index.js';
 import { latestStatData } from './live-stat-data.js';
+import { displayedFloor } from './stage-floors.js';
 import { meterPanelModel, panelHtml, PANEL_CLASS, SIGNATURE_ATTR } from './meter-panel-core.js';
 
 const OVERLAY_SEL = '#gal-global-overlay';
-const STAGE_SEL = '#gal-global-overlay .gal-game-container';
 // MVU's own "a variable pass finished" event name (MagVarUpdate variable_def.ts, emitted through
 // Tavern-Helper's event bus so it reaches this iframe). A literal because Mvu.events is not attached
 // to the top window yet when this starts.
 const MVU_UPDATE_ENDED = 'mag_variable_update_ended';
-
-// The floor galgame is showing (stamped on its stage as data-mes-id), or -1 when it has not stamped one.
-// Exported through the barrel: image-regen asks the same question of the same stamp.
-export function displayedFloor() {
-  const stage = DOC.querySelector(STAGE_SEL);
-  const raw = stage && stage.getAttribute('data-mes-id');
-  if (raw == null || raw === '') return -1;
-  const n = Number(raw);
-  return Number.isFinite(n) && n >= 0 ? n : -1;
-}
 
 // A field the game did not provide is said once per session, not once per redraw — the redraw runs
 // on every stage mutation, and the same missing path would otherwise fill the console.

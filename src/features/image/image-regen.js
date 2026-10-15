@@ -1,4 +1,4 @@
-// galgame-companion · image-regen — surface mvu-helper's per-image "Regenerate" control on galgame's GUI. v0.4
+// galgame-companion · image-regen — surface mvu-helper's per-image "Regenerate" control on galgame's GUI. v0.5
 //
 // mvu-helper renders each generated image in the message as:
 //   <span class="auto-img-wrap" data-rawtag="<pic …>"><img src="…"><span class="auto-img-regen …" role="button"></span></span>
@@ -26,7 +26,7 @@ import { DOC, topWindow, log } from '../../env.js';
 import { currentBgUrl } from './image-viewer.js';
 import { BACKDROP_URL_VARIABLE } from './image-viewer-core.js';
 import { basename, cssUrlValue, decideRegenRepaint } from './image-regen-core.js';
-import { displayedFloor } from '../galgame-bridge/index.js';
+import { displayedFloor, lastAiFloor } from '../galgame-bridge/index.js';
 
 const OVERLAY_SEL = '#gal-global-overlay';
 const BTN_CLASS = 'school-imgregen-btn';
@@ -59,13 +59,6 @@ function wrapsOf(floor) {
 function imgSrcOf(wrap) {
   const img = wrap && wrap.querySelector('img');
   return img ? (img.getAttribute('src') || img.src || null) : null;
-}
-
-// The newest AI floor — the one floor galgame repaints its stage for. Read the way galgame reads it
-// (`$mes.nextAll('.mes[is_user!="true"]').length === 0`, process-message.js): off the rendered rows.
-function lastAiFloor() {
-  const rows = DOC.querySelectorAll('#chat > .mes:not([is_user="true"])');
-  return rows.length ? floorOf(rows[rows.length - 1]) : -1;
 }
 
 // A regen control plus what image-regen must remember about it: which floor, which position among that

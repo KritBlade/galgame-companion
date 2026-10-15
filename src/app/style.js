@@ -1,4 +1,4 @@
-// galgame-companion · style — small CSS overrides injected into the parent document. v0.8
+// galgame-companion · style — small CSS overrides injected into the parent document. v0.9
 // Only cosmetic nudges that a dictionary swap can't express. Keep tiny; anything galgame
 // renames simply stops matching (graceful).
 
@@ -167,6 +167,14 @@ const CSS = `
 @media screen and (max-width: 48rem) {
   #gal-global-overlay .companion-meters { width: 118px; top: 40px; left: 8px; }
   #gal-global-overlay .companion-meter-group { font-size: 0.6rem; padding: 4px 6px; }
+}
+
+/* Dismissed styled card (styled-card-dismiss.js) — the stage holding a card the player clicked away
+   fades out with galgame's own 0.5s opacity transition and lets clicks through to the backdrop. Keyed
+   on a class on the card element, which galgame replaces on every page change, so the card shows
+   again by itself. */
+#gal-global-overlay .gal-styled-stage:has(> .gal-styled-stage-content > .companion-styled-card-dismissed) {
+  opacity: 0 !important; pointer-events: none !important;
 }
 `;
 
