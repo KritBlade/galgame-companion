@@ -1,14 +1,15 @@
 // galgame-companion · styled-card-dismiss-core — PURE decision for a click while galgame shows a styled
-// card (a terminal, an SMS, a letter… any <styled> block it plays as its own page). v0.1
+// card (a terminal, an SMS, a letter… any <styled> block it plays as its own page). v0.2
 //
 // galgame turns a click outside the card into NEXT (upstream src/ui/events.js, the handler on
 // '#gal-global-overlay' that returns unless the overlay has `gal-mode-styled`). When the card is the
 // last page of the newest reply, NEXT has nowhere to go: galgame only toasts "last AI floor" and the card
 // stays over the backdrop, so PREV was the only way back to the picture.
 //
-// So on that one page — last segment, no later AI floor — a click outside the card hides it, and the next
-// click outside brings it back. Everywhere else galgame's own NEXT runs untouched: a card in the middle of
-// a reply advances, and a card closing an older reply moves on to the next reply.
+// So on that one page — last segment, no later AI floor — a click outside the card hides it and brings back
+// galgame's Regen / Free chat bar (app/style.js), and the next click outside restores the card. Everywhere
+// else galgame's own NEXT runs untouched: a card in the middle of a reply advances, and a card closing an
+// older reply moves on to the next reply.
 //
 // "Outside" is galgame's own test, copied whole (v2.5.1), plus <label>: a label forwards its click to its
 // control (the companion's advance chip is one), so a click on it is a control click, not a stray one.

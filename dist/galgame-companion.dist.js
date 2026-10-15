@@ -1,9 +1,9 @@
-// galgame-companion v0.9.15
+// galgame-companion v0.9.16
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.9.15";
-  var BUILD = "acae206";
+  var VERSION = "0.9.16";
+  var BUILD = "b395156";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -373,11 +373,15 @@
 }
 
 /* Dismissed styled card (styled-card-dismiss.js) — the stage holding a card the player clicked away
-   fades out with galgame's own 0.5s opacity transition and lets clicks through to the backdrop. Keyed
-   on a class on the card element, which galgame replaces on every page change, so the card shows
-   again by itself. */
+   fades out with galgame's own 0.5s opacity transition and lets clicks through to the backdrop, and
+   galgame's Regen / Free chat bar, which its styled mode hides, comes back (flex is its display in every
+   skin) so the player can answer from the backdrop. Keyed on a class on the card element, which galgame
+   replaces on every page change, so the card and styled mode's own look return by themselves. */
 #gal-global-overlay .gal-styled-stage:has(> .gal-styled-stage-content > .companion-styled-card-dismissed) {
   opacity: 0 !important; pointer-events: none !important;
+}
+#gal-global-overlay.gal-mode-styled:has(.gal-styled-stage-content > .companion-styled-card-dismissed) .gal-interaction-bar {
+  display: flex !important;
 }
 `;
   function injectStyle() {

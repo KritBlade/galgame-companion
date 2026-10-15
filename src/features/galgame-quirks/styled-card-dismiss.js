@@ -1,5 +1,5 @@
 // galgame-companion · styled-card-dismiss — a styled card closing the newest reply hides on a click outside
-// it, and comes back on the next one. v0.1
+// it, and comes back on the next one. v0.2
 //
 // The decision is styled-card-dismiss-core.js; this file only reads galgame's page and applies it. The
 // listener is a CAPTURE listener on the document, so it runs before galgame's own outside-click handler
@@ -9,7 +9,8 @@
 // THE HIDDEN STATE LIVES ON THE CARD ELEMENT. galgame mounts every card with `$content.html(…)`, so any
 // page change (PREV, NEXT, a new reply, a re-render) replaces the element and the card shows again with
 // nothing here to reset. The hiding itself is CSS in app/style.js: the stage that holds a dismissed card
-// fades out and lets clicks through, while galgame still counts it as shown.
+// fades out and lets clicks through, while galgame still counts it as shown, and galgame's Regen / Free
+// chat bar — hidden in its styled mode — shows again, so the player can answer from the backdrop.
 
 import { DOC, log } from '../../env.js';
 import { displayedFloor, lastAiFloor } from '../galgame-bridge/index.js';
