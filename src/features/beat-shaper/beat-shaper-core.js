@@ -1,4 +1,4 @@
-// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v1.5
+// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v1.6
 //
 // Deterministically reshapes an AI reply into galgame's beat contract (plan: mvu-helper
 // plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). galgame's standard parser builds display beats ONLY
@@ -141,8 +141,10 @@ const RE_BGIMG_TAG = /[ \t]*<bgimg>[\s\S]*?<\/bgimg>[ \t]*\r?\n?/gi;
 // unwrap-then-rehide (RE_GC_HIDDEN below).
 const RE_TRAIT_CHECK = /<classmate_trait_check>[\s\S]*?<\/classmate_trait_check>/gi;
 const RE_GC_HIDDEN = /<!--gc:hidden\n([\s\S]*?)\n-->/g;
-// Any <background …> tag, self-closing or not (we strip ALL and re-inject our own).
-const RE_BACKGROUND_TAG = /[ \t]*<background\b[^>]*\/?>(?:\s*<\/background>)?[ \t]*\r?\n?/gi;
+// Any <background …> tag with its line, self-closing or not (we strip ALL and re-inject our own). The prompt
+// strip (prompt-beat-strip-core.js) removes the same lines from what the model reads. Use it with replace()
+// only: a /g regex shared through test() or exec() carries lastIndex between callers.
+export const RE_BACKGROUND_TAG = /[ \t]*<background\b[^>]*\/?>(?:\s*<\/background>)?[ \t]*\r?\n?/gi;
 // Un-rendered image tag — its presence means mvu-helper's generation is still in flight (or failed).
 // It gates SCENE INJECTION ONLY (§3b): the image set is incomplete, so beat→image binding would be
 // derived from a partial set. Everything else — envelope rename, <p>-wrap, roll placement — runs now.
@@ -286,24 +288,30 @@ export function locateEnvelope(text) {
   return { kind: null, open: null, close: null, reasoning };
 }
 
-// Blocks whose CONTENT must never be re-wrapped (protected verbatim during the <p>-wrap pass).
-// Built as alternatives of one scanning regex; order matters only for overlap (none in practice).
+// MACHINERY BLOCKS — never prose. The <p>-wrap leaves their content verbatim, and the prompt strip
+// (prompt-beat-strip-core.js) never edits inside them: a <p> in there is the block's own HTML, not a beat.
+// Order matters only for overlap (none in practice).
+const MACHINERY_BLOCK_SOURCES = [
+  RE_IMG_WRAP.source, // rendered images
+  // An UN-RENDERED <pic>, for the same reason: the shape runs while an image is still generating
+  // (§3b), and mvu-helper later swaps the tag for the image IN PLACE. A <pic> the narrator put on the
+  // line right above its prose shares that paragraph, so wrapping the paragraph put the finished
+  // image INSIDE a beat — galgame printed the <img> markup as narration (live 2026-09-30).
+  '<pic\\b[^>]*>',
+  '<styled\\b[^>]*>[\\s\\S]*?<\\/styled>',
+  '<弹窗一>[\\s\\S]*?<\\/弹窗一>',
+  '<弹窗二>[\\s\\S]*?<\\/弹窗二>',
+  '<option\\b[^>]*>[\\s\\S]*?<\\/option>',
+  '<bgm>[\\s\\S]*?<\\/bgm>',
+  '<!--gc:hidden\\n[\\s\\S]*?\\n-->', // our own comment-hidden engine blocks — never wrap the hider
+];
+// The alternatives as one regex source, for a caller to compile its own instance (no shared lastIndex).
+export const MACHINERY_BLOCK_SOURCE = MACHINERY_BLOCK_SOURCES.join('|');
+
+// Blocks whose CONTENT must never be re-wrapped (protected verbatim during the <p>-wrap pass): existing
+// beats — never nest/double-wrap — and the machinery blocks above.
 const PROTECTED_BLOCK_RE = new RegExp(
-  [
-    '<p(?:\\s[^>]*)?>[\\s\\S]*?<\\/p>', // existing beats — never nest/double-wrap
-    RE_IMG_WRAP.source, // rendered images
-    // An UN-RENDERED <pic>, for the same reason: the shape runs while an image is still generating
-    // (§3b), and mvu-helper later swaps the tag for the image IN PLACE. A <pic> the narrator put on the
-    // line right above its prose shares that paragraph, so wrapping the paragraph put the finished
-    // image INSIDE a beat — galgame printed the <img> markup as narration (live 2026-09-30).
-    '<pic\\b[^>]*>',
-    '<styled\\b[^>]*>[\\s\\S]*?<\\/styled>',
-    '<弹窗一>[\\s\\S]*?<\\/弹窗一>',
-    '<弹窗二>[\\s\\S]*?<\\/弹窗二>',
-    '<option\\b[^>]*>[\\s\\S]*?<\\/option>',
-    '<bgm>[\\s\\S]*?<\\/bgm>',
-    '<!--gc:hidden\\n[\\s\\S]*?\\n-->', // our own comment-hidden engine blocks — never wrap the hider
-  ].join('|'),
+  ['<p(?:\\s[^>]*)?>[\\s\\S]*?<\\/p>', ...MACHINERY_BLOCK_SOURCES].join('|'),
   'gi',
 );
 

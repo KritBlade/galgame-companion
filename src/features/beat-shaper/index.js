@@ -1,10 +1,12 @@
 // features/beat-shaper — dumb-terminal C1: <p>-wrap the prose and inject a uid-scoped
-// <background scene> per image.
+// <background scene> per image into the saved reply, and take that same markup back out of the copy of
+// each past reply SillyTavern sends to the model (prompt-beat-strip).
 //
 // The scene-name pieces are exported for image/: the seam filters, prunes and sweeps galgame's
 // background store by the naming contract that THIS feature defines (beat-shaper-core §2.1).
 // One definition, consumed through the barrel — shared contract, not a leak.
 export { startBeatShaper, currentChatKey, registerWritePrerequisite } from './beat-shaper.js';
+export { startPromptBeatStrip } from './prompt-beat-strip.js';
 export {
   SCENE_NAME_RE, LEGACY_SCENE_NAME_RE, uidOfSceneName, chatKeyOfSceneName, hashOfSceneName,
   // shortHash is the binding key itself: the seam must hash an <img> src with the SAME function the

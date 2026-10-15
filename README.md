@@ -23,6 +23,9 @@ What it does, one folder each under `src/features/`:
    its card nodes are moved, never rebuilt, so its handlers stay bound.
 4. **beat-shaper** — wraps the reply's prose in galgame's `<p>` lines and injects a uid-scoped
    `<background scene>` per image, so each image becomes the backdrop at its place in the reply.
+   The saved reply keeps that markup for galgame; the copy of each past reply sent to the model
+   loses it, with one blank line at every beat boundary (chat and text completion), so it costs no
+   prompt tokens and the model never copies a layout the shaper cannot split.
 5. **galgame-bridge** — feeds galgame's own UI from `stat_data`: the location/time pills and the
    Story-choices sheet (through an AutoCardUpdaterAPI shim — MVU cards have none), plus the controls
    the genre profile declares over the stage: the manual Next-Block toggle and the live meter panel.
@@ -41,10 +44,10 @@ VN presentation needs no per-user setup, and logs which genre profile is live.
 ## Install (Tavern Helper script library)
 
 ```js
-import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.9.16/dist/galgame-companion.dist.js'
+import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.9.17/dist/galgame-companion.dist.js'
 ```
 
-Add AFTER the galgame script entry. `@v0.9.16` pins a release tag — bump it to update.
+Add AFTER the galgame script entry. `@v0.9.17` pins a release tag — bump it to update.
 
 **Versionless (auto-latest)** — resolves to the newest semver tag, so the TH entry never needs editing:
 

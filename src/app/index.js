@@ -1,5 +1,5 @@
 // ============================================================
-// galgame-companion — a HUD layer over bigmalove/galgame for MVU cards. v0.4
+// galgame-companion — a HUD layer over bigmalove/galgame for MVU cards. v0.5
 // ------------------------------------------------------------
 // A Tavern-Helper script (SAME runtime as galgame — NOT an ST extension). Third
 // independent entry in TH's script library alongside galgame + mvu; reaches galgame's
@@ -17,7 +17,7 @@ import { startI18n } from '../features/i18n/index.js';
 import { startToolbar } from '../features/menu/index.js';
 import { startFullscreenGuard, startGeneratingIndicator, startFreeInputPatch, startFormatRuleTrim, startStyledCardDismiss } from '../features/galgame-quirks/index.js';
 import { startImageSeam, startImageViewer, startImageRegen, startBackgroundManager } from '../features/image/index.js';
-import { startBeatShaper } from '../features/beat-shaper/index.js';
+import { startBeatShaper, startPromptBeatStrip } from '../features/beat-shaper/index.js';
 import { startChoices, startLocationTimeBridge, startNextBlock, startMeterPanel } from '../features/galgame-bridge/index.js';
 import { logActiveGenre } from '../genre/index.js';
 
@@ -60,6 +60,7 @@ startStyledCardDismiss(); // a styled card closing the newest reply hides on a c
 // (ST awaits listeners sequentially) the text is already shaped — uid-scoped scene names in place —
 // when the seam scans it. Seam-side SCENE_NAME_RE filter is the belt-and-braces for other orders.
 startBeatShaper();      // dumb-terminal C1: <p>-wrap prose + inject uid-scoped <background scene> per image (scene #1 hoisted)
+startPromptBeatStrip(); // the same markup out of past replies in the outgoing prompt only — one blank line per beat boundary
 startImageSeam();       // G4b: mvu-helper images → galgame backdrop DB (uid-scoped names only)
 startGeneratingIndicator(); // own galgame's "Generating" popup: up from mvu-helper's PRE pass, down when its POST pass ends (ST's own gen covers the middle)
 startLocationTimeBridge(); // feed galgame's location/time pills from stat_data.World (AutoCardUpdaterAPI shim; MVU cards have none)

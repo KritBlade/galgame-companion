@@ -1,9 +1,9 @@
-// galgame-companion v0.9.16
+// galgame-companion v0.9.17
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.9.16";
-  var BUILD = "b395156";
+  var VERSION = "0.9.17";
+  var BUILD = "08e5add";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -3104,25 +3104,25 @@
     }
     return { kind: null, open: null, close: null, reasoning };
   }
+  var MACHINERY_BLOCK_SOURCES = [
+    RE_IMG_WRAP.source,
+    // rendered images
+    // An UN-RENDERED <pic>, for the same reason: the shape runs while an image is still generating
+    // (§3b), and mvu-helper later swaps the tag for the image IN PLACE. A <pic> the narrator put on the
+    // line right above its prose shares that paragraph, so wrapping the paragraph put the finished
+    // image INSIDE a beat — galgame printed the <img> markup as narration (live 2026-09-30).
+    "<pic\\b[^>]*>",
+    "<styled\\b[^>]*>[\\s\\S]*?<\\/styled>",
+    "<弹窗一>[\\s\\S]*?<\\/弹窗一>",
+    "<弹窗二>[\\s\\S]*?<\\/弹窗二>",
+    "<option\\b[^>]*>[\\s\\S]*?<\\/option>",
+    "<bgm>[\\s\\S]*?<\\/bgm>",
+    "<!--gc:hidden\\n[\\s\\S]*?\\n-->"
+    // our own comment-hidden engine blocks — never wrap the hider
+  ];
+  var MACHINERY_BLOCK_SOURCE = MACHINERY_BLOCK_SOURCES.join("|");
   var PROTECTED_BLOCK_RE = new RegExp(
-    [
-      "<p(?:\\s[^>]*)?>[\\s\\S]*?<\\/p>",
-      // existing beats — never nest/double-wrap
-      RE_IMG_WRAP.source,
-      // rendered images
-      // An UN-RENDERED <pic>, for the same reason: the shape runs while an image is still generating
-      // (§3b), and mvu-helper later swaps the tag for the image IN PLACE. A <pic> the narrator put on the
-      // line right above its prose shares that paragraph, so wrapping the paragraph put the finished
-      // image INSIDE a beat — galgame printed the <img> markup as narration (live 2026-09-30).
-      "<pic\\b[^>]*>",
-      "<styled\\b[^>]*>[\\s\\S]*?<\\/styled>",
-      "<弹窗一>[\\s\\S]*?<\\/弹窗一>",
-      "<弹窗二>[\\s\\S]*?<\\/弹窗二>",
-      "<option\\b[^>]*>[\\s\\S]*?<\\/option>",
-      "<bgm>[\\s\\S]*?<\\/bgm>",
-      "<!--gc:hidden\\n[\\s\\S]*?\\n-->"
-      // our own comment-hidden engine blocks — never wrap the hider
-    ].join("|"),
+    ["<p(?:\\s[^>]*)?>[\\s\\S]*?<\\/p>", ...MACHINERY_BLOCK_SOURCES].join("|"),
     "gi"
   );
   var RE_TAG_ONLY_PARAGRAPH = /^(?:\s|<[^>]+>)*$/;
@@ -3766,6 +3766,141 @@ ${cot}` : cot;
     log.image(`beat-shaper active (${bound} event(s) bound, envelope repair retried when mvu-helper's turn phase closes)`);
   }
 
+  // src/features/beat-shaper/prompt-beat-strip-core.js
+  var BEAT_TAG = "<\\/?p(?:\\s[^>]*)?>";
+  var RE_BEAT_TAG = new RegExp(BEAT_TAG, "gi");
+  var RE_HAS_MARKUP = new RegExp(`${BEAT_TAG}|<background\\b`, "i");
+  var RE_SEAM = new RegExp(`[ \\t\\r\\n]*(?:${BEAT_TAG}[ \\t\\r\\n]*)+`, "gi");
+  function splitAtMachinery(text) {
+    const parts = [];
+    let at = 0;
+    for (const m of text.matchAll(new RegExp(MACHINERY_BLOCK_SOURCE, "gi"))) {
+      if (m.index > at) parts.push({ text: text.slice(at, m.index), machinery: false });
+      parts.push({ text: m[0], machinery: true });
+      at = m.index + m[0].length;
+    }
+    if (at < text.length) parts.push({ text: text.slice(at), machinery: false });
+    return parts;
+  }
+  function stripBeatMarkupForPrompt(text) {
+    if (typeof text !== "string" || !RE_HAS_MARKUP.test(text)) return { text, beatTags: 0, sceneLines: 0 };
+    let beatTags = 0;
+    let sceneLines = 0;
+    const parts = splitAtMachinery(text);
+    for (const part of parts) {
+      if (part.machinery) continue;
+      part.text = part.text.replace(RE_BACKGROUND_TAG, () => {
+        sceneLines++;
+        return "";
+      });
+    }
+    parts.forEach((part, i) => {
+      if (part.machinery) return;
+      const machineryBefore = i > 0;
+      const machineryAfter = i < parts.length - 1;
+      part.text = part.text.replace(RE_SEAM, (seam, at, whole) => {
+        beatTags += seam.match(RE_BEAT_TAG).length;
+        const hasLeft = at > 0 || machineryBefore;
+        const hasRight = at + seam.length < whole.length || machineryAfter;
+        return hasLeft && hasRight ? "\n\n" : seam.replace(RE_BEAT_TAG, "");
+      });
+    });
+    return { text: parts.map((part) => part.text).join(""), beatTags, sceneLines };
+  }
+  function emptyStats() {
+    return { replies: 0, beatTags: 0, sceneLines: 0, charsBefore: 0, charsAfter: 0 };
+  }
+  function stripCounted(text, stats) {
+    const result = stripBeatMarkupForPrompt(text);
+    if (result.text !== text) {
+      stats.replies++;
+      stats.beatTags += result.beatTags;
+      stats.sceneLines += result.sceneLines;
+      stats.charsBefore += text.length;
+      stats.charsAfter += result.text.length;
+    }
+    return result.text;
+  }
+  function stripChatCompletionPrompt(chat) {
+    const stats = emptyStats();
+    if (!Array.isArray(chat)) return stats;
+    for (const entry of chat) {
+      if (!entry || entry.role !== "assistant") continue;
+      if (typeof entry.content === "string") {
+        entry.content = stripCounted(entry.content, stats);
+      } else if (Array.isArray(entry.content)) {
+        for (const part of entry.content) {
+          if (part && part.type === "text" && typeof part.text === "string") part.text = stripCounted(part.text, stats);
+        }
+      }
+    }
+    return stats;
+  }
+  function stripTextCompletionPrompt(data) {
+    if (!data || data.api === "openai" || !Array.isArray(data.finalMesSend)) return null;
+    const stats = emptyStats();
+    for (const item of data.finalMesSend) {
+      if (!item || item.injected === true || typeof item.message !== "string") continue;
+      item.message = stripCounted(item.message, stats);
+    }
+    return stats;
+  }
+
+  // src/features/beat-shaper/prompt-beat-strip.js
+  var pendingTextCompletion = null;
+  function report2(kind, stats) {
+    if (!stats || !stats.replies) return;
+    const n = (v) => v.toLocaleString("en-US");
+    log.info(`prompt-beat-strip (${kind}): ${n(stats.replies)} past replies · ${n(stats.beatTags)} beat tags + ${n(stats.sceneLines)} backdrop lines removed · ${n(stats.charsBefore)} → ${n(stats.charsAfter)} chars`);
+  }
+  function onChatCompletionPromptReady(eventData) {
+    try {
+      const stats = stripChatCompletionPrompt(eventData && eventData.chat);
+      if (!(eventData && eventData.dryRun)) report2("chat completion", stats);
+    } catch (e) {
+      log.warn("prompt-beat-strip: stripping the chat-completion prompt failed — this request carries past replies with galgame's beat markup:", e);
+    }
+  }
+  function onBeforeCombinePrompts(data) {
+    try {
+      pendingTextCompletion = stripTextCompletionPrompt(data);
+    } catch (e) {
+      pendingTextCompletion = null;
+      log.warn("prompt-beat-strip: stripping the text-completion history failed — this request carries past replies with galgame's beat markup:", e);
+    }
+  }
+  function onAfterCombinePrompts(eventData) {
+    const stats = pendingTextCompletion;
+    pendingTextCompletion = null;
+    if (!(eventData && eventData.dryRun)) report2("text completion", stats);
+  }
+  function startPromptBeatStrip() {
+    const te = window.tavern_events || {};
+    if (typeof window.eventOn !== "function") {
+      log.warn("prompt-beat-strip: eventOn is not on this window — past replies reach the model with galgame's beat markup");
+      return;
+    }
+    const hooks = [
+      [te.CHAT_COMPLETION_PROMPT_READY, onChatCompletionPromptReady, "chat completion"],
+      [te.GENERATE_BEFORE_COMBINE_PROMPTS, onBeforeCombinePrompts, "text completion"],
+      [te.GENERATE_AFTER_COMBINE_PROMPTS, onAfterCombinePrompts, "text-completion log line"]
+    ];
+    const bound = [];
+    for (const [event, listener, what] of hooks) {
+      if (!event) {
+        log.warn(`prompt-beat-strip: tavern_events has no event for the ${what} — that path is not stripped`);
+        continue;
+      }
+      try {
+        window.eventOn(event, listener);
+        bound.push(what);
+      } catch (e) {
+        log.warn(`prompt-beat-strip: eventOn(${event}) failed — the ${what} is not stripped:`, e);
+      }
+    }
+    if (bound.length) log.info(`prompt-beat-strip active (${bound.join(", ")}): past replies reach the model without <p> beats or backdrop lines, one blank line at every beat boundary`);
+  }
+
   // src/features/image/image-seam-core.js
   function decodeEntities(s) {
     return String(s).replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&#x27;/gi, "'");
@@ -4021,8 +4156,8 @@ ${cot}` : cot;
   async function processText(id, raw, why) {
     const scan = pairImagesToScenes(raw);
     const { pairs } = scan;
-    const report2 = unboundImageReport(raw, scan);
-    if (report2) log.image(`image-seam: message ${id} — ${report2}`);
+    const report3 = unboundImageReport(raw, scan);
+    if (report3) log.image(`image-seam: message ${id} — ${report3}`);
     if (!pairs.length) return;
     const signature = pairSignature(pairs);
     if (filed.get(id) === signature) {
@@ -4741,6 +4876,7 @@ ${cot}` : cot;
   startFormatRuleTrim();
   startStyledCardDismiss();
   startBeatShaper();
+  startPromptBeatStrip();
   startImageSeam();
   startGeneratingIndicator();
   startLocationTimeBridge();
