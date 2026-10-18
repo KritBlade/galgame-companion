@@ -1,13 +1,15 @@
-// galgame-companion · i18n — GUI translation overlay for bigmalove/galgame. v0.2
+// galgame-companion · i18n — GUI translation overlay for bigmalove/galgame. v0.3
 // MutationObserver over the PARENT document + exact-match dictionary keyed by the RENDERED
-// Chinese text. Only replaces explicit dictionary/pattern hits → can never corrupt ST's own
-// UI or dynamic content (GCP §2). Untranslated new strings just stay Chinese.
+// Chinese text. Only replaces explicit dictionary/pattern hits, and never a node another
+// translator keyed — SillyTavern's own UI or another extension's (i18n-core.js) (GCP §2).
+// Untranslated new strings just stay Chinese.
 // A pattern rule receives this translator as its second argument, so a capture that is itself
 // on-screen text (an error message inside a toast) gets the dictionary and every pattern too.
 // Harvest mode records every miss → __galI18nDump() downloads the key list (phase G1 loop).
 
 import { DOC, log } from '../../env.js';
 import { DICT, PATTERNS } from './i18n-dict.js';
+import { isKeyedByAnotherTranslator } from './i18n-core.js';
 
 const HARVEST = false; // true while the dictionary is being filled (G1); false for release (G5)
 const ATTRS = ['placeholder', 'title', 'aria-label']; // attributes we also translate
@@ -57,11 +59,13 @@ function translateInner(text) {
 }
 
 function doTextNode(node) {
+  if (isKeyedByAnotherTranslator(node.parentElement)) return;
   const out = translate(node.nodeValue);
   if (out !== null && out !== node.nodeValue) node.nodeValue = out;
 }
 
 function doAttrs(el) {
+  if (isKeyedByAnotherTranslator(el)) return;
   for (const name of ATTRS) {
     if (!el.hasAttribute || !el.hasAttribute(name)) continue;
     const out = translate(el.getAttribute(name));

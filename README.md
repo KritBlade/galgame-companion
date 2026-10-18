@@ -8,8 +8,10 @@ galgame keeps auto-updating; anything this script can't find, it skips.
 What it does, one folder each under `src/features/`:
 
 1. **i18n** — translates galgame's Chinese GUI via a MutationObserver + exact-match dictionary
-   (only explicit hits are replaced; new upstream strings just stay Chinese). Harvest mode collects
-   untranslated strings: run `__galI18nDump()` in the console.
+   (only explicit hits are replaced; new upstream strings just stay Chinese). A node another translator
+   keyed (`data-i18n`, `data-i18n-title`, `data-i18n-placeholder` — SillyTavern's own UI, other
+   extensions' panels) is never touched. Harvest mode collects untranslated strings: run
+   `__galI18nDump()` in the console.
 2. **menu** — a `Menu` button in galgame's bottom toolbar + mobile menu (new `data-action` → inert
    to galgame's own handlers). Its modal shows the card's StatusMenu in a sandboxed frame mounted
    from mvu-helper's `statusMenuFrameSource()`, pushed the current floor's `stat_data`.
@@ -44,10 +46,10 @@ VN presentation needs no per-user setup, and logs which genre profile is live.
 ## Install (Tavern Helper script library)
 
 ```js
-import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.9.17/dist/galgame-companion.dist.js'
+import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.9.18/dist/galgame-companion.dist.js'
 ```
 
-Add AFTER the galgame script entry. `@v0.9.17` pins a release tag — bump it to update.
+Add AFTER the galgame script entry. `@v0.9.18` pins a release tag — bump it to update.
 
 **Versionless (auto-latest)** — resolves to the newest semver tag, so the TH entry never needs editing:
 

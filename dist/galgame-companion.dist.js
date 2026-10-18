@@ -1,9 +1,9 @@
-// galgame-companion v0.9.17
+// galgame-companion v0.9.18
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.9.17";
-  var BUILD = "08e5add";
+  var VERSION = "0.9.18";
+  var BUILD = "dbf935f";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -1414,6 +1414,12 @@
     // … add more as harvest surfaces them …
   ];
 
+  // src/features/i18n/i18n-core.js
+  var KEYED_BY_ANOTHER_TRANSLATOR = "[data-i18n],[data-i18n-title],[data-i18n-placeholder]";
+  function isKeyedByAnotherTranslator(element) {
+    return !!(element && typeof element.closest === "function" && element.closest(KEYED_BY_ANOTHER_TRANSLATOR));
+  }
+
   // src/features/i18n/i18n.js
   var HARVEST = false;
   var ATTRS = ["placeholder", "title", "aria-label"];
@@ -1455,10 +1461,12 @@
     return translate(text) ?? text;
   }
   function doTextNode(node) {
+    if (isKeyedByAnotherTranslator(node.parentElement)) return;
     const out = translate(node.nodeValue);
     if (out !== null && out !== node.nodeValue) node.nodeValue = out;
   }
   function doAttrs(el) {
+    if (isKeyedByAnotherTranslator(el)) return;
     for (const name of ATTRS) {
       if (!el.hasAttribute || !el.hasAttribute(name)) continue;
       const out = translate(el.getAttribute(name));
