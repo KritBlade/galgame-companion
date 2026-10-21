@@ -29,10 +29,10 @@ The one catch: jsDelivr caches it for up to **12 hours**, so a new release can t
 **Pinned to one release,** for a card you ship, so it never changes under your players:
 
 ```js
-import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.9.18/dist/galgame-companion.dist.js'
+import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.9.19/dist/galgame-companion.dist.js'
 ```
 
-`@v0.9.18` is the release. To update, bump the number.
+`@v0.9.19` is the release. To update, bump the number.
 
 When it loads, the console prints one line, `[galgame-companion] v0.9.18 · build <hash>`, and `window.__galgameCompanion` is there. That's how you know it's running, and which release you got.
 
@@ -117,6 +117,8 @@ On first run, galgame-companion sets galgame's display settings the way the card
 | background image source | `chatu8` |
 
 It runs once per seed version (3.2 now), and only touches those settings. Everything else you set is left alone. A new seed version sets those fields once more. If galgame was already running, the page reloads once so galgame picks them up, at most twice a session.
+
+galgame's setup wizard is also kept from popping up by itself. galgame opens it for any new player whose image library is empty, and its steps would change the settings above. On every start galgame-companion ticks the wizard's own "Don't auto-show again" for the player. Settings → General → Setup Wizard still opens it.
 
 ### Genre profiles
 

@@ -38,6 +38,15 @@
 // removed, or a forced re-heal of broken installs). A bump re-applies card values ONCE per install,
 // overwriting user tweaks to managed fields one time. Logic-only changes ship as a normal script
 // release with NO bump — converged installs skip straight through. (1→2 was the UAT re-heal.)
+//
+// THE SETUP WIZARD. galgame pops its setup wizard by itself when its image library is empty — every
+// new user of a card whose pictures come from mvu-helper — and its five steps reset the display mode,
+// skin, effects, BGM, background fill and image source this file seeds. Its "don't auto-show again"
+// checkbox writes '1' to its own localStorage key (upstream ui/setup-wizard.js setWizardOptOut), and
+// galgame reads that key afresh each time it decides to pop the wizard, about 1.5 s after it starts
+// (init.js). So the companion writes the same '1' on EVERY start, outside the seed-version gate: no
+// reload is ever needed, and installs seeded before this existed get it on their next load. The wizard
+// still opens by hand from galgame's Settings → General → Setup Wizard.
 
 import { topWindow, log } from '../env.js';
 
@@ -45,6 +54,7 @@ import { topWindow, log } from '../env.js';
 // upstream bump, GCP §10.4 — if the lock is renamed we just reload once unnecessarily, still correct).
 const GAL_SETTINGS_KEY = 'galgame-ui-plugin_settings';        // main settings blob
 const GAL_TTS_ENABLED_KEY = 'galgame-ui-plugin_tts_enabled';  // TTS enable lives OUTSIDE the blob ('true'/'false')
+const GAL_WIZARD_OPTOUT_KEY = 'galgame-ui-plugin_setup_wizard_optout'; // '1' = the wizard never pops by itself (store.js STORAGE_KEYS)
 const GAL_INIT_LOCK = '__galgame_init_lock__';                // set by galgame init, same sync block as loadSettings()
 const SEED_FLAG_KEY = 'galgame-companion_seed_version';       // localStorage version gate (see SEED_VERSION RULE)
 const RELOAD_MARKER = 'galgame-companion_seed_reload';        // sessionStorage: # of seed-reloads this session
@@ -157,9 +167,21 @@ function seedAndConverge(ls, ss, why) {
   topWindow.location.reload();
 }
 
+// The wizard's own "don't auto-show again", set for the player (file header: THE SETUP WIZARD).
+function optOutOfSetupWizard(ls) {
+  try {
+    if (ls.getItem(GAL_WIZARD_OPTOUT_KEY) === '1') return;
+    ls.setItem(GAL_WIZARD_OPTOUT_KEY, '1');
+    log.info('galgame-defaults: galgame\'s setup wizard will not pop up by itself (Settings → General → Setup Wizard still opens it).');
+  } catch (e) {
+    log.warn('galgame-defaults: could not write the setup wizard opt-out — the wizard may pop up when galgame\'s image library is empty:', e);
+  }
+}
+
 export function startGalgameDefaults() {
   const ls = localStore();
   if (!ls) return;
+  optOutOfSetupWizard(ls);
   const ss = sessionStore();
 
   let ver = 0;

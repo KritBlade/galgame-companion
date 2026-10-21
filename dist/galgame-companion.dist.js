@@ -1,9 +1,9 @@
-// galgame-companion v0.9.18
+// galgame-companion v0.9.19
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.9.18";
-  var BUILD = "dbf935f";
+  var VERSION = "0.9.19";
+  var BUILD = "551f684";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -44,6 +44,7 @@
   // src/app/galgame-defaults.js
   var GAL_SETTINGS_KEY = "galgame-ui-plugin_settings";
   var GAL_TTS_ENABLED_KEY = "galgame-ui-plugin_tts_enabled";
+  var GAL_WIZARD_OPTOUT_KEY = "galgame-ui-plugin_setup_wizard_optout";
   var GAL_INIT_LOCK = "__galgame_init_lock__";
   var SEED_FLAG_KEY = "galgame-companion_seed_version";
   var RELOAD_MARKER = "galgame-companion_seed_reload";
@@ -168,9 +169,19 @@
     log.info(`galgame-defaults: seeded v${SEED_VERSION} (${why}) after galgame init — reloading ST once to apply (${attempts + 1}/${MAX_RELOADS}).`);
     topWindow.location.reload();
   }
+  function optOutOfSetupWizard(ls) {
+    try {
+      if (ls.getItem(GAL_WIZARD_OPTOUT_KEY) === "1") return;
+      ls.setItem(GAL_WIZARD_OPTOUT_KEY, "1");
+      log.info("galgame-defaults: galgame's setup wizard will not pop up by itself (Settings → General → Setup Wizard still opens it).");
+    } catch (e) {
+      log.warn("galgame-defaults: could not write the setup wizard opt-out — the wizard may pop up when galgame's image library is empty:", e);
+    }
+  }
   function startGalgameDefaults() {
     const ls = localStore();
     if (!ls) return;
+    optOutOfSetupWizard(ls);
     const ss = sessionStore();
     let ver = 0;
     try {
