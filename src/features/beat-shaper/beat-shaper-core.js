@@ -672,6 +672,15 @@ export function envelopeRepairsToRun(pending, chatKey) {
   return { run, drop };
 }
 
+// ── mvu-helper's last call (beat-shaper.js offerShapeAtLastCall) ─────────────
+// The text the shaping hands back into mvu-helper's write: the shaped text only when the shape changed
+// something and every backdrop row it names is filed; otherwise the text exactly as given, and our own
+// MESSAGE_UPDATED pass after mvu-helper's write does the rest (it settles the rows first, then writes).
+export function lastCallShapedText(text, result, owedKeys) {
+  if (!result || result.deferred || !result.changed || owedKeys.length) return text;
+  return result.text;
+}
+
 export function shapeMessage(raw, mintUid) {
   const blankStats = () => ({
     wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false,

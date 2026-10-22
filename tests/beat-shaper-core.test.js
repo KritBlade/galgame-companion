@@ -5,7 +5,32 @@ import {
   shapeMessage, sceneName, sceneUid, shortHash, uidOfSceneName, chatKeyOfSceneName,
   SCENE_NAME_RE, LEGACY_SCENE_NAME_RE, parseCombatLog, countCombatLogStrayTags, repairTruncatedEnvelope, synthesizeEnvelope,
   shapeAndWriteWhenSettled, awaitsEnvelopeRepair, envelopeRepairsToRun, locateEnvelope, incompleteReplyReason,
+  lastCallShapedText,
 } from '../src/features/beat-shaper/beat-shaper-core.js';
+
+describe('lastCallShapedText — what the shaping hands back into mvu-helper\'s write', () => {
+  const shaped = { text: '<maintext><p>shaped</p></maintext>', changed: true, deferred: null };
+
+  it('MUTATION TARGET — a changed shape that owes no backdrop row goes into the write', () => {
+    expect(lastCallShapedText('raw', shaped, [])).toBe(shaped.text);
+  });
+
+  it('MUTATION TARGET — a shape that still owes a row hands the text back as given', () => {
+    expect(lastCallShapedText('raw', shaped, ['0|abc_scene_1_x'])).toBe('raw');
+  });
+
+  it('MUTATION TARGET — a deferred shape hands the text back as given', () => {
+    expect(lastCallShapedText('raw', { ...shaped, deferred: 'maintext-unclosed' }, [])).toBe('raw');
+  });
+
+  it('MUTATION TARGET — an unchanged shape hands the text back as given', () => {
+    expect(lastCallShapedText('raw', { ...shaped, changed: false }, [])).toBe('raw');
+  });
+
+  it('no shape at all hands the text back', () => {
+    expect(lastCallShapedText('raw', null, [])).toBe('raw');
+  });
+});
 
 // A rendered image block exactly as mvu-helper's imagegen REPLACE path writes it.
 const imgSrc = (n) => `http://127.0.0.1:8000/img${n}.png`;

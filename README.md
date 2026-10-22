@@ -29,10 +29,10 @@ The one catch: jsDelivr caches it for up to **12 hours**, so a new release can t
 **Pinned to one release,** for a card you ship, so it never changes under your players:
 
 ```js
-import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.9.19/dist/galgame-companion.dist.js'
+import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.9.20/dist/galgame-companion.dist.js'
 ```
 
-`@v0.9.19` is the release. To update, bump the number.
+`@v0.9.20` is the release. To update, bump the number.
 
 When it loads, the console prints one line, `[galgame-companion] v0.9.18 · build <hash>`, and `window.__galgameCompanion` is there. That's how you know it's running, and which release you got.
 
@@ -82,7 +82,7 @@ galgame reads a reply as `<p>` lines inside `<maintext>`. A model doesn't always
 - **Clean-up:** `<gametxt>` becomes `<maintext>`. Reasoning that leaked into the reply moves to SillyTavern's reasoning box. A story cut off before its closing tag is closed. Each `<combat_log>` roll line moves into the prose, at the `<roll/>` marker where that check happens.
 - **"Incomplete reply" warning.** A reply cut off mid-story, or one with no `<UpdateVariable>`, gets a toast. Both look finished, and both mean the game state didn't move while the story did. The greeting is exempt.
 
-It runs on every new and edited AI reply, and only when galgame is installed.
+It runs on every new and edited AI reply, and only when galgame is installed. With mvu-helper, the shaping joins mvu-helper's own write of the reply, so a reply with pictures refreshes once.
 
 **The model never sees that markup.** The saved reply keeps it for galgame. But every past reply sent back to the model loses it, with one blank line at each beat. That works for chat and text completion alike. So it costs no tokens, and the model never copies a layout it shouldn't write.
 

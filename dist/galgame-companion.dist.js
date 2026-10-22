@@ -1,9 +1,9 @@
-// galgame-companion v0.9.19
+// galgame-companion v0.9.20
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.9.19";
-  var BUILD = "551f684";
+  var VERSION = "0.9.20";
+  var BUILD = "687a2d0";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -3279,6 +3279,10 @@ ${out.slice(proseAt)}`;
     for (const [id, deferredInChat] of pending2) (deferredInChat === chatKey ? run : drop).push(id);
     return { run, drop };
   }
+  function lastCallShapedText(text, result, owedKeys2) {
+    if (!result || result.deferred || !result.changed || owedKeys2.length) return text;
+    return result.text;
+  }
   function shapeMessage(raw, mintUid) {
     const blankStats = () => ({
       wrapped: 0,
@@ -3609,7 +3613,7 @@ ${inner.replace(/^\n+/, "")}`;
       return null;
     }
   }
-  function stashStrippedReasoning(id, cot) {
+  function stashStrippedReasoning(id, cot, { shouldPaint = true } = {}) {
     if (!cot) return;
     try {
       const context = topWindow.SillyTavern && topWindow.SillyTavern.getContext && topWindow.SillyTavern.getContext();
@@ -3627,7 +3631,7 @@ ${cot}` : cot;
         message.swipe_info[swipe].reasoning = message.extra.reasoning;
         if (!message.swipe_info[swipe].reasoning_type) message.swipe_info[swipe].reasoning_type = "parsed";
       }
-      if (typeof context.updateReasoningUI === "function") context.updateReasoningUI(id);
+      if (shouldPaint && typeof context.updateReasoningUI === "function") context.updateReasoningUI(id);
     } catch (e) {
       log.warn(`beat-shaper msg=${id}: could not stash the stripped reasoning (it is still removed from the reply, just not kept):`, e);
     }
@@ -3679,8 +3683,8 @@ ${cot}` : cot;
         settle: ({ text }, keys) => settleKeys(id, text, keys),
         // Called in the same synchronous step as the read it shaped. Stash FIRST: setChatMessages ends in
         // saveChatConditional, so one save persists both.
-        write: ({ text, stats: stats2 }) => {
-          stashStrippedReasoning(id, stats2.strippedThinkText);
+        write: ({ text, stats }) => {
+          stashStrippedReasoning(id, stats.strippedThinkText);
           return window.setChatMessages([{ message_id: id, message: text }], { refresh: "affected" });
         }
       });
@@ -3705,30 +3709,68 @@ ${cot}` : cot;
           `beat-shaper msg=${id}: written although ${unsettled.length} prerequisite(s) did not settle (${withoutNamespace(unsettled).join(", ")}) — for a backdrop row, galgame shows no backdrop for that scene until the page reloads (the chat-load backfill files it then). The settle's own warning says why.`
         );
       }
-      const { stats } = result;
-      log.image(
-        `beat-shaper msg=${id}:${stats.renamed ? " gametxt→maintext" : ""} wrapped=${stats.wrapped}p scenes=${stats.scenes}${stats.scenes ? " (hoisted #1)" : ""}${stats.picsPending ? " [scene binding HELD BACK — raw <pic> still un-rendered]" : ""} strippedScenes=${stats.strippedScenes}${stats.uid ? ` uid=${stats.uid}(${stats.uidMinted ? "minted" : "kept"})` : ""}${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ""}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ""}${stats.strippedThink ? ` strippedThink=1 (${stats.strippedThinkText.length}c leaked CoT moved to extra.reasoning${stats.thinkMarkupKept ? `; ${stats.thinkMarkupKept} bare tag(s) before the envelope kept in the reply` : ""})` : ""} rolls=${stats.rolls}(placed=${stats.rollsPlaced} unplaced=${stats.rollsUnplaced})${stats.imagesRehomed ? ` imagesRehomed=${stats.imagesRehomed} (were OUTSIDE <maintext>)` : ""}${stats.imagesLifted ? ` imagesLifted=${stats.imagesLifted} (were INSIDE a beat)` : ""}${settledRounds ? ` prerequisiteRounds=${settledRounds} (settled before the write; the written text is a fresh read after them)` : ""}`
-      );
-      if (stats.imagesRehomed) {
-        log.warn(
-          `beat-shaper msg=${id}: ${stats.imagesRehomed} <pic>/image block(s) were emitted OUTSIDE <maintext> (in the tail, past the engine blocks) and were moved back in so they bind to a beat at all. Un-rescued they would produce NO backdrop. Fix the narrator prompt: each <pic> belongs under the sentence it depicts, inside the envelope — never bunched or trailing.`
-        );
-      }
-      if (stats.rollsUnplaced) {
-        log.warn(
-          `beat-shaper msg=${id}: ${stats.rollsUnplaced} of ${stats.rolls} roll(s) had no <roll/> marker in <gametxt> — shown as a beat at the TOP instead of at the moment they resolved. The narrator should emit one <roll/> per <combat_log> line, in the same order.`
-        );
-      }
-      if (stats.logStrayTags) {
-        log.warn(
-          `beat-shaper msg=${id}: <combat_log> carried ${stats.logStrayTags} tag-only line(s) (e.g. a <roll/> written into the log instead of the prose) — ignored. The log block holds roll lines only; the narrator prompt must keep the marker in <gametxt>.`
-        );
-      }
+      reportShape(id, result.stats, settledRounds);
     } catch (e) {
       log.warn(`beat-shaper msg=${id}: shaping or writing the reply failed — the message is left as it was:`, e);
     } finally {
       inFlight.delete(id);
     }
+  }
+  function reportShape(id, stats, settledRounds = 0) {
+    log.image(
+      `beat-shaper msg=${id}:${stats.renamed ? " gametxt→maintext" : ""} wrapped=${stats.wrapped}p scenes=${stats.scenes}${stats.scenes ? " (hoisted #1)" : ""}${stats.picsPending ? " [scene binding HELD BACK — raw <pic> still un-rendered]" : ""} strippedScenes=${stats.strippedScenes}${stats.uid ? ` uid=${stats.uid}(${stats.uidMinted ? "minted" : "kept"})` : ""}${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ""}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ""}${stats.strippedThink ? ` strippedThink=1 (${stats.strippedThinkText.length}c leaked CoT moved to extra.reasoning${stats.thinkMarkupKept ? `; ${stats.thinkMarkupKept} bare tag(s) before the envelope kept in the reply` : ""})` : ""} rolls=${stats.rolls}(placed=${stats.rollsPlaced} unplaced=${stats.rollsUnplaced})${stats.imagesRehomed ? ` imagesRehomed=${stats.imagesRehomed} (were OUTSIDE <maintext>)` : ""}${stats.imagesLifted ? ` imagesLifted=${stats.imagesLifted} (were INSIDE a beat)` : ""}${settledRounds ? ` prerequisiteRounds=${settledRounds} (settled before the write; the written text is a fresh read after them)` : ""}`
+    );
+    if (stats.imagesRehomed) {
+      log.warn(
+        `beat-shaper msg=${id}: ${stats.imagesRehomed} <pic>/image block(s) were emitted OUTSIDE <maintext> (in the tail, past the engine blocks) and were moved back in so they bind to a beat at all. Un-rescued they would produce NO backdrop. Fix the narrator prompt: each <pic> belongs under the sentence it depicts, inside the envelope — never bunched or trailing.`
+      );
+    }
+    if (stats.rollsUnplaced) {
+      log.warn(
+        `beat-shaper msg=${id}: ${stats.rollsUnplaced} of ${stats.rolls} roll(s) had no <roll/> marker in <gametxt> — shown as a beat at the TOP instead of at the moment they resolved. The narrator should emit one <roll/> per <combat_log> line, in the same order.`
+      );
+    }
+    if (stats.logStrayTags) {
+      log.warn(
+        `beat-shaper msg=${id}: <combat_log> carried ${stats.logStrayTags} tag-only line(s) (e.g. a <roll/> written into the log instead of the prose) — ignored. The log block holds roll lines only; the narrator prompt must keep the marker in <gametxt>.`
+      );
+    }
+  }
+  var LAST_CALL_EVENT = "mvu_helper_reply_last_call";
+  var EDITOR_NAME = "galgame-companion";
+  function offerShapeAtLastCall(call) {
+    if (!topWindow.galgame) return;
+    if (!call || typeof call.edit !== "function") return;
+    const id = Number(call.message_id);
+    if (!Number.isInteger(id) || id < 0) return;
+    let pinnedUid = null;
+    const mintOnce = () => pinnedUid || (pinnedUid = mintUidForCurrentChat());
+    call.edit({
+      by: EDITOR_NAME,
+      stage: "presentation",
+      // The backdrop rows the shaped text names must exist before the floor shows them (file header), so they
+      // are filed before mvu-helper writes. Nothing is written here.
+      prepare: async (text) => {
+        const result = shapeWithRepair(id, text, mintOnce);
+        if (result.deferred || !result.changed) return;
+        const owed = owedKeys(id, result.text);
+        if (owed.length) await settleKeys(id, result.text, owed);
+      },
+      // Synchronous: the latest text in, the shaped text out. A shape that still owes rows (the text changed
+      // after prepare filed them) is left to our own MESSAGE_UPDATED pass, which files them before it writes.
+      apply: (text) => {
+        const result = shapeWithRepair(id, text, mintOnce);
+        const owed = result.deferred || !result.changed ? [] : owedKeys(id, result.text);
+        const handedBack = lastCallShapedText(text, result, owed);
+        if (owed.length) {
+          log.image(`beat-shaper msg=${id}: mvu-helper's write goes out unshaped — the shaped text still owes ${withoutNamespace(owed).join(", ")}; our own pass after it files them, then shapes`);
+        }
+        if (handedBack === text) return text;
+        stashStrippedReasoning(id, result.stats.strippedThinkText, { shouldPaint: false });
+        reportShape(id, result.stats);
+        return handedBack;
+      }
+    });
   }
   function retryPendingEnvelopeRepairs() {
     if (!pendingEnvelopeRepairs.size) return;
@@ -3782,7 +3824,14 @@ ${cot}` : cot;
       return;
     }
     onTurnPhaseClosed(retryPendingEnvelopeRepairs);
-    log.image(`beat-shaper active (${bound} event(s) bound, envelope repair retried when mvu-helper's turn phase closes)`);
+    let isLastCallBound = false;
+    try {
+      window.eventOn(LAST_CALL_EVENT, offerShapeAtLastCall);
+      isLastCallBound = true;
+    } catch (e) {
+      log.warn(`beat-shaper: eventOn(${LAST_CALL_EVENT}) failed — on a picture turn the shaping writes once more after mvu-helper's write:`, e);
+    }
+    log.image(`beat-shaper active (${bound} event(s) bound, envelope repair retried when mvu-helper's turn phase closes${isLastCallBound ? ", shaping joins mvu-helper's write at its last call" : ""})`);
   }
 
   // src/features/beat-shaper/prompt-beat-strip-core.js

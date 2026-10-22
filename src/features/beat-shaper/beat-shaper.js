@@ -1,18 +1,19 @@
 // galgame-companion · beat-shaper — deterministic reshaping of AI replies into galgame's beat
-// contract (plan: mvu-helper plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). v0.9
+// contract (plan: mvu-helper plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). v0.10
 //
 // Event-driven wrapper around the pure transform in beat-shaper-core.js: on MESSAGE_RECEIVED /
 // MESSAGE_UPDATED, read the floor's raw text (TH getChatMessages), shape it, and write it back
 // (TH setChatMessages) ONLY when the text actually changed. A reply whose envelope repair had to wait
-// for the turn is shaped once more when mvu-helper's last turn phase closes (core §4d).
+// for the turn is shaped once more when mvu-helper's last turn phase closes (core §4d). With mvu-helper
+// installed, the shaping also joins mvu-helper's own write at its last call (offerShapeAtLastCall), so a
+// picture turn's scene binding needs no write of ours after mvu-helper's.
 //
 // WHY THESE TRIGGERS / LOOP + RACE SAFETY (verified against the real sources 2026-07-17):
 // - mvu-helper's imagegen splices the rendered <img> in AFTER a multi-second generation await
-//   (image-gen.js REPLACE path). Since 2026-07-22 it RE-ANCHORS each splice by searching the
-//   CURRENT text for the raw tag, so our edits shifting offsets is a non-event — we shape the
-//   message immediately and hold back only the scene binding (core §3b), retrying it on the
-//   MESSAGE_UPDATED mvu-helper emits once every tag has been replaced. It used to defer the whole
-//   transform; see core §3b for why an unreachable image backend then took the GUI down with it.
+//   (image-gen.js REPLACE path), re-anchoring each splice by searching the CURRENT text for the raw
+//   tag, so our edits shifting offsets is a non-event — we shape the message immediately and hold back
+//   only the scene binding (core §3b) until every tag has been replaced: at mvu-helper's last call
+//   before the write that carries the pictures, or on that write's MESSAGE_UPDATED.
 // - TH setChatMessages mutates chat[id] IN PLACE (_.set(t,'mes',…) + swipes[swipe_id] sync,
 //   JS-Slash-Runner dist) → mvu-helper's `chat[mesId] !== message` race guard still passes.
 // - Our write uses refresh:'affected', which re-renders the floor and fires
@@ -34,7 +35,7 @@
 import { topWindow, log, warnToast } from '../../env.js';
 import {
   shapeMessage, sceneUid, shortHash, repairTruncatedEnvelope, synthesizeEnvelope, shapeAndWriteWhenSettled,
-  awaitsEnvelopeRepair, envelopeRepairsToRun, incompleteReplyReason,
+  awaitsEnvelopeRepair, envelopeRepairsToRun, incompleteReplyReason, lastCallShapedText,
 } from './beat-shaper-core.js';
 import { isTurnBusy, onTurnPhaseClosed } from '../galgame-quirks/index.js';
 
@@ -168,8 +169,9 @@ function rawMessage(id) {
 // :258 rebuilds swipe_info as an array of empty objects, wiping every OTHER swipe's extra (its
 // reasoning, model, image data) to write ours. An in-place merge touches one field of one slot and
 // cannot take siblings with it. Written BEFORE the text write on purpose: setChatMessages ends in
-// saveChatConditional (:173), so one save persists both.
-function stashStrippedReasoning(id, cot) {
+// saveChatConditional (:173), so one save persists both. `shouldPaint: false` when mvu-helper's write follows:
+// its re-render (updateMessageBlock) paints the panel itself.
+function stashStrippedReasoning(id, cot, { shouldPaint = true } = {}) {
     if (!cot) return;
     try {
         const context = topWindow.SillyTavern && topWindow.SillyTavern.getContext && topWindow.SillyTavern.getContext();
@@ -188,7 +190,7 @@ function stashStrippedReasoning(id, cot) {
             if (!message.swipe_info[swipe].reasoning_type) message.swipe_info[swipe].reasoning_type = 'parsed';
         }
         // Paint it now; without this the panel only appears after the message is next re-rendered.
-        if (typeof context.updateReasoningUI === 'function') context.updateReasoningUI(id);
+        if (shouldPaint && typeof context.updateReasoningUI === 'function') context.updateReasoningUI(id);
     } catch (e) {
         log.warn(`beat-shaper msg=${id}: could not stash the stripped reasoning (it is still removed from the reply, just not kept):`, e);
     }
@@ -300,74 +302,123 @@ async function onMessageEvent(messageId) {
         'until the page reloads (the chat-load backfill files it then). The settle' + "'" + 's own warning says why.',
       );
     }
-
-    const { stats } = result;
-    log.image(
-      `beat-shaper msg=${id}:${stats.renamed ? ' gametxt→maintext' : ''} wrapped=${stats.wrapped}p ` +
-      // picsPending is named EXPLICITLY: without it `scenes=0` reads as "scene binding ran and found
-      // nothing", when in fact it was the one step deliberately held back (core §3b). Same line, two
-      // very different situations — one is normal for a text-only reply, the other means an image is
-      // still generating (or its backend is wedged) and backdrops are still owed.
-      `scenes=${stats.scenes}${stats.scenes ? ' (hoisted #1)' : ''}` +
-      `${stats.picsPending ? ' [scene binding HELD BACK — raw <pic> still un-rendered]' : ''}` +
-      ` strippedScenes=${stats.strippedScenes}` +
-      `${stats.uid ? ` uid=${stats.uid}(${stats.uidMinted ? 'minted' : 'kept'})` : ''}` +
-      `${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ''}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ''}` +
-      // strippedThink is the one stat here that REMOVES text from the reply, so it must never be
-      // silent: unlogged, a turn whose chain-of-thought vanished at generation-end looked EXACTLY
-      // like a turn that never had one. The char count is named because it is the receipt — it says
-      // the text went to extra.reasoning rather than into a hole — and the kept-tag count says which
-      // of the span's markup stayed in the reply.
-      `${stats.strippedThink ? ` strippedThink=1 (${stats.strippedThinkText.length}c leaked CoT moved to extra.reasoning${stats.thinkMarkupKept ? `; ${stats.thinkMarkupKept} bare tag(s) before the envelope kept in the reply` : ''})` : ''}` +
-      // ALWAYS printed, including the 0 case: "rolls=0" is the difference between "this reply had no
-      // check" and "the roll rendering silently failed", which a conditional suffix would blur. Both
-      // halves are named because rolls=3 alone cannot tell a fully-marked reply from an unmarked one.
-      ` rolls=${stats.rolls}(placed=${stats.rollsPlaced} unplaced=${stats.rollsUnplaced})` +
-      // Only when it fired, because it is an EVENT rather than a census: the tail rescue MOVED the
-      // narrator's markup (core §0a). Silent, `scenes=1` would look like an ordinary bind and hide the
-      // fact that the image is anchored to the wrong beat — and that the reply broke its contract.
-      `${stats.imagesRehomed ? ` imagesRehomed=${stats.imagesRehomed} (were OUTSIDE <maintext>)` : ''}` +
-      // Only when it fired: an image had been INSIDE a beat, where galgame prints its markup as narration.
-      `${stats.imagesLifted ? ` imagesLifted=${stats.imagesLifted} (were INSIDE a beat)` : ''}` +
-      // Only when it happened: prerequisites were settled first, and the text written is a FRESH read
-      // shaped after the last settle — never the shape the settle was started for.
-      `${settledRounds ? ` prerequisiteRounds=${settledRounds} (settled before the write; the written text is a fresh read after them)` : ''}`,
-    );
-    // A CARD-PROMPT defect, same class as the missing <roll/> markers below: the image is recovered and
-    // the stage is no longer blank, but it lands after the last beat instead of beside the beat it
-    // depicts. Warn so the placement is fixable rather than permanently papered over here.
-    if (stats.imagesRehomed) {
-      log.warn(
-        `beat-shaper msg=${id}: ${stats.imagesRehomed} <pic>/image block(s) were emitted OUTSIDE <maintext> ` +
-        '(in the tail, past the engine blocks) and were moved back in so they bind to a beat at all. ' +
-        'Un-rescued they would produce NO backdrop. Fix the narrator prompt: each <pic> belongs under the ' +
-        'sentence it depicts, inside the envelope — never bunched or trailing.',
-      );
-    }
-    // A short/missing marker set is a CARD-PROMPT defect, not a companion one: the roll still shows,
-    // but at the top instead of its moment. Warn so it is fixable, and name the count so it is obvious
-    // whether the narrator skipped one marker or all of them.
-    if (stats.rollsUnplaced) {
-      log.warn(
-        `beat-shaper msg=${id}: ${stats.rollsUnplaced} of ${stats.rolls} roll(s) had no <roll/> marker ` +
-        'in <gametxt> — shown as a beat at the TOP instead of at the moment they resolved. The narrator ' +
-        'should emit one <roll/> per <combat_log> line, in the same order.',
-      );
-    }
-    // Same card-prompt class, and usually the CAUSE of the warn above: the marker was written into the
-    // log block instead of the prose. Ignored rather than rendered — it is markup, not a roll.
-    if (stats.logStrayTags) {
-      log.warn(
-        `beat-shaper msg=${id}: <combat_log> carried ${stats.logStrayTags} tag-only line(s) (e.g. a <roll/> ` +
-        'written into the log instead of the prose) — ignored. The log block holds roll lines only; the ' +
-        'narrator prompt must keep the marker in <gametxt>.',
-      );
-    }
+    reportShape(id, result.stats, settledRounds);
   } catch (e) {
     log.warn(`beat-shaper msg=${id}: shaping or writing the reply failed — the message is left as it was:`, e);
   } finally {
     inFlight.delete(id);
   }
+}
+
+// What a written shape did, and the card-prompt defects it worked around. `settledRounds` > 0 when write
+// prerequisites were settled first (the written text is then a fresh read shaped after them).
+function reportShape(id, stats, settledRounds = 0) {
+  log.image(
+    `beat-shaper msg=${id}:${stats.renamed ? ' gametxt→maintext' : ''} wrapped=${stats.wrapped}p ` +
+    // picsPending is named EXPLICITLY: without it `scenes=0` reads as "scene binding ran and found
+    // nothing", when in fact it was the one step deliberately held back (core §3b). Same line, two
+    // very different situations — one is normal for a text-only reply, the other means an image is
+    // still generating (or its backend is wedged) and backdrops are still owed.
+    `scenes=${stats.scenes}${stats.scenes ? ' (hoisted #1)' : ''}` +
+    `${stats.picsPending ? ' [scene binding HELD BACK — raw <pic> still un-rendered]' : ''}` +
+    ` strippedScenes=${stats.strippedScenes}` +
+    `${stats.uid ? ` uid=${stats.uid}(${stats.uidMinted ? 'minted' : 'kept'})` : ''}` +
+    `${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ''}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ''}` +
+    // strippedThink is the one stat here that REMOVES text from the reply, so it must never be
+    // silent: unlogged, a turn whose chain-of-thought vanished at generation-end looked EXACTLY
+    // like a turn that never had one. The char count is named because it is the receipt — it says
+    // the text went to extra.reasoning rather than into a hole — and the kept-tag count says which
+    // of the span's markup stayed in the reply.
+    `${stats.strippedThink ? ` strippedThink=1 (${stats.strippedThinkText.length}c leaked CoT moved to extra.reasoning${stats.thinkMarkupKept ? `; ${stats.thinkMarkupKept} bare tag(s) before the envelope kept in the reply` : ''})` : ''}` +
+    // ALWAYS printed, including the 0 case: "rolls=0" is the difference between "this reply had no
+    // check" and "the roll rendering silently failed", which a conditional suffix would blur. Both
+    // halves are named because rolls=3 alone cannot tell a fully-marked reply from an unmarked one.
+    ` rolls=${stats.rolls}(placed=${stats.rollsPlaced} unplaced=${stats.rollsUnplaced})` +
+    // Only when it fired, because it is an EVENT rather than a census: the tail rescue MOVED the
+    // narrator's markup (core §0a). Silent, `scenes=1` would look like an ordinary bind and hide the
+    // fact that the image is anchored to the wrong beat — and that the reply broke its contract.
+    `${stats.imagesRehomed ? ` imagesRehomed=${stats.imagesRehomed} (were OUTSIDE <maintext>)` : ''}` +
+    // Only when it fired: an image had been INSIDE a beat, where galgame prints its markup as narration.
+    `${stats.imagesLifted ? ` imagesLifted=${stats.imagesLifted} (were INSIDE a beat)` : ''}` +
+    // Only when it happened: prerequisites were settled first, and the text written is a FRESH read
+    // shaped after the last settle — never the shape the settle was started for.
+    `${settledRounds ? ` prerequisiteRounds=${settledRounds} (settled before the write; the written text is a fresh read after them)` : ''}`,
+  );
+  // A CARD-PROMPT defect, same class as the missing <roll/> markers below: the image is recovered and
+  // the stage is no longer blank, but it lands after the last beat instead of beside the beat it
+  // depicts. Warn so the placement is fixable rather than permanently papered over here.
+  if (stats.imagesRehomed) {
+    log.warn(
+      `beat-shaper msg=${id}: ${stats.imagesRehomed} <pic>/image block(s) were emitted OUTSIDE <maintext> ` +
+      '(in the tail, past the engine blocks) and were moved back in so they bind to a beat at all. ' +
+      'Un-rescued they would produce NO backdrop. Fix the narrator prompt: each <pic> belongs under the ' +
+      'sentence it depicts, inside the envelope — never bunched or trailing.',
+    );
+  }
+  // A short/missing marker set is a CARD-PROMPT defect, not a companion one: the roll still shows,
+  // but at the top instead of its moment. Warn so it is fixable, and name the count so it is obvious
+  // whether the narrator skipped one marker or all of them.
+  if (stats.rollsUnplaced) {
+    log.warn(
+      `beat-shaper msg=${id}: ${stats.rollsUnplaced} of ${stats.rolls} roll(s) had no <roll/> marker ` +
+      'in <gametxt> — shown as a beat at the TOP instead of at the moment they resolved. The narrator ' +
+      'should emit one <roll/> per <combat_log> line, in the same order.',
+    );
+  }
+  // Same card-prompt class, and usually the CAUSE of the warn above: the marker was written into the
+  // log block instead of the prose. Ignored rather than rendered — it is markup, not a roll.
+  if (stats.logStrayTags) {
+    log.warn(
+      `beat-shaper msg=${id}: <combat_log> carried ${stats.logStrayTags} tag-only line(s) (e.g. a <roll/> ` +
+      'written into the log instead of the prose) — ignored. The log block holds roll lines only; the ' +
+      'narrator prompt must keep the marker in <gametxt>.',
+    );
+  }
+}
+
+// ── mvu-helper's last call: the shaping joins mvu-helper's one write ─────────
+// mvu-helper writes a finished reply once per turn, and before every write it asks the extensions for their
+// edits (its doc/reply-redraw-api.md). The shaping is a presentation edit there, so on a picture turn the
+// scene binding lands in mvu-helper's write instead of a write of our own right after it. Our MESSAGE_RECEIVED
+// first shape and our MESSAGE_UPDATED pass stay: after mvu-helper's write the pass finds the text already
+// shaped and writes nothing, and without mvu-helper nothing here ever fires.
+const LAST_CALL_EVENT = 'mvu_helper_reply_last_call';
+const EDITOR_NAME = 'galgame-companion';
+
+function offerShapeAtLastCall(call) {
+  if (!topWindow.galgame) return; // galgame absent → nothing reads the shaping
+  if (!call || typeof call.edit !== 'function') return;
+  const id = Number(call.message_id);
+  if (!Number.isInteger(id) || id < 0) return;
+  // One uid for the whole call, so the rows prepare files carry the names apply writes.
+  let pinnedUid = null;
+  const mintOnce = () => (pinnedUid || (pinnedUid = mintUidForCurrentChat()));
+  call.edit({
+    by: EDITOR_NAME,
+    stage: 'presentation',
+    // The backdrop rows the shaped text names must exist before the floor shows them (file header), so they
+    // are filed before mvu-helper writes. Nothing is written here.
+    prepare: async (text) => {
+      const result = shapeWithRepair(id, text, mintOnce);
+      if (result.deferred || !result.changed) return;
+      const owed = owedKeys(id, result.text);
+      if (owed.length) await settleKeys(id, result.text, owed);
+    },
+    // Synchronous: the latest text in, the shaped text out. A shape that still owes rows (the text changed
+    // after prepare filed them) is left to our own MESSAGE_UPDATED pass, which files them before it writes.
+    apply: (text) => {
+      const result = shapeWithRepair(id, text, mintOnce);
+      const owed = result.deferred || !result.changed ? [] : owedKeys(id, result.text);
+      const handedBack = lastCallShapedText(text, result, owed);
+      if (owed.length) {
+        log.image(`beat-shaper msg=${id}: mvu-helper's write goes out unshaped — the shaped text still owes ${withoutNamespace(owed).join(', ')}; our own pass after it files them, then shapes`);
+      }
+      if (handedBack === text) return text;
+      stashStrippedReasoning(id, result.stats.strippedThinkText, { shouldPaint: false });
+      reportShape(id, result.stats);
+      return handedBack;
+    },
+  });
 }
 
 // THE RETRY THE ENVELOPE REPAIR WAITS FOR (core §4d). The repair runs only once the turn is finished,
@@ -443,5 +494,12 @@ export function startBeatShaper() {
     return;
   }
   onTurnPhaseClosed(retryPendingEnvelopeRepairs);
-  log.image(`beat-shaper active (${bound} event(s) bound, envelope repair retried when mvu-helper's turn phase closes)`);
+  let isLastCallBound = false;
+  try {
+    window.eventOn(LAST_CALL_EVENT, offerShapeAtLastCall);
+    isLastCallBound = true;
+  } catch (e) {
+    log.warn(`beat-shaper: eventOn(${LAST_CALL_EVENT}) failed — on a picture turn the shaping writes once more after mvu-helper's write:`, e);
+  }
+  log.image(`beat-shaper active (${bound} event(s) bound, envelope repair retried when mvu-helper's turn phase closes${isLastCallBound ? ', shaping joins mvu-helper\'s write at its last call' : ''})`);
 }
