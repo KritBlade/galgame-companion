@@ -1,4 +1,4 @@
-// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v1.6
+// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v1.7
 //
 // Deterministically reshapes an AI reply into galgame's beat contract (plan: mvu-helper
 // plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). galgame's standard parser builds display beats ONLY
@@ -9,7 +9,8 @@
 // narrator/galgame-COT emitted PLUS engine display-noise (<bgimg> prompt stripped;
 // <classmate_trait_check> hidden in an HTML comment so POST's inputRegex still reads it while
 // ST's renderer — which p-wraps bare lines before galgame parses the HTML — can't display it),
-// and (3) inject our own per-message scene per rendered image, bound to BEATS not raw image offsets:
+// and (3) inject our own per-message scene per image — a picture mvu-helper rendered, or a plain <img> the
+// message carries — bound to BEATS not raw image offsets:
 // each <p> beat is assigned to the image that depicts it (the nearest image AFTER it — the narrator is
 // taught to place a <pic> right after the beat it depicts), and each image's scene tag OPENS its beat run.
 // galgame binds a beat to the nearest PRECEDING <background>, so the scene must LEAD the beat's prose.
@@ -30,6 +31,9 @@
 // what keeps galgame's parser scoped, so a stalled image backend must not hold it back.
 // The image census requires an actual <img> (see RE_IMG_WRAP): an UNRENDERED <pic> carries the same
 // auto-img-wrap envelope, and counting it would bind a beat run to a scene nobody can write a record for.
+// A card's logo reaches the stage either way it is written: ahead of the envelope it is a title image the
+// beats show when the envelope holds no picture of its own (§3), and in a message with NO envelope — an
+// ordinary message, otherwise untouched — it gets one backdrop for the whole message (§3c).
 //
 // The transform must be IDEMPOTENT: shape(shape(x)) === shape(x). It re-derives all scene tags
 // from scratch each run (strip-then-inject) and unwraps-then-rehides its own gc:hidden comments,
@@ -188,6 +192,32 @@ const RE_IMG_WRAP = /<span class="(?:custom-)?auto-img-wrap"[^>]*>[\s\S]*?<\/spa
 // A wrap that actually holds a displayable image. Non-global on purpose — .test() on a /g regex carries
 // lastIndex between calls and would skip every other match.
 const RE_HAS_IMG = /<img\b/i;
+// A PLAIN <img>: one with no mvu-helper wrap around it, which the message's author wrote (a card's logo in
+// its greeting). To galgame it is an image like a rendered picture, so the census gives it a backdrop (§3),
+// and machinery like one, since galgame prints the markup of an <img> inside a beat as narration.
+const PLAIN_IMG_SOURCE = '<img\\b[^>]*>';
+// Only a double-quoted src can back a backdrop: the image seam pairs `src="…"` alone (image-seam-core).
+const RE_DOUBLE_QUOTED_SRC = /\bsrc="([^"]*)"/i;
+// Every image block in document order. The wrap comes FIRST in the alternation, so a rendered picture's own
+// <img> is consumed with its wrap and never counted a second time as a plain one.
+const RE_IMAGE_BLOCK = new RegExp(`${RE_IMG_WRAP.source}|${PLAIN_IMG_SOURCE}`, 'gi');
+
+// The images a backdrop can show, in document order, skipping any position `skip` rejects. A placeholder
+// wrap (an unrendered <pic>) holds no <img>, and a plain <img> without a double-quoted src names nothing
+// the seam can file, so neither takes a scene number. A plain src is trimmed, as the seam hashes it.
+function imageCensus(text, skip = () => false) {
+  const imgs = [];
+  for (const m of String(text).matchAll(RE_IMAGE_BLOCK)) {
+    if (skip(m.index)) continue;
+    if (m[0].startsWith('<span')) {
+      if (RE_HAS_IMG.test(m[0])) imgs.push({ index: m.index, src: imgSrcOf(m[0]), plain: false });
+      continue;
+    }
+    const src = RE_DOUBLE_QUOTED_SRC.exec(m[0]);
+    if (src) imgs.push({ index: m.index, src: src[1].trim(), plain: true });
+  }
+  return imgs;
+}
 // A prose BEAT open tag — <p> or <p class="…">. Requires a delimiter right after `p` (`>` or whitespace),
 // so it never false-matches <pixiPerform>/<pic>. Used to bind scenes to beats (§3 below), not raw images.
 const RE_P_OPEN = /<p(?:\s[^>]*)?>/gi;
@@ -195,6 +225,8 @@ const RE_P_OPEN = /<p(?:\s[^>]*)?>/gi;
 // strip pass — the strip is what makes the transform idempotent, so this is the last moment the prior
 // identity is visible. Mirrors SCENE_NAME_RE's uid shape; not anchored, since it matches inside a tag.
 const RE_EXISTING_UID = /<background\s+scene="(gc[0-9a-z]+-[0-9a-z]+)_scene_\d+_[0-9a-z]+"/i;
+// The scene name a <background> tag carries.
+const RE_SCENE_ATTR = /\bscene="([^"]*)"/i;
 // A leaked chain-of-thought CLOSE that survived into the message before <maintext>: a reasoning model can
 // emit </think> without a paired <think> (the open gets consumed upstream), so galgame's matched-tag strip
 // misses it. Everything up to the LAST such close in the head is CoT; we drop through it (Fix, §0b).
@@ -298,6 +330,9 @@ const MACHINERY_BLOCK_SOURCES = [
   // line right above its prose shares that paragraph, so wrapping the paragraph put the finished
   // image INSIDE a beat — galgame printed the <img> markup as narration (live 2026-09-30).
   '<pic\\b[^>]*>',
+  // A PLAIN <img>, for the same reason. Listed after the wrap, so a rendered picture's own <img> stays part
+  // of its wrap.
+  PLAIN_IMG_SOURCE,
   '<styled\\b[^>]*>[\\s\\S]*?<\\/styled>',
   '<弹窗一>[\\s\\S]*?<\\/弹窗一>',
   '<弹窗二>[\\s\\S]*?<\\/弹窗二>',
@@ -519,8 +554,11 @@ export function renderUnplacedRolls(rolls) {
  *                     strippedThink: number, strippedThinkText: string, thinkMarkupKept: number,
  *                     uid: string|null, picsPending: boolean,
  *                     rolls: number, rollsPlaced: number, rollsUnplaced: number, logStrayTags: number,
- *                     imagesRehomed: number, imagesLifted: number } }}
- *   imagesLifted counts image blocks moved OUT of a beat they sat inside (§2).
+ *                     imagesRehomed: number, imagesLifted: number, plainImages: number, titleImage: boolean,
+ *                     noEnvelope: boolean } }}
+ *   imagesLifted counts image blocks moved OUT of a beat they sat inside (§2). plainImages counts the
+ *   images the census found with no mvu-helper wrap; titleImage marks a backdrop bound from an image ahead
+ *   of the envelope (§3); noEnvelope marks a message bound by §3c.
  *   strippedThinkText carries the CoT §0b removed — '' when nothing was stripped. The caller is
  *   expected to preserve it somewhere readable; this module only refuses to be the thing that
  *   destroys it (see §0b). thinkMarkupKept counts the bare self-closing tags an unclosed <think>
@@ -681,18 +719,23 @@ export function lastCallShapedText(text, result, owedKeys) {
   return result.text;
 }
 
-export function shapeMessage(raw, mintUid) {
-  const blankStats = () => ({
+// Every stat a shape reports, zeroed (shapeMessage's @returns lists them).
+function blankShapeStats() {
+  return {
     wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false,
     strippedBgimg: 0, hidden: 0, strippedThink: 0, strippedThinkText: '', thinkMarkupKept: 0, uid: null, uidMinted: false, picsPending: false,
     rolls: 0, rollsPlaced: 0, rollsUnplaced: 0, logStrayTags: 0, imagesRehomed: 0, imagesLifted: 0,
-  });
-  const stats = blankStats();
+    plainImages: 0, titleImage: false, noEnvelope: false,
+  };
+}
+
+export function shapeMessage(raw, mintUid) {
+  const stats = blankShapeStats();
   const unchanged = (deferred = null) => ({
     text: raw, // ALWAYS the caller's original — a rename ahead of a defer is discarded with it
     changed: false,
     deferred,
-    stats: blankStats(),
+    stats: blankShapeStats(),
   });
 
   if (typeof raw !== 'string' || raw.length === 0) return unchanged();
@@ -703,9 +746,11 @@ export function shapeMessage(raw, mintUid) {
   const env = locateEnvelope(raw);
   if (!env.kind) {
     // No envelope of either kind. A reply carrying tail machinery is this game's and has LOST its
-    // envelope (§4c repairs it once the turn is over); anything else is an ordinary message.
+    // envelope (§4c repairs it once the turn is over); anything else is an ordinary message, left as it
+    // is unless it carries an image (§3c).
     const owesEnvelope = firstOutsideReasoning(RE_TAIL_MACHINERY, raw, 0, env.reasoning) !== null;
-    return unchanged(owesEnvelope ? 'no-envelope' : null);
+    if (owesEnvelope) return unchanged('no-envelope');
+    return bindWholeMessageBackdrop(raw, mintUid, env.reasoning) || unchanged();
   }
   if (!env.close) return unchanged(`${env.kind}-unclosed`); // still streaming — retry later
 
@@ -870,15 +915,19 @@ export function shapeMessage(raw, mintUid) {
   //    the natural map starves every image but the first, so image #2's scene would govern no beat and
   //    never show. We guarantee each image owns >=1 beat by giving the starved (trailing) images the last
   //    beats, in order. Insert back-to-front so earlier offsets stay valid; scene #1 hoists to the very top.
-  const imgs = [];
-  RE_IMG_WRAP.lastIndex = 0;
-  let m;
-  while ((m = RE_IMG_WRAP.exec(inner)) !== null) {
-    // Placeholder wrap (an unrendered <pic>) — protected from the <p>-wrap above, but there is no image
-    // to back a backdrop, so it must never take a scene number. See RE_IMG_WRAP.
-    if (!RE_HAS_IMG.test(m[0])) continue;
-    imgs.push({ index: m.index, src: imgSrcOf(m[0]) });
+  let imgs = imageCensus(inner);
+  // A TITLE image ahead of the envelope (a card's logo above its greeting) backs the beats from the top,
+  // but only when the envelope holds no picture of its own: a picture inside claims the first beats. It is
+  // bound where it stands and never moved, so the chat shows it first and galgame shows it behind the beats.
+  // Read after §0b, so an image a leaked reasoning block quoted has already left the head with it.
+  if (!imgs.length) {
+    const title = imageCensus(head)[0];
+    if (title) {
+      imgs = [{ ...title, index: -1 }]; // ahead of every beat, so it owns them all
+      stats.titleImage = true;
+    }
   }
+  stats.plainImages = imgs.filter((im) => im.plain).length;
   const beatStarts = [];
   RE_P_OPEN.lastIndex = 0;
   let pm;
@@ -933,14 +982,46 @@ export function shapeMessage(raw, mintUid) {
   return { text, changed: text !== raw, deferred: null, stats };
 }
 
+// ── §3c a message with no envelope: one backdrop for the whole of it ────────────────────────────
+// galgame reads a message with no <maintext> as plain text: it drops every tag, and each line takes the
+// LAST <background> the message carries (parser.js, its no-<p> path). So such a message — a card's greeting
+// with its logo — shows one image, from a scene tag at its very top: galgame cuts away everything ahead of
+// the first galgame tag it finds. Its text is never wrapped into beats, since that path builds none.
+//
+// Only OUR scene tags are stripped and re-derived, which keeps this idempotent like §1. A scene tag the
+// author wrote is their galgame markup and stays. An image a reasoning span covers is text the model
+// quoted, not a picture. A pending <pic> holds the binding back, as in §3b.
+// Returns null when there is nothing to bind; the caller then leaves the message untouched.
+function bindWholeMessageBackdrop(raw, mintUid, reasoning) {
+  if (RE_PIC_TAG.test(raw)) return null;
+  const imgs = imageCensus(raw, (at) => insideReasoning(reasoning, at));
+  if (!imgs.length) return null;
+  const stats = blankShapeStats();
+  const priorUid = RE_EXISTING_UID.exec(raw);
+  const body = raw.replace(RE_BACKGROUND_TAG, (line) => {
+    const scene = RE_SCENE_ATTR.exec(line);
+    if (!scene || !SCENE_NAME_RE.test(scene[1])) return line;
+    stats.strippedScenes++;
+    return '';
+  });
+  const uid = priorUid ? priorUid[1] : mintUid();
+  const text = `<background scene="${sceneName(uid, 1, shortHash(imgs[0].src))}" />\n${body.replace(/^\n+/, '')}`;
+  stats.scenes = 1;
+  stats.uid = uid;
+  stats.uidMinted = !priorUid;
+  stats.plainImages = imgs.filter((im) => im.plain).length;
+  stats.noEnvelope = true;
+  return { text, changed: text !== raw, deferred: null, stats };
+}
+
 // Wrap every bare-prose paragraph in <p>…</p>, leaving protected blocks and tag-only command
 // lines untouched. Splits free text on blank lines (one natural paragraph = one beat; galgame's
 // own pagination handles long beats).
-// Image machinery (a rendered wrap or an un-rendered <pic>) that already sits INSIDE a beat: a reply
+// Image machinery (a rendered wrap, an un-rendered <pic> or a plain <img>) that already sits INSIDE a beat: a reply
 // shaped before the <pic> above was protected, or a narrator that writes its own <p> around one. The
 // wrap pass never reopens an existing beat, so without this the image stays in it for good.
 const RE_BEAT = /(<p(?:\s[^>]*)?>)([\s\S]*?)<\/p>/gi;
-const RE_IMAGE_MACHINERY = new RegExp(`${RE_IMG_WRAP.source}|<pic\\b[^>]*>`, 'gi');
+const RE_IMAGE_MACHINERY = new RegExp(`${RE_IMG_WRAP.source}|<pic\\b[^>]*>|${PLAIN_IMG_SOURCE}`, 'gi');
 
 // Split every beat that holds image machinery around it: the text on each side keeps its own beat
 // (same <p> open tag), and the image stands between them, outside any beat.

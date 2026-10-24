@@ -1,4 +1,4 @@
-// galgame-companion · image-seam-core — PURE decisions for the image seam (no DOM/IndexedDB). v0.5
+// galgame-companion · image-seam-core — PURE decisions for the image seam (no DOM/IndexedDB). v0.6
 //
 // The image-seam DELETES rows out of galgame's own global background DB, so "which keys go" is the one
 // decision in this feature that must never be wrong: over-delete and the player loses backdrops from a
@@ -75,8 +75,8 @@ export function pairImagesToScenes(rawMes) {
   for (const img of images) {
     const scenes = scenesByHash.get(img.hash);
     // No scene carries this image's hash: either the shaper has not run yet (its re-render fires
-    // CHARACTER_MESSAGE_RENDERED and this scan repeats), or the <img> is not one the shaper named
-    // (a hand-pasted image). Both mean "not ours to bind" — skip, never guess a scene for it.
+    // CHARACTER_MESSAGE_RENDERED and this scan repeats), or the shaper binds nothing there (an <img>
+    // after a reply's envelope). Both mean "not ours to bind" — skip, never guess a scene for it.
     if (!scenes) { unmatchedImages++; continue; }
     for (const scene of scenes) pairs.push({ scene, url: img.url });
   }
@@ -84,8 +84,10 @@ export function pairImagesToScenes(rawMes) {
 }
 
 // Is the message FINISHED being assembled? Both producers must be done before an unbound image can
-// mean anything: the beat-shaper only shapes a CLOSED <maintext>/<gametxt> envelope (an open one is
-// still streaming and it defers), and mvu-helper is still replacing <pic> tags until none remain.
+// mean anything: the beat-shaper shapes a CLOSED <maintext>/<gametxt> envelope (an open one is still
+// streaming and it defers), and mvu-helper is still replacing <pic> tags until none remain. A message with
+// no envelope at all is bound at once (beat-shaper-core §3c), but nothing in its text tells finished from
+// streaming, so the report stays silent for it.
 // Read off the raw text so this stays pure — no events, no timers, no "wait a bit and see".
 const RE_ENVELOPE_CLOSED = /<\/(?:maintext|gametxt)>/i;
 const RE_PIC_PENDING = /<pic\b/i;

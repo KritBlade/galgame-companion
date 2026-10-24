@@ -1,5 +1,5 @@
 // image-seam-core unit tests — the seam's pure decisions: the two DELETE predicates for galgame's
-// shared background store, and how images bind to their scenes. v0.4
+// shared background store, and how images bind to their scenes. v0.5
 //
 // These are the only functions in the companion that remove someone else's data, so the tests lean hard
 // on what must NEVER be deleted: another chat's records, a foreign scene name, or anything at all when
@@ -148,6 +148,13 @@ describe('pairImagesToScenes (scene↔image binding)', () => {
     const scene = sceneName(uid, 1, shortHash(rawSrc));
     const { pairs } = pairImagesToScenes(`${bg(scene)}${img(rawSrc)}`);
     expect(pairs).toEqual([{ scene, url: '/user/images/a.png?v=1&w=2' }]);
+  });
+
+  it('a plain <img> — a card\'s own image at an absolute URL — pairs with the scene named for its src', () => {
+    const src = 'https://raw.githubusercontent.com/KritBlade/ArtificKoi/refs/heads/main/Image/logo.jpg';
+    const scene = sceneName(uidA, 1, shortHash(src));
+    const { pairs } = pairImagesToScenes(`<background scene="${scene}" />\n<img src="${src}" alt="logo">\n\nWelcome.`);
+    expect(pairs).toEqual([{ scene, url: src }]);
   });
 
   it('empty / imageless / junk input returns nothing and throws nothing', () => {

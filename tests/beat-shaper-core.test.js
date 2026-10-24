@@ -1,4 +1,4 @@
-// beat-shaper-core unit tests — pure transform (plan GALGAME_DUMB_TERMINAL_PLAN.md §5.1). v0.3
+// beat-shaper-core unit tests — pure transform (plan GALGAME_DUMB_TERMINAL_PLAN.md §5.1). v0.4
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
@@ -658,6 +658,151 @@ describe('an image never rides inside a beat', () => {
     const twice = shapeMessage(once.text, mint());
     expect(twice.text).toBe(once.text);
     expect(twice.stats.imagesLifted).toBe(0);
+  });
+});
+
+// A card's own image: a plain <img> with no mvu-helper wrap (School's greeting logo).
+const logoSrc = 'https://raw.githubusercontent.com/KritBlade/ArtificKoi/refs/heads/main/Image/logo.jpg';
+const logo = `<img src="${logoSrc}" alt="ArtificKoi" width="480">`;
+const logoScene = (uid) => sceneName(uid, 1, shortHash(logoSrc));
+
+describe('a plain <img> — a card\'s own image — gets a backdrop too', () => {
+  // MUTATION TARGET: drop the plain alternative from RE_IMAGE_BLOCK (imageCensus).
+  it('inside an envelope it takes a scene like a rendered picture', () => {
+    const m = mint();
+    const r = shapeMessage(`<maintext>\nThe gate opens.\n\n${logo}\n\nA bell rings.\n</maintext>`, m);
+    expect(r.stats.scenes).toBe(1);
+    expect(r.stats.plainImages).toBe(1);
+    expect(r.text).toContain(`<background scene="${logoScene(m.uid)}" />`);
+  });
+
+  // MUTATION TARGET: drop PLAIN_IMG_SOURCE from MACHINERY_BLOCK_SOURCES.
+  it('sharing a paragraph with prose, it is split out instead of riding inside a beat', () => {
+    const r = shapeMessage(`<maintext>\nThe gate opens.\n${logo}\nA bell rings.\n</maintext>`, mint());
+    const beats = [...r.text.matchAll(/<p>([\s\S]*?)<\/p>/g)].map((b) => b[1]);
+    expect(beats.some((b) => b.includes('<img'))).toBe(false);
+    expect(r.text).toContain('<p>The gate opens.</p>');
+    expect(r.text).toContain('<p>A bell rings.</p>');
+  });
+
+  // MUTATION TARGET: drop the plain alternative from RE_IMAGE_MACHINERY (liftImagesFromBeats).
+  it('one already inside a beat is lifted out', () => {
+    const r = shapeMessage(`<maintext>\n<p>The gate opens. ${logo} A bell rings.</p>\n</maintext>`, mint());
+    expect(r.stats.imagesLifted).toBe(1);
+    expect(r.text).toContain(`<p>The gate opens.</p>\n\n${logo}\n\n<p>A bell rings.</p>`);
+  });
+
+  it('a rendered picture\'s own <img> is counted once, with the plain image beside it', () => {
+    const m = mint();
+    const r = shapeMessage(`<maintext>\n${logo}\n\nThe gate opens.\n\n${img(1)}\n\nA bell rings.\n</maintext>`, m);
+    expect(r.stats.scenes).toBe(2);
+    expect(r.stats.plainImages).toBe(1);
+    expect(r.text).toContain(`<background scene="${logoScene(m.uid)}" />`);
+    expect(r.text).toContain(`<background scene="${sceneName(m.uid, 2, shortHash(imgSrc(1)))}" />`);
+  });
+
+  it('an <img> without a double-quoted src names nothing the seam can file, so it takes no scene', () => {
+    const r = shapeMessage(`<maintext>\nThe gate opens.\n\n<img src='x.jpg'>\n</maintext>`, mint());
+    expect(r.stats.scenes).toBe(0);
+    expect(r.stats.plainImages).toBe(0);
+  });
+
+  describe('ahead of the envelope — a title image', () => {
+    const greeting = `${logo}\r\n\r\nIt is the ArtificKoi game world.\r\n\r\n<gametxt>\n<p>Spring.</p>\n\n<p>The gate.</p>\n</gametxt>\r\n\r\n<GameStartMenu/>\r\n`;
+
+    // MUTATION TARGET: drop the title fallback (keep imgs = imageCensus(inner) alone).
+    it('backs every beat from the top when the envelope holds no picture, and stays where it stands', () => {
+      const m = mint();
+      const r = shapeMessage(greeting, m);
+      expect(r.stats.titleImage).toBe(true);
+      expect(r.stats.scenes).toBe(1);
+      expect(r.text.startsWith(logo)).toBe(true);
+      expect(r.text).toContain(`<maintext>\n<background scene="${logoScene(m.uid)}" />\n<p>Spring.</p>`);
+    });
+
+    it('is idempotent', () => {
+      const once = shapeMessage(greeting, mint());
+      const twice = shapeMessage(once.text, mint());
+      expect(twice.changed).toBe(false);
+      expect(twice.text).toBe(once.text);
+    });
+
+    // MUTATION TARGET: bind the title image even when the envelope holds a picture (drop the !imgs.length gate).
+    it('a picture inside the envelope claims the beats instead', () => {
+      const m = mint();
+      const withPicture = greeting.replace('<p>The gate.</p>', `<p>The gate.</p>\n\n${img(1)}`);
+      const r = shapeMessage(withPicture, m);
+      expect(r.stats.titleImage).toBe(false);
+      expect(r.stats.scenes).toBe(1);
+      expect(r.text).toContain(`<background scene="${nameFor(m.uid, 1)}" />`);
+      expect(r.text).not.toContain(logoScene(m.uid));
+    });
+  });
+
+  describe('in a message with no envelope (§3c)', () => {
+    const greeting = `${logo}\n\nWelcome to **ArtificKoi**.\n\nYou may begin.`;
+
+    // MUTATION TARGET: return unchanged() for every message with no envelope (drop the §3c call).
+    it('a greeting carrying an image gets one backdrop at its very top, and its text no beats', () => {
+      const m = mint();
+      const r = shapeMessage(greeting, m);
+      expect(r.changed).toBe(true);
+      expect(r.deferred).toBeNull();
+      expect(r.text).toBe(`<background scene="${logoScene(m.uid)}" />\n${greeting}`);
+      expect(r.stats.noEnvelope).toBe(true);
+      expect(r.stats.scenes).toBe(1);
+      expect(r.stats.uidMinted).toBe(true);
+      expect(m.calls).toBe(1);
+    });
+
+    it('is idempotent — a second shape keeps the uid and changes nothing', () => {
+      const once = shapeMessage(greeting, mint());
+      const m = stubMinter(sceneUid(CHAT_KEY, 'zzzzzz'));
+      const twice = shapeMessage(once.text, m);
+      expect(twice.changed).toBe(false);
+      expect(twice.text).toBe(once.text);
+      expect(twice.stats.uidMinted).toBe(false);
+      expect(m.calls).toBe(0);
+    });
+
+    // MUTATION TARGET: keep every <background> line in §3c (skip the strip of our own scene tags).
+    it('a new image replaces our scene with one named for it', () => {
+      const once = shapeMessage(greeting, mint());
+      const swapped = once.text.replace(logoSrc, 'https://example.com/logo2.jpg');
+      const r = shapeMessage(swapped, mint());
+      expect(r.text).toContain(`_scene_1_${shortHash('https://example.com/logo2.jpg')}"`);
+      expect(r.text.match(/<background\b/g)).toHaveLength(1);
+      expect(r.stats.strippedScenes).toBe(1);
+    });
+
+    it('a scene tag the author wrote is theirs and stays', () => {
+      const r = shapeMessage(`<background scene="教室" />\n${greeting}`, mint());
+      expect(r.text).toContain('<background scene="教室" />');
+      expect(r.text.match(/<background\b/g)).toHaveLength(2);
+    });
+
+    it('leaves a message with no image untouched', () => {
+      const r = shapeMessage('Welcome to **ArtificKoi**.', mint());
+      expect(r.changed).toBe(false);
+      expect(r.deferred).toBeNull();
+    });
+
+    // MUTATION TARGET: drop the owesEnvelope check ahead of §3c.
+    it('a reply that lost its envelope still waits for the repair, image or not', () => {
+      const r = shapeMessage(`${logo}\n\nProse.\n<UpdateVariable>\n[]\n</UpdateVariable>`, mint());
+      expect(r.changed).toBe(false);
+      expect(r.deferred).toBe('no-envelope');
+    });
+
+    it('holds the binding back while a <pic> is still rendering, as §3b does', () => {
+      const r = shapeMessage(`${logo}\n\n<pic char="X" prompt="y">\n\nProse.`, mint());
+      expect(r.changed).toBe(false);
+    });
+
+    it('an image a reasoning block quotes is text, not a picture', () => {
+      const r = shapeMessage(`<think>planning ${logo}</think>\nWelcome.`, mint());
+      expect(r.changed).toBe(false);
+    });
   });
 });
 

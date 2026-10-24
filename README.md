@@ -29,10 +29,10 @@ The one catch: jsDelivr caches it for up to **12 hours**, so a new release can t
 **Pinned to one release,** for a card you ship, so it never changes under your players:
 
 ```js
-import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.9.20/dist/galgame-companion.dist.js'
+import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.9.21/dist/galgame-companion.dist.js'
 ```
 
-`@v0.9.20` is the release. To update, bump the number.
+`@v0.9.21` is the release. To update, bump the number.
 
 When it loads, the console prints one line, `[galgame-companion] v0.9.18 · build <hash>`, and `window.__galgameCompanion` is there. That's how you know it's running, and which release you got.
 
@@ -59,12 +59,13 @@ A **Menu** button sits in the upper-left corner of galgame's screen, and in galg
 
 The button doesn't clash with galgame. It uses a `data-action` galgame has no handler for, so galgame never reacts to it.
 
-### image: MVU Helper's pictures become the backdrops
+### image: pictures become the backdrops
 
 When MVU Helper draws a picture into a reply, galgame-companion makes it the backdrop at that exact point of the story. So the scene changes while you read, the way a visual novel should.
 
 - **Into galgame's own background library.** It writes each picture straight into galgame's IndexedDB, `GalgameUIPluginDB`, store `backgrounds`, in galgame's own record shape: `{ id, sceneName, imageBlob: null, imageUrl, packId, lastModified }`. `packId` is galgame's current pack, `pack_default` when there is none.
 - **Matched by name, never by guess.** Every picture gets a scene name like `{uid}_scene_{n}_{hash}`. The hash comes from the picture's own address, so the right picture always lands on the right line.
+- **A card's own pictures too.** A plain `<img>` the card writes, like the logo above its greeting, becomes a backdrop the same way. Above the story it backs the opening lines while the story carries no picture of its own; in a message with no `<maintext>`, which galgame reads as plain text, it backs the whole message.
 - **No leftovers.** A regenerated picture replaces the old one. Delete a message or switch chats, and pictures nothing points at anymore are swept out. Open the chat in a second browser, and the backdrops are rebuilt on load.
 
 2 buttons in the upper-right corner work on the backdrop you're looking at:

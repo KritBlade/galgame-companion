@@ -1,9 +1,9 @@
-// galgame-companion v0.9.20
+// galgame-companion v0.9.21
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.9.20";
-  var BUILD = "687a2d0";
+  var VERSION = "0.9.21";
+  var BUILD = "659210a";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -3072,8 +3072,25 @@
   var RE_PIC_TAG_FULL = /[ \t]*<pic\b[^>]*>[ \t]*\r?\n?/gi;
   var RE_IMG_WRAP = /<span class="(?:custom-)?auto-img-wrap"[^>]*>[\s\S]*?<\/span>\s*<\/span>/gi;
   var RE_HAS_IMG = /<img\b/i;
+  var PLAIN_IMG_SOURCE = "<img\\b[^>]*>";
+  var RE_DOUBLE_QUOTED_SRC = /\bsrc="([^"]*)"/i;
+  var RE_IMAGE_BLOCK = new RegExp(`${RE_IMG_WRAP.source}|${PLAIN_IMG_SOURCE}`, "gi");
+  function imageCensus(text, skip = () => false) {
+    const imgs = [];
+    for (const m of String(text).matchAll(RE_IMAGE_BLOCK)) {
+      if (skip(m.index)) continue;
+      if (m[0].startsWith("<span")) {
+        if (RE_HAS_IMG.test(m[0])) imgs.push({ index: m.index, src: imgSrcOf(m[0]), plain: false });
+        continue;
+      }
+      const src = RE_DOUBLE_QUOTED_SRC.exec(m[0]);
+      if (src) imgs.push({ index: m.index, src: src[1].trim(), plain: true });
+    }
+    return imgs;
+  }
   var RE_P_OPEN = /<p(?:\s[^>]*)?>/gi;
   var RE_EXISTING_UID = /<background\s+scene="(gc[0-9a-z]+-[0-9a-z]+)_scene_\d+_[0-9a-z]+"/i;
+  var RE_SCENE_ATTR = /\bscene="([^"]*)"/i;
   var RE_THINK_TAG = /^think(?:ing)?(?:_[a-z0-9]+)*$/i;
   var RE_THINK_MARKUP = /<\/?think(?:ing)?(?:_[a-z0-9]+)*>/gi;
   var RE_TRAILING_SELF_CLOSING_RUN = /(?:\s*<[A-Za-z][\w:.-]*(?:\s[^<>]*)?\/>)+\s*$/;
@@ -3131,6 +3148,9 @@
     // line right above its prose shares that paragraph, so wrapping the paragraph put the finished
     // image INSIDE a beat — galgame printed the <img> markup as narration (live 2026-09-30).
     "<pic\\b[^>]*>",
+    // A PLAIN <img>, for the same reason. Listed after the wrap, so a rendered picture's own <img> stays part
+    // of its wrap.
+    PLAIN_IMG_SOURCE,
     "<styled\\b[^>]*>[\\s\\S]*?<\\/styled>",
     "<弹窗一>[\\s\\S]*?<\\/弹窗一>",
     "<弹窗二>[\\s\\S]*?<\\/弹窗二>",
@@ -3283,8 +3303,8 @@ ${out.slice(proseAt)}`;
     if (!result || result.deferred || !result.changed || owedKeys2.length) return text;
     return result.text;
   }
-  function shapeMessage(raw, mintUid) {
-    const blankStats = () => ({
+  function blankShapeStats() {
+    return {
       wrapped: 0,
       scenes: 0,
       strippedScenes: 0,
@@ -3302,21 +3322,27 @@ ${out.slice(proseAt)}`;
       rollsUnplaced: 0,
       logStrayTags: 0,
       imagesRehomed: 0,
-      imagesLifted: 0
-    });
-    const stats = blankStats();
+      imagesLifted: 0,
+      plainImages: 0,
+      titleImage: false,
+      noEnvelope: false
+    };
+  }
+  function shapeMessage(raw, mintUid) {
+    const stats = blankShapeStats();
     const unchanged = (deferred = null) => ({
       text: raw,
       // ALWAYS the caller's original — a rename ahead of a defer is discarded with it
       changed: false,
       deferred,
-      stats: blankStats()
+      stats: blankShapeStats()
     });
     if (typeof raw !== "string" || raw.length === 0) return unchanged();
     const env = locateEnvelope(raw);
     if (!env.kind) {
       const owesEnvelope = firstOutsideReasoning(RE_TAIL_MACHINERY, raw, 0, env.reasoning) !== null;
-      return unchanged(owesEnvelope ? "no-envelope" : null);
+      if (owesEnvelope) return unchanged("no-envelope");
+      return bindWholeMessageBackdrop(raw, mintUid, env.reasoning) || unchanged();
     }
     if (!env.close) return unchanged(`${env.kind}-unclosed`);
     let text0 = raw;
@@ -3387,11 +3413,11 @@ ${rescued.join("\n\n")}
       return "";
     });
     inner = inner.replace(RE_GC_HIDDEN, (_, body) => body);
-    inner = inner.replace(RE_TRAIT_CHECK, (m2) => {
-      if (m2.includes("--")) return m2;
+    inner = inner.replace(RE_TRAIT_CHECK, (m) => {
+      if (m.includes("--")) return m;
       stats.hidden++;
       return `<!--gc:hidden
-${m2}
+${m}
 -->`;
     });
     const placement = placeRolls(inner, rolls);
@@ -3406,13 +3432,15 @@ ${inner.replace(/^\n+/, "")}`;
     stats.rollsUnplaced = placement.unplaced.length;
     inner = liftImagesFromBeats(inner, stats);
     inner = wrapBareProse(inner, stats);
-    const imgs = [];
-    RE_IMG_WRAP.lastIndex = 0;
-    let m;
-    while ((m = RE_IMG_WRAP.exec(inner)) !== null) {
-      if (!RE_HAS_IMG.test(m[0])) continue;
-      imgs.push({ index: m.index, src: imgSrcOf(m[0]) });
+    let imgs = imageCensus(inner);
+    if (!imgs.length) {
+      const title = imageCensus(head)[0];
+      if (title) {
+        imgs = [{ ...title, index: -1 }];
+        stats.titleImage = true;
+      }
     }
+    stats.plainImages = imgs.filter((im) => im.plain).length;
     const beatStarts = [];
     RE_P_OPEN.lastIndex = 0;
     let pm;
@@ -3453,8 +3481,30 @@ ${inner.replace(/^\n+/, "")}`;
     const text = head + inner + tail;
     return { text, changed: text !== raw, deferred: null, stats };
   }
+  function bindWholeMessageBackdrop(raw, mintUid, reasoning) {
+    if (RE_PIC_TAG.test(raw)) return null;
+    const imgs = imageCensus(raw, (at) => insideReasoning(reasoning, at));
+    if (!imgs.length) return null;
+    const stats = blankShapeStats();
+    const priorUid = RE_EXISTING_UID.exec(raw);
+    const body = raw.replace(RE_BACKGROUND_TAG, (line) => {
+      const scene = RE_SCENE_ATTR.exec(line);
+      if (!scene || !SCENE_NAME_RE.test(scene[1])) return line;
+      stats.strippedScenes++;
+      return "";
+    });
+    const uid = priorUid ? priorUid[1] : mintUid();
+    const text = `<background scene="${sceneName(uid, 1, shortHash(imgs[0].src))}" />
+${body.replace(/^\n+/, "")}`;
+    stats.scenes = 1;
+    stats.uid = uid;
+    stats.uidMinted = !priorUid;
+    stats.plainImages = imgs.filter((im) => im.plain).length;
+    stats.noEnvelope = true;
+    return { text, changed: text !== raw, deferred: null, stats };
+  }
   var RE_BEAT = /(<p(?:\s[^>]*)?>)([\s\S]*?)<\/p>/gi;
-  var RE_IMAGE_MACHINERY = new RegExp(`${RE_IMG_WRAP.source}|<pic\\b[^>]*>`, "gi");
+  var RE_IMAGE_MACHINERY = new RegExp(`${RE_IMG_WRAP.source}|<pic\\b[^>]*>|${PLAIN_IMG_SOURCE}`, "gi");
   function liftImagesFromBeats(inner, stats) {
     return inner.replace(RE_BEAT, (beat, open, body) => {
       const images = body.match(RE_IMAGE_MACHINERY);
@@ -3718,7 +3768,7 @@ ${cot}` : cot;
   }
   function reportShape(id, stats, settledRounds = 0) {
     log.image(
-      `beat-shaper msg=${id}:${stats.renamed ? " gametxt→maintext" : ""} wrapped=${stats.wrapped}p scenes=${stats.scenes}${stats.scenes ? " (hoisted #1)" : ""}${stats.picsPending ? " [scene binding HELD BACK — raw <pic> still un-rendered]" : ""} strippedScenes=${stats.strippedScenes}${stats.uid ? ` uid=${stats.uid}(${stats.uidMinted ? "minted" : "kept"})` : ""}${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ""}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ""}${stats.strippedThink ? ` strippedThink=1 (${stats.strippedThinkText.length}c leaked CoT moved to extra.reasoning${stats.thinkMarkupKept ? `; ${stats.thinkMarkupKept} bare tag(s) before the envelope kept in the reply` : ""})` : ""} rolls=${stats.rolls}(placed=${stats.rollsPlaced} unplaced=${stats.rollsUnplaced})${stats.imagesRehomed ? ` imagesRehomed=${stats.imagesRehomed} (were OUTSIDE <maintext>)` : ""}${stats.imagesLifted ? ` imagesLifted=${stats.imagesLifted} (were INSIDE a beat)` : ""}${settledRounds ? ` prerequisiteRounds=${settledRounds} (settled before the write; the written text is a fresh read after them)` : ""}`
+      `beat-shaper msg=${id}:${stats.renamed ? " gametxt→maintext" : ""} wrapped=${stats.wrapped}p scenes=${stats.scenes}${stats.scenes ? " (hoisted #1)" : ""}${stats.picsPending ? " [scene binding HELD BACK — raw <pic> still un-rendered]" : ""} strippedScenes=${stats.strippedScenes}${stats.uid ? ` uid=${stats.uid}(${stats.uidMinted ? "minted" : "kept"})` : ""}${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ""}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ""}${stats.strippedThink ? ` strippedThink=1 (${stats.strippedThinkText.length}c leaked CoT moved to extra.reasoning${stats.thinkMarkupKept ? `; ${stats.thinkMarkupKept} bare tag(s) before the envelope kept in the reply` : ""})` : ""} rolls=${stats.rolls}(placed=${stats.rollsPlaced} unplaced=${stats.rollsUnplaced})${stats.imagesRehomed ? ` imagesRehomed=${stats.imagesRehomed} (were OUTSIDE <maintext>)` : ""}${stats.imagesLifted ? ` imagesLifted=${stats.imagesLifted} (were INSIDE a beat)` : ""}${stats.plainImages ? ` plainImages=${stats.plainImages}` : ""}${stats.titleImage ? " titleImage (bound from ahead of the envelope)" : ""}${stats.noEnvelope ? " noEnvelope (one backdrop for the whole message)" : ""}${settledRounds ? ` prerequisiteRounds=${settledRounds} (settled before the write; the written text is a fresh read after them)` : ""}`
     );
     if (stats.imagesRehomed) {
       log.warn(
