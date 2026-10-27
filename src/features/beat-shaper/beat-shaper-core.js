@@ -1,4 +1,4 @@
-// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v1.8
+// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v1.9
 //
 // Deterministically reshapes an AI reply into galgame's beat contract (plan: mvu-helper
 // plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). galgame's standard parser builds display beats ONLY
@@ -322,6 +322,10 @@ export function locateEnvelope(text) {
 
 // MACHINERY BLOCKS — never prose. The <p>-wrap leaves their content verbatim, and the prompt strip
 // (prompt-beat-strip-core.js) never edits inside them: a <p> in there is the block's own HTML, not a beat.
+// A galgame styled card (a terminal, an SMS, a letter…): galgame plays it as its own page, and only from
+// INSIDE <maintext>. Shared by the <p>-wrap protection below and the tail rescue (§0a).
+const STYLED_CARD_SOURCE = '<styled\\b[^>]*>[\\s\\S]*?<\\/styled>';
+const RE_STYLED_CARD_LINE = new RegExp(`[ \\t]*${STYLED_CARD_SOURCE}[ \\t]*\\r?\\n?`, 'gi');
 // Order matters only for overlap (none in practice).
 const MACHINERY_BLOCK_SOURCES = [
   RE_IMG_WRAP.source, // rendered images
@@ -333,7 +337,7 @@ const MACHINERY_BLOCK_SOURCES = [
   // A PLAIN <img>, for the same reason. Listed after the wrap, so a rendered picture's own <img> stays part
   // of its wrap.
   PLAIN_IMG_SOURCE,
-  '<styled\\b[^>]*>[\\s\\S]*?<\\/styled>',
+  STYLED_CARD_SOURCE,
   '<弹窗一>[\\s\\S]*?<\\/弹窗一>',
   '<弹窗二>[\\s\\S]*?<\\/弹窗二>',
   '<option\\b[^>]*>[\\s\\S]*?<\\/option>',
@@ -554,8 +558,9 @@ export function renderUnplacedRolls(rolls) {
  *                     strippedThink: number, strippedThinkText: string, thinkMarkupKept: number,
  *                     uid: string|null, picsPending: boolean,
  *                     rolls: number, rollsPlaced: number, rollsUnplaced: number, logStrayTags: number,
- *                     imagesRehomed: number, imagesLifted: number, plainImages: number, titleImage: boolean,
- *                     noEnvelope: boolean } }}
+ *                     imagesRehomed: number, styledRehomed: number, imagesLifted: number, plainImages: number,
+ *                     titleImage: boolean, noEnvelope: boolean } }}
+ *   imagesRehomed and styledRehomed count the image blocks and styled cards §0a moved in from the tail.
  *   imagesLifted counts image blocks moved OUT of a beat they sat inside (§2). plainImages counts the
  *   images the census found with no mvu-helper wrap; titleImage marks a backdrop bound from an image ahead
  *   of the envelope (§3); noEnvelope marks a message bound by §3c.
@@ -746,7 +751,7 @@ function blankShapeStats() {
   return {
     wrapped: 0, scenes: 0, strippedScenes: 0, renamed: false,
     strippedBgimg: 0, hidden: 0, strippedThink: 0, strippedThinkText: '', thinkMarkupKept: 0, uid: null, uidMinted: false, picsPending: false,
-    rolls: 0, rollsPlaced: 0, rollsUnplaced: 0, logStrayTags: 0, imagesRehomed: 0, imagesLifted: 0,
+    rolls: 0, rollsPlaced: 0, rollsUnplaced: 0, logStrayTags: 0, imagesRehomed: 0, styledRehomed: 0, imagesLifted: 0,
     plainImages: 0, titleImage: false, noEnvelope: false,
   };
 }
@@ -791,7 +796,7 @@ export function shapeMessage(raw, mintUid) {
   let tail = text0.slice(innerEnd);
   let inner = text0.slice(innerStart, innerEnd);
 
-  // 0a) TAIL RESCUE — image machinery the narrator left OUTSIDE the envelope.
+  // 0a) TAIL RESCUE — image machinery and styled cards left OUTSIDE the envelope.
   //
   // This is §4's bug, image half (live 2026-08-11). Everything below operates on `inner`; the tail is
   // untouched by design. So a <pic> emitted after </maintext> — past <combat_log>, <UpdateVariable>,
@@ -820,6 +825,17 @@ export function shapeMessage(raw, mintUid) {
     if (rescued.length) {
       inner = `${inner.replace(/\s+$/, '')}\n\n${rescued.join('\n\n')}\n`;
       stats.imagesRehomed = rescued.length;
+    }
+    // A STYLED CARD in the tail moves in the same way, after the last beat: galgame plays a styled card
+    // only from inside the envelope, so one left in the tail never shows. A writer's card lands there when
+    // the reply came with no envelope and the card was anchored on a tail block that the synthesized close
+    // (§4c) then passed over — e.g. a stat box placed before <combat_log>, in a reply whose first tail
+    // block is <choices>.
+    const styled = [];
+    tail = tail.replace(RE_STYLED_CARD_LINE, (block) => { styled.push(block.trim()); return ''; });
+    if (styled.length) {
+      inner = `${inner.replace(/\s+$/, '')}\n\n${styled.join('\n\n')}\n`;
+      stats.styledRehomed = styled.length;
     }
   }
 

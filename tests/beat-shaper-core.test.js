@@ -1165,6 +1165,60 @@ describe('§0a tail rescue — a <pic> outside the envelope still gets a backdro
   });
 });
 
+// ── §0a TAIL RESCUE — a styled card outside <maintext> ───────────────────────────────────────
+// galgame plays a <styled> card only from inside the envelope. A reply written with no envelope, whose
+// writer placed a stat box before <combat_log>, got a synthesized close before an EARLIER tail block
+// (<choices>), and the box was left in the tail, where galgame never shows it.
+describe('§0a tail rescue — a <styled> card outside the envelope is moved in', () => {
+  const CARD = '<styled type="terminal" title="Scene Stats">\nMana: Affection 33 (+2)\n</styled>';
+  const NO_ENVELOPE = '<p>b1</p>\n\n<p>b2</p>\n\n'
+    + '<choices>\n<c v="go">go</c>\n</choices>\n'
+    + '<UpdateVariable>\n[]\n</UpdateVariable>\n'
+    + `<RES_Variable>\n[]\n</RES_Variable>\n\n${CARD}\n`
+    + '<combat_log>\nNo calculation needed — mundane scene.\n</combat_log>';
+  const innerOf = (t) => t.slice(t.indexOf('<maintext>'), t.indexOf('</maintext>'));
+  const tailOf = (t) => t.slice(t.indexOf('</maintext>'));
+
+  it('THE LIVE CASE: the synthesized close passes over the card, and the shape moves it in', () => {
+    const synth = synthesizeEnvelope(NO_ENVELOPE);
+    expect(tailOf(synth.text)).toContain(CARD);             // the defect: closed before <choices>
+    const r = shapeMessage(synth.text, mint());
+    expect(r.stats.styledRehomed).toBe(1);
+    expect(innerOf(r.text)).toContain(CARD);
+    expect(tailOf(r.text)).not.toContain('<styled');
+  });
+
+  it('lands after the last beat, never wrapped in a beat', () => {
+    const r = shapeMessage(synthesizeEnvelope(NO_ENVELOPE).text, mint());
+    const inner = innerOf(r.text);
+    expect(inner.indexOf(CARD)).toBeGreaterThan(inner.lastIndexOf('</p>'));
+    expect(r.text).not.toMatch(/<p>\s*<styled/);
+  });
+
+  it('the tail blocks it stepped over are preserved verbatim', () => {
+    const r = shapeMessage(synthesizeEnvelope(NO_ENVELOPE).text, mint());
+    const tail = tailOf(r.text);
+    expect(tail).toContain('<choices>\n<c v="go">go</c>\n</choices>');
+    expect(tail).toContain('<RES_Variable>\n[]\n</RES_Variable>');
+    expect(tail).toContain('<combat_log>\nNo calculation needed — mundane scene.\n</combat_log>');
+  });
+
+  it('IDEMPOTENT — re-shaping the rescued text moves nothing more', () => {
+    const m1 = mint();
+    const first = shapeMessage(synthesizeEnvelope(NO_ENVELOPE).text, m1);
+    const second = shapeMessage(first.text, stubMinter(m1.uid));
+    expect(second.stats.styledRehomed).toBe(0);
+    expect(second.text).toBe(first.text);
+  });
+
+  it('a card ALREADY inside the envelope is left exactly where it is', () => {
+    const raw = `<maintext>\n<p>b1</p>\n\n${CARD}\n\n<p>b2</p>\n</maintext>\n<combat_log>\nx\n</combat_log>`;
+    const r = shapeMessage(raw, mint());
+    expect(r.stats.styledRehomed).toBe(0);
+    expect(r.text.indexOf(CARD)).toBeLessThan(r.text.indexOf('<p>b2</p>'));
+  });
+});
+
 
 describe('synthesizeEnvelope (§4c)', () => {
   // The live 2026-09-02 reply: <maintext> opened, prose in PLAIN TEXT (zero <p>), never closed.

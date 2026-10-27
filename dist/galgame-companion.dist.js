@@ -1,9 +1,9 @@
-// galgame-companion v0.9.22
+// galgame-companion v0.9.23
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.9.22";
-  var BUILD = "c85d9fa";
+  var VERSION = "0.9.23";
+  var BUILD = "f85e558";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -3140,6 +3140,8 @@
     }
     return { kind: null, open: null, close: null, reasoning };
   }
+  var STYLED_CARD_SOURCE = "<styled\\b[^>]*>[\\s\\S]*?<\\/styled>";
+  var RE_STYLED_CARD_LINE = new RegExp(`[ \\t]*${STYLED_CARD_SOURCE}[ \\t]*\\r?\\n?`, "gi");
   var MACHINERY_BLOCK_SOURCES = [
     RE_IMG_WRAP.source,
     // rendered images
@@ -3151,7 +3153,7 @@
     // A PLAIN <img>, for the same reason. Listed after the wrap, so a rendered picture's own <img> stays part
     // of its wrap.
     PLAIN_IMG_SOURCE,
-    "<styled\\b[^>]*>[\\s\\S]*?<\\/styled>",
+    STYLED_CARD_SOURCE,
     "<弹窗一>[\\s\\S]*?<\\/弹窗一>",
     "<弹窗二>[\\s\\S]*?<\\/弹窗二>",
     "<option\\b[^>]*>[\\s\\S]*?<\\/option>",
@@ -3328,6 +3330,7 @@ ${out.slice(proseAt)}`;
       rollsUnplaced: 0,
       logStrayTags: 0,
       imagesRehomed: 0,
+      styledRehomed: 0,
       imagesLifted: 0,
       plainImages: 0,
       titleImage: false,
@@ -3381,6 +3384,18 @@ ${out.slice(proseAt)}`;
 ${rescued.join("\n\n")}
 `;
         stats.imagesRehomed = rescued.length;
+      }
+      const styled = [];
+      tail = tail.replace(RE_STYLED_CARD_LINE, (block) => {
+        styled.push(block.trim());
+        return "";
+      });
+      if (styled.length) {
+        inner = `${inner.replace(/\s+$/, "")}
+
+${styled.join("\n\n")}
+`;
+        stats.styledRehomed = styled.length;
       }
     }
     const thinkEvents = scanTagBalance(head).events.filter((e) => RE_THINK_TAG.test(e.tag));
@@ -3782,7 +3797,7 @@ ${cot}` : cot;
   }
   function reportShape(id, stats, settledRounds = 0) {
     log.image(
-      `beat-shaper msg=${id}:${stats.renamed ? " gametxt→maintext" : ""} wrapped=${stats.wrapped}p scenes=${stats.scenes}${stats.scenes ? " (hoisted #1)" : ""}${stats.picsPending ? " [scene binding HELD BACK — raw <pic> still un-rendered]" : ""} strippedScenes=${stats.strippedScenes}${stats.uid ? ` uid=${stats.uid}(${stats.uidMinted ? "minted" : "kept"})` : ""}${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ""}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ""}${stats.strippedThink ? ` strippedThink=1 (${stats.strippedThinkText.length}c leaked CoT moved to extra.reasoning${stats.thinkMarkupKept ? `; ${stats.thinkMarkupKept} bare tag(s) before the envelope kept in the reply` : ""})` : ""} rolls=${stats.rolls}(placed=${stats.rollsPlaced} unplaced=${stats.rollsUnplaced})${stats.imagesRehomed ? ` imagesRehomed=${stats.imagesRehomed} (were OUTSIDE <maintext>)` : ""}${stats.imagesLifted ? ` imagesLifted=${stats.imagesLifted} (were INSIDE a beat)` : ""}${stats.plainImages ? ` plainImages=${stats.plainImages}` : ""}${stats.titleImage ? " titleImage (bound from ahead of the envelope)" : ""}${stats.noEnvelope ? " noEnvelope (one backdrop for the whole message)" : ""}${settledRounds ? ` prerequisiteRounds=${settledRounds} (settled before the write; the written text is a fresh read after them)` : ""}`
+      `beat-shaper msg=${id}:${stats.renamed ? " gametxt→maintext" : ""} wrapped=${stats.wrapped}p scenes=${stats.scenes}${stats.scenes ? " (hoisted #1)" : ""}${stats.picsPending ? " [scene binding HELD BACK — raw <pic> still un-rendered]" : ""} strippedScenes=${stats.strippedScenes}${stats.uid ? ` uid=${stats.uid}(${stats.uidMinted ? "minted" : "kept"})` : ""}${stats.strippedBgimg ? ` strippedBgimg=${stats.strippedBgimg}` : ""}${stats.hidden ? ` hiddenBlocks=${stats.hidden}` : ""}${stats.strippedThink ? ` strippedThink=1 (${stats.strippedThinkText.length}c leaked CoT moved to extra.reasoning${stats.thinkMarkupKept ? `; ${stats.thinkMarkupKept} bare tag(s) before the envelope kept in the reply` : ""})` : ""} rolls=${stats.rolls}(placed=${stats.rollsPlaced} unplaced=${stats.rollsUnplaced})${stats.imagesRehomed ? ` imagesRehomed=${stats.imagesRehomed} (were OUTSIDE <maintext>)` : ""}${stats.styledRehomed ? ` styledRehomed=${stats.styledRehomed} (were OUTSIDE <maintext>)` : ""}${stats.imagesLifted ? ` imagesLifted=${stats.imagesLifted} (were INSIDE a beat)` : ""}${stats.plainImages ? ` plainImages=${stats.plainImages}` : ""}${stats.titleImage ? " titleImage (bound from ahead of the envelope)" : ""}${stats.noEnvelope ? " noEnvelope (one backdrop for the whole message)" : ""}${settledRounds ? ` prerequisiteRounds=${settledRounds} (settled before the write; the written text is a fresh read after them)` : ""}`
     );
     if (stats.imagesRehomed) {
       log.warn(

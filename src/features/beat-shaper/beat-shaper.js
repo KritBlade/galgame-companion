@@ -1,5 +1,5 @@
 // galgame-companion · beat-shaper — deterministic reshaping of AI replies into galgame's beat
-// contract (plan: mvu-helper plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). v0.12
+// contract (plan: mvu-helper plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). v0.13
 //
 // Event-driven wrapper around the pure transform in beat-shaper-core.js: on MESSAGE_RECEIVED /
 // MESSAGE_UPDATED, read the floor's raw text (TH getChatMessages), shape it, and write it back
@@ -356,6 +356,8 @@ function reportShape(id, stats, settledRounds = 0) {
     // narrator's markup (core §0a). Silent, `scenes=1` would look like an ordinary bind and hide the
     // fact that the image is anchored to the wrong beat — and that the reply broke its contract.
     `${stats.imagesRehomed ? ` imagesRehomed=${stats.imagesRehomed} (were OUTSIDE <maintext>)` : ''}` +
+    // Only when it fired: a styled card was moved in from the tail, where galgame never plays it (core §0a).
+    `${stats.styledRehomed ? ` styledRehomed=${stats.styledRehomed} (were OUTSIDE <maintext>)` : ''}` +
     // Only when it fired: an image had been INSIDE a beat, where galgame prints its markup as narration.
     `${stats.imagesLifted ? ` imagesLifted=${stats.imagesLifted} (were INSIDE a beat)` : ''}` +
     // Only when present: images the message's author wrote without mvu-helper's wrap (a card's logo).
