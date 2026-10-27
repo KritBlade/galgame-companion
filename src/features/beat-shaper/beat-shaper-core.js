@@ -1,4 +1,4 @@
-// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v1.7
+// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v1.8
 //
 // Deterministically reshapes an AI reply into galgame's beat contract (plan: mvu-helper
 // plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). galgame's standard parser builds display beats ONLY
@@ -666,13 +666,26 @@ export function synthesizeEnvelope(raw) {
 }
 
 // ── §4d when the envelope repair runs ────────────────────────────────────────
-// §4b and §4c run only once the turn is finished, because mid-turn a missing or unclosed envelope may
-// still be on its way. These are the deferrals they exist for. A reply deferred for one of them WHILE
-// the turn was busy is owed one re-shape when the turn finishes; no other reply is, so a healthy reply
-// is never shaped again by this path.
+// §4b and §4c run only once the reply is finished, because mid-turn a missing or unclosed envelope may
+// still be on its way. These are the deferrals they exist for.
+//
+// The reply is finished once the turn is no longer busy, and at mvu-helper's last call: mvu-helper writes a
+// reply only when its text is final — the turn's write after its POST pass, and every later write (a picture
+// landing, a regenerate, a hand-in written on its own) after the turn (mvu-helper devdoc/reply-redraw-api.md
+// §2 and §5). So at the last call the repair goes into mvu-helper's write, not into a write of ours after it
+// that would re-render the reply and save the chat once more.
+//
+// A reply deferred for one of them WHILE the turn was busy is owed one re-shape when the turn finishes, unless
+// the last call settled it (shouldRetryEnvelopeAfterLastCall); no other reply is, so a healthy reply is never
+// shaped again by this path.
 export const ENVELOPE_REPAIR_DEFERRALS = Object.freeze(['no-envelope', 'gametxt-unclosed', 'maintext-unclosed']);
 export function awaitsEnvelopeRepair(deferred) {
   return ENVELOPE_REPAIR_DEFERRALS.includes(deferred);
+}
+
+/** Whether a shape that deferred for `deferred` gets its envelope repaired now (§4d). */
+export function shouldRepairEnvelope(deferred, { isTurnBusy, isAtLastCall }) {
+  return awaitsEnvelopeRepair(deferred) && (isAtLastCall || !isTurnBusy);
 }
 
 // ── §4e incomplete-reply detection ───────────────────────────────────────────
@@ -719,6 +732,15 @@ export function lastCallShapedText(text, result, owedKeys) {
   return result.text;
 }
 
+// After the shaping ran at the last call: whether a reply that deferred its envelope repair while the turn ran
+// still owes the retry when the turn phase closes (§4d). Only when its shaped text went out unshaped because it
+// still owes backdrop rows — our own pass after the write files them, then writes. Otherwise the last call
+// settled it: the repair went into mvu-helper's write, or the reply has nothing to anchor one on, and a retry
+// would read the same text to the same answer.
+export function shouldRetryEnvelopeAfterLastCall(result, owedKeys) {
+  return !!(result && !result.deferred && result.changed && owedKeys.length);
+}
+
 // Every stat a shape reports, zeroed (shapeMessage's @returns lists them).
 function blankShapeStats() {
   return {
@@ -746,7 +768,7 @@ export function shapeMessage(raw, mintUid) {
   const env = locateEnvelope(raw);
   if (!env.kind) {
     // No envelope of either kind. A reply carrying tail machinery is this game's and has LOST its
-    // envelope (§4c repairs it once the turn is over); anything else is an ordinary message, left as it
+    // envelope (§4c repairs it once the reply is finished, §4d); anything else is an ordinary message, left as it
     // is unless it carries an image (§3c).
     const owesEnvelope = firstOutsideReasoning(RE_TAIL_MACHINERY, raw, 0, env.reasoning) !== null;
     if (owesEnvelope) return unchanged('no-envelope');

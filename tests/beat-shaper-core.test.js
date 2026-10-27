@@ -1,11 +1,11 @@
-// beat-shaper-core unit tests — pure transform (plan GALGAME_DUMB_TERMINAL_PLAN.md §5.1). v0.4
+// beat-shaper-core unit tests — pure transform (plan GALGAME_DUMB_TERMINAL_PLAN.md §5.1). v0.5
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
   shapeMessage, sceneName, sceneUid, shortHash, uidOfSceneName, chatKeyOfSceneName,
   SCENE_NAME_RE, LEGACY_SCENE_NAME_RE, parseCombatLog, countCombatLogStrayTags, repairTruncatedEnvelope, synthesizeEnvelope,
-  shapeAndWriteWhenSettled, awaitsEnvelopeRepair, envelopeRepairsToRun, locateEnvelope, incompleteReplyReason,
-  lastCallShapedText,
+  shapeAndWriteWhenSettled, awaitsEnvelopeRepair, shouldRepairEnvelope, envelopeRepairsToRun, locateEnvelope,
+  incompleteReplyReason, lastCallShapedText, shouldRetryEnvelopeAfterLastCall,
 } from '../src/features/beat-shaper/beat-shaper-core.js';
 
 describe('lastCallShapedText — what the shaping hands back into mvu-helper\'s write', () => {
@@ -1418,11 +1418,11 @@ describe('the beat-shaper runs FIRST on MESSAGE_RECEIVED', () => {
   });
 });
 
-// §4d. The envelope repair waits for the turn to finish, and with mvu-helper's POST call routed every
-// message event fires inside that call — so a reply missing its envelope was never repaired and galgame
-// read the JSON after the prose as dialogue (live 2026-09-26). The retry runs when mvu-helper's last turn
-// phase closes, for the replies that deferred for their envelope and no other.
-describe('envelope repair retried when the turn finishes (§4d)', () => {
+// §4d. The envelope repair waits for a finished reply, and with mvu-helper's POST call routed every message
+// event fires inside that call. mvu-helper's last call comes only once the reply is finished, so the repair
+// goes into mvu-helper's write there; the retry when mvu-helper's last turn phase closes takes what the last
+// call did not settle, for the replies that deferred for their envelope and no other.
+describe('the envelope repair waits for a finished reply (§4d)', () => {
   it('every deferral shapeMessage gives for an envelope awaits the repair', () => {
     const deferrals = [
       shapeMessage('prose\n<UpdateVariable>x</UpdateVariable>', mint()).deferred,
@@ -1446,6 +1446,59 @@ describe('envelope repair retried when the turn finishes (§4d)', () => {
     expect(envelopeRepairsToRun(pending, 'chatA')).toEqual({ run: [18, 16], drop: [7] });
     expect(envelopeRepairsToRun(new Map([[3, null]]), null)).toEqual({ run: [3], drop: [] });
     expect(envelopeRepairsToRun(new Map(), 'chatA')).toEqual({ run: [], drop: [] });
+  });
+
+  it('MUTATION TARGET — at mvu-helper\'s last call the repair runs although the turn still reads busy', () => {
+    expect(shouldRepairEnvelope('no-envelope', { isTurnBusy: true, isAtLastCall: true })).toBe(true);
+    expect(shouldRepairEnvelope('maintext-unclosed', { isTurnBusy: true, isAtLastCall: true })).toBe(true);
+  });
+
+  it('MUTATION TARGET — while the turn is busy and no last call has come, the repair waits', () => {
+    expect(shouldRepairEnvelope('no-envelope', { isTurnBusy: true, isAtLastCall: false })).toBe(false);
+  });
+
+  it('MUTATION TARGET — once the turn is no longer busy, the repair runs on any message event', () => {
+    expect(shouldRepairEnvelope('gametxt-unclosed', { isTurnBusy: false, isAtLastCall: false })).toBe(true);
+  });
+
+  it('MUTATION TARGET — a reply that deferred for nothing, or for another reason, is never repaired, last call or not', () => {
+    expect(shouldRepairEnvelope(null, { isTurnBusy: false, isAtLastCall: true })).toBe(false);
+    expect(shouldRepairEnvelope('something-else', { isTurnBusy: false, isAtLastCall: true })).toBe(false);
+  });
+
+  it('MUTATION TARGET — a shaped text held back for the rows it still owes still owes the retry', () => {
+    const repaired = { text: '<maintext>\n<p>prose</p>\n</maintext>', changed: true, deferred: null };
+    expect(shouldRetryEnvelopeAfterLastCall(repaired, ['0|abc_scene_1_x'])).toBe(true);
+  });
+
+  it('MUTATION TARGET — a repair handed into mvu-helper\'s write, or one with nothing to anchor on, owes no retry', () => {
+    const repaired = { text: '<maintext>\n<p>prose</p>\n</maintext>', changed: true, deferred: null };
+    expect(shouldRetryEnvelopeAfterLastCall(repaired, [])).toBe(false);
+    expect(shouldRetryEnvelopeAfterLastCall({ text: 'raw', changed: false, deferred: 'no-envelope' }, [])).toBe(false);
+    expect(shouldRetryEnvelopeAfterLastCall({ text: 'raw', changed: false, deferred: null }, [])).toBe(false);
+    expect(shouldRetryEnvelopeAfterLastCall(null, [])).toBe(false);
+  });
+
+  // The live case (2026-10-27, ArtificKoi): a reply that lost both envelope tags, at mvu-helper's last call
+  // while the turn still reads busy. Composed the way offerShapeAtLastCall composes it.
+  it('a reply that lost its envelope goes into mvu-helper\'s write repaired, with no retry owed', () => {
+    const raw = 'prose\n<UpdateVariable>x</UpdateVariable>';
+    const first = shapeMessage(raw, mint());
+    expect(shouldRepairEnvelope(first.deferred, { isTurnBusy: true, isAtLastCall: true })).toBe(true);
+    const synth = synthesizeEnvelope(raw);
+    const result = { ...shapeMessage(synth.text, mint()), changed: true };
+    const handedBack = lastCallShapedText(raw, result, []);
+    expect(handedBack).toMatch(/<maintext>[\s\S]*<\/maintext>[\s\S]*<UpdateVariable>/);
+    expect(shouldRetryEnvelopeAfterLastCall(result, [])).toBe(false);
+  });
+
+  it('MUTATION TARGET — the last call repairs: both prepare and apply shape with isAtLastCall, prepare quietly, and apply settles the owed retry', () => {
+    const shaper = readFileSync(new URL('../src/features/beat-shaper/beat-shaper.js', import.meta.url), 'utf8').replace(/\r/g, '');
+    const lastCall = shaper.slice(shaper.indexOf('function offerShapeAtLastCall'), shaper.indexOf('function retryPendingEnvelopeRepairs'));
+    expect(lastCall).toMatch(/prepare: async \(text\) => \{\n\s*const result = shapeWithRepair\(id, text, mintOnce, \{ isAtLastCall: true, isQuiet: true \}\);/);
+    expect(lastCall).toMatch(/apply: \(text\) => \{\n\s*const result = shapeWithRepair\(id, text, mintOnce, \{ isAtLastCall: true \}\);/);
+    expect(lastCall).toMatch(/if \(!shouldRetryEnvelopeAfterLastCall\(result, owed\)\) pendingEnvelopeRepairs\.delete\(id\);/);
+    expect(shaper).toMatch(/if \(shouldRepairEnvelope\(deferred, \{ isTurnBusy: isTurnBusy\(\), isAtLastCall \}\)\) \{/);
   });
 
   it('the shaper retries from the turn-phase-closed hook, and the hook runs after the phase flag clears', () => {

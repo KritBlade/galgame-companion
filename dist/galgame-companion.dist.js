@@ -1,9 +1,9 @@
-// galgame-companion v0.9.21
+// galgame-companion v0.9.22
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.9.21";
-  var BUILD = "659210a";
+  var VERSION = "0.9.22";
+  var BUILD = "c85d9fa";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -3284,6 +3284,9 @@ ${out.slice(proseAt)}`;
   function awaitsEnvelopeRepair(deferred) {
     return ENVELOPE_REPAIR_DEFERRALS.includes(deferred);
   }
+  function shouldRepairEnvelope(deferred, { isTurnBusy: isTurnBusy2, isAtLastCall }) {
+    return awaitsEnvelopeRepair(deferred) && (isAtLastCall || !isTurnBusy2);
+  }
   function incompleteReplyReason(raw, id) {
     if (id === 0) return null;
     const text = String(raw == null ? "" : raw);
@@ -3302,6 +3305,9 @@ ${out.slice(proseAt)}`;
   function lastCallShapedText(text, result, owedKeys2) {
     if (!result || result.deferred || !result.changed || owedKeys2.length) return text;
     return result.text;
+  }
+  function shouldRetryEnvelopeAfterLastCall(result, owedKeys2) {
+    return !!(result && !result.deferred && result.changed && owedKeys2.length);
   }
   function blankShapeStats() {
     return {
@@ -3686,24 +3692,32 @@ ${cot}` : cot;
       log.warn(`beat-shaper msg=${id}: could not stash the stripped reasoning (it is still removed from the reply, just not kept):`, e);
     }
   }
-  function shapeWithRepair(id, raw, mintUid) {
+  function shapeWithRepair(id, raw, mintUid, { isAtLastCall = false, isQuiet = false } = {}) {
     let { text, changed, deferred, stats } = shapeMessage(raw, mintUid);
-    if (awaitsEnvelopeRepair(deferred) && !isTurnBusy()) {
+    if (shouldRepairEnvelope(deferred, { isTurnBusy: isTurnBusy(), isAtLastCall })) {
+      if (!isQuiet) {
+        const reason = incompleteReplyReason(raw, id);
+        if (reason) toastIncompleteReply(id, reason);
+      }
       const repair = deferred === "no-envelope" ? null : repairTruncatedEnvelope(raw);
       const synth = repair ? null : synthesizeEnvelope(raw);
       if (!repair && synth) {
-        log.warn(
-          `beat-shaper msg=${id}: reply is missing its envelope (${synth.inserted.join(" + ")}) and the turn is finished. Derived it from the first block-machinery tag and inserted it. A MISSING OPEN tag is the one galgame cannot survive — its extractor falls through to the whole message and reads JSON as a speaker name — so this costs at most a beat of prose instead of the interface.`
-        );
+        if (!isQuiet) {
+          log.warn(
+            `beat-shaper msg=${id}: reply is missing its envelope (${synth.inserted.join(" + ")}) and the turn is finished. Derived it from the first block-machinery tag and inserted it. A MISSING OPEN tag is the one galgame cannot survive — its extractor falls through to the whole message and reads JSON as a speaker name — so this costs at most a beat of prose instead of the interface.`
+          );
+        }
         ({ text, changed, deferred, stats } = shapeMessage(synth.text, mintUid));
         changed = true;
       } else if (repair) {
-        log.warn(
-          `beat-shaper msg=${id}: reply is TRUNCATED — no ${repair.closeTag} and the turn is finished, so it is never coming. Inserted ${repair.closeTag} after the last complete </p>; ${repair.droppedChars} char(s) of partial output now sit OUTSIDE the envelope (kept, not deleted). The turn likely emitted no <UpdateVariable>, so RES resolved nothing — check the narrator's max response tokens.`
-        );
+        if (!isQuiet) {
+          log.warn(
+            `beat-shaper msg=${id}: reply is TRUNCATED — no ${repair.closeTag} and the turn is finished, so it is never coming. Inserted ${repair.closeTag} after the last complete </p>; ${repair.droppedChars} char(s) of partial output now sit OUTSIDE the envelope (kept, not deleted). The turn likely emitted no <UpdateVariable>, so RES resolved nothing — check the narrator's max response tokens.`
+          );
+        }
         ({ text, changed, deferred, stats } = shapeMessage(repair.text, mintUid));
         changed = true;
-      } else {
+      } else if (!isQuiet) {
         log.warn(`beat-shaper msg=${id}: reply has no usable envelope — no complete </p> to close after and no block-machinery tag to anchor on. Leaving it raw (galgame may mis-parse it).`);
       }
     }
@@ -3745,7 +3759,7 @@ ${cot}` : cot;
         const key = `${id}:${result.deferred}`;
         if (!deferralLogged.has(key)) {
           deferralLogged.add(key);
-          log.image(`beat-shaper msg=${id}: deferred (${result.deferred}) — ${waitsForTurn ? "the envelope repair runs when the turn finishes" : "will retry on next message event"}`);
+          log.image(`beat-shaper msg=${id}: deferred (${result.deferred}) — ${waitsForTurn ? "the envelope repair runs once the reply is finished (mvu-helper's last call, or the turn's end)" : "will retry on next message event"}`);
         }
         return;
       }
@@ -3801,7 +3815,7 @@ ${cot}` : cot;
       // The backdrop rows the shaped text names must exist before the floor shows them (file header), so they
       // are filed before mvu-helper writes. Nothing is written here.
       prepare: async (text) => {
-        const result = shapeWithRepair(id, text, mintOnce);
+        const result = shapeWithRepair(id, text, mintOnce, { isAtLastCall: true, isQuiet: true });
         if (result.deferred || !result.changed) return;
         const owed = owedKeys(id, result.text);
         if (owed.length) await settleKeys(id, result.text, owed);
@@ -3809,9 +3823,10 @@ ${cot}` : cot;
       // Synchronous: the latest text in, the shaped text out. A shape that still owes rows (the text changed
       // after prepare filed them) is left to our own MESSAGE_UPDATED pass, which files them before it writes.
       apply: (text) => {
-        const result = shapeWithRepair(id, text, mintOnce);
+        const result = shapeWithRepair(id, text, mintOnce, { isAtLastCall: true });
         const owed = result.deferred || !result.changed ? [] : owedKeys(id, result.text);
         const handedBack = lastCallShapedText(text, result, owed);
+        if (!shouldRetryEnvelopeAfterLastCall(result, owed)) pendingEnvelopeRepairs.delete(id);
         if (owed.length) {
           log.image(`beat-shaper msg=${id}: mvu-helper's write goes out unshaped — the shaped text still owes ${withoutNamespace(owed).join(", ")}; our own pass after it files them, then shapes`);
         }
@@ -3879,9 +3894,9 @@ ${cot}` : cot;
       window.eventOn(LAST_CALL_EVENT, offerShapeAtLastCall);
       isLastCallBound = true;
     } catch (e) {
-      log.warn(`beat-shaper: eventOn(${LAST_CALL_EVENT}) failed — on a picture turn the shaping writes once more after mvu-helper's write:`, e);
+      log.warn(`beat-shaper: eventOn(${LAST_CALL_EVENT}) failed — a picture turn's scene binding and an envelope repair each write once more after mvu-helper's write:`, e);
     }
-    log.image(`beat-shaper active (${bound} event(s) bound, envelope repair retried when mvu-helper's turn phase closes${isLastCallBound ? ", shaping joins mvu-helper's write at its last call" : ""})`);
+    log.image(`beat-shaper active (${bound} event(s) bound${isLastCallBound ? ", shaping and envelope repair join mvu-helper's write at its last call" : ""}, an envelope repair still owed is retried when mvu-helper's turn phase closes)`);
   }
 
   // src/features/beat-shaper/prompt-beat-strip-core.js

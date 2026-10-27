@@ -1,12 +1,14 @@
 // galgame-companion · beat-shaper — deterministic reshaping of AI replies into galgame's beat
-// contract (plan: mvu-helper plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). v0.11
+// contract (plan: mvu-helper plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). v0.12
 //
 // Event-driven wrapper around the pure transform in beat-shaper-core.js: on MESSAGE_RECEIVED /
 // MESSAGE_UPDATED, read the floor's raw text (TH getChatMessages), shape it, and write it back
-// (TH setChatMessages) ONLY when the text actually changed. A reply whose envelope repair had to wait
-// for the turn is shaped once more when mvu-helper's last turn phase closes (core §4d). With mvu-helper
-// installed, the shaping also joins mvu-helper's own write at its last call (offerShapeAtLastCall), so a
-// picture turn's scene binding needs no write of ours after mvu-helper's.
+// (TH setChatMessages) ONLY when the text actually changed. With mvu-helper installed, the shaping also
+// joins mvu-helper's own write at its last call (offerShapeAtLastCall). The reply is finished there, so a
+// missing or unclosed envelope is repaired inside that write too, and neither the repair nor a picture
+// turn's scene binding needs a write of ours after mvu-helper's. A reply whose envelope repair had to wait
+// for the turn, and that the last call did not settle, is shaped once more when mvu-helper's last turn
+// phase closes (core §4d).
 //
 // WHY THESE TRIGGERS / LOOP + RACE SAFETY (verified against the real sources 2026-07-17):
 // - mvu-helper's imagegen splices the rendered <img> in AFTER a multi-second generation await
@@ -35,7 +37,8 @@
 import { topWindow, log, warnToast } from '../../env.js';
 import {
   shapeMessage, sceneUid, shortHash, repairTruncatedEnvelope, synthesizeEnvelope, shapeAndWriteWhenSettled,
-  awaitsEnvelopeRepair, envelopeRepairsToRun, incompleteReplyReason, lastCallShapedText,
+  awaitsEnvelopeRepair, shouldRepairEnvelope, envelopeRepairsToRun, incompleteReplyReason, lastCallShapedText,
+  shouldRetryEnvelopeAfterLastCall,
 } from './beat-shaper-core.js';
 import { isTurnBusy, onTurnPhaseClosed } from '../galgame-quirks/index.js';
 
@@ -196,42 +199,57 @@ function stashStrippedReasoning(id, cot, { shouldPaint = true } = {}) {
     }
 }
 
-// Shape one raw text, including the §4b envelope repair. Called once per round of the write loop
-// (core shapeAndWriteWhenSettled), so every round's fresh read gets the same treatment.
-function shapeWithRepair(id, raw, mintUid) {
+// Shape one raw text, including the §4b/§4c envelope repair. Called once per round of the write loop
+// (core shapeAndWriteWhenSettled), so every round's fresh read gets the same treatment, and from
+// mvu-helper's last call with `isAtLastCall`. `isQuiet` leaves the player's toast and the repair's
+// warnings to the call that hands the text back: the last call's prepare shapes the same text its apply
+// shapes next.
+function shapeWithRepair(id, raw, mintUid, { isAtLastCall = false, isQuiet = false } = {}) {
   let { text, changed, deferred, stats } = shapeMessage(raw, mintUid);
 
   // §4b: an unclosed envelope means "still streaming" ONLY while something is actually working —
   // ST's own generation, or mvu-helper's PRE/POST pass around it (isTurnBusy covers both, and POST is
-  // the last writer of the message). Once the turn is finished it means TRUNCATED — the closing tag is
+  // the last writer of the message) — and never at mvu-helper's last call, which comes only once the
+  // reply is finished (core §4d). A finished reply's unclosed envelope is TRUNCATED — the closing tag is
   // never coming, so deferring forever leaves galgame parsing raw text (which blocked the whole GUI
   // once — see repairTruncatedEnvelope).
   // Repair, then re-shape the repaired text so this turn still gets its normal treatment.
-  if (awaitsEnvelopeRepair(deferred) && !isTurnBusy()) {
+  if (shouldRepairEnvelope(deferred, { isTurnBusy: isTurnBusy(), isAtLastCall })) {
+    // Tell the player BEFORE the repair: it fixes the display, never the lost turn, and a repaired reply
+    // looks healthy afterwards (§4e). One toast per message and reason, so the event path's own toast
+    // is not repeated.
+    if (!isQuiet) {
+      const reason = incompleteReplyReason(raw, id);
+      if (reason) toastIncompleteReply(id, reason);
+    }
     // §4c runs ONLY here, never inside shapeMessage: a synthesized tag is WRITTEN to the message, so
     // doing it mid-stream would freeze a boundary the rest of the reply was about to move.
     // It also outranks §4b on the missing-OPEN case, which §4b cannot address at all.
     const repair = deferred === 'no-envelope' ? null : repairTruncatedEnvelope(raw);
     const synth = repair ? null : synthesizeEnvelope(raw);
     if (!repair && synth) {
-      log.warn(
-        `beat-shaper msg=${id}: reply is missing its envelope (${synth.inserted.join(' + ')}) and the turn is finished. ` +
-        'Derived it from the first block-machinery tag and inserted it. A MISSING OPEN tag is the one galgame ' +
-        'cannot survive — its extractor falls through to the whole message and reads JSON as a speaker name — ' +
-        'so this costs at most a beat of prose instead of the interface.',
-      );
+      if (!isQuiet) {
+        log.warn(
+          `beat-shaper msg=${id}: reply is missing its envelope (${synth.inserted.join(' + ')}) and the turn is finished. ` +
+          'Derived it from the first block-machinery tag and inserted it. A MISSING OPEN tag is the one galgame ' +
+          'cannot survive — its extractor falls through to the whole message and reads JSON as a speaker name — ' +
+          'so this costs at most a beat of prose instead of the interface.',
+        );
+      }
       ({ text, changed, deferred, stats } = shapeMessage(synth.text, mintUid));
       changed = true;
     } else if (repair) {
-      log.warn(
-        `beat-shaper msg=${id}: reply is TRUNCATED — no ${repair.closeTag} and the turn is finished, so it is never coming. ` +
-        `Inserted ${repair.closeTag} after the last complete </p>; ${repair.droppedChars} char(s) of partial output now sit ` +
-        'OUTSIDE the envelope (kept, not deleted). The turn likely emitted no <UpdateVariable>, so RES resolved nothing — ' +
-        'check the narrator\'s max response tokens.',
-      );
+      if (!isQuiet) {
+        log.warn(
+          `beat-shaper msg=${id}: reply is TRUNCATED — no ${repair.closeTag} and the turn is finished, so it is never coming. ` +
+          `Inserted ${repair.closeTag} after the last complete </p>; ${repair.droppedChars} char(s) of partial output now sit ` +
+          'OUTSIDE the envelope (kept, not deleted). The turn likely emitted no <UpdateVariable>, so RES resolved nothing — ' +
+          'check the narrator\'s max response tokens.',
+        );
+      }
       ({ text, changed, deferred, stats } = shapeMessage(repair.text, mintUid));
       changed = true;   // the repair itself is a change even if shaping found nothing else to do
-    } else {
+    } else if (!isQuiet) {
       log.warn(`beat-shaper msg=${id}: reply has no usable envelope — no complete </p> to close after and no block-machinery tag to anchor on. Leaving it raw (galgame may mis-parse it).`);
     }
   }
@@ -286,7 +304,7 @@ async function onMessageEvent(messageId) {
       if (!deferralLogged.has(key)) {
         deferralLogged.add(key);
         log.image(`beat-shaper msg=${id}: deferred (${result.deferred}) — ${waitsForTurn
-          ? 'the envelope repair runs when the turn finishes'
+          ? 'the envelope repair runs once the reply is finished (mvu-helper\'s last call, or the turn\'s end)'
           : 'will retry on next message event'}`);
       }
       return;
@@ -386,9 +404,10 @@ function reportShape(id, stats, settledRounds = 0) {
 // ── mvu-helper's last call: the shaping joins mvu-helper's one write ─────────
 // mvu-helper writes a finished reply once per turn, and before every write it asks the extensions for their
 // edits (its doc/reply-redraw-api.md). The shaping is a presentation edit there, so on a picture turn the
-// scene binding lands in mvu-helper's write instead of a write of our own right after it. Our MESSAGE_RECEIVED
-// first shape and our MESSAGE_UPDATED pass stay: after mvu-helper's write the pass finds the text already
-// shaped and writes nothing, and without mvu-helper nothing here ever fires.
+// scene binding lands in mvu-helper's write instead of a write of our own right after it, and so does the
+// envelope repair: the reply is finished at every last call (core §4d). Our MESSAGE_RECEIVED first shape and
+// our MESSAGE_UPDATED pass stay: after mvu-helper's write the pass finds the text already shaped and writes
+// nothing, and without mvu-helper nothing here ever fires.
 const LAST_CALL_EVENT = 'mvu_helper_reply_last_call';
 const EDITOR_NAME = 'galgame-companion';
 
@@ -406,7 +425,7 @@ function offerShapeAtLastCall(call) {
     // The backdrop rows the shaped text names must exist before the floor shows them (file header), so they
     // are filed before mvu-helper writes. Nothing is written here.
     prepare: async (text) => {
-      const result = shapeWithRepair(id, text, mintOnce);
+      const result = shapeWithRepair(id, text, mintOnce, { isAtLastCall: true, isQuiet: true });
       if (result.deferred || !result.changed) return;
       const owed = owedKeys(id, result.text);
       if (owed.length) await settleKeys(id, result.text, owed);
@@ -414,9 +433,13 @@ function offerShapeAtLastCall(call) {
     // Synchronous: the latest text in, the shaped text out. A shape that still owes rows (the text changed
     // after prepare filed them) is left to our own MESSAGE_UPDATED pass, which files them before it writes.
     apply: (text) => {
-      const result = shapeWithRepair(id, text, mintOnce);
+      const result = shapeWithRepair(id, text, mintOnce, { isAtLastCall: true });
       const owed = result.deferred || !result.changed ? [] : owedKeys(id, result.text);
       const handedBack = lastCallShapedText(text, result, owed);
+      // The envelope repair this reply deferred while the turn ran is settled here, unless the shaped text
+      // still owes rows (core shouldRetryEnvelopeAfterLastCall): then the retry when the turn phase closes
+      // files them and writes.
+      if (!shouldRetryEnvelopeAfterLastCall(result, owed)) pendingEnvelopeRepairs.delete(id);
       if (owed.length) {
         log.image(`beat-shaper msg=${id}: mvu-helper's write goes out unshaped — the shaped text still owes ${withoutNamespace(owed).join(', ')}; our own pass after it files them, then shapes`);
       }
@@ -428,11 +451,14 @@ function offerShapeAtLastCall(call) {
   });
 }
 
-// THE RETRY THE ENVELOPE REPAIR WAITS FOR (core §4d). The repair runs only once the turn is finished,
-// and with mvu-helper's POST call routed every other trigger fires while that call still runs:
-// GENERATION_ENDED lands before it, and its own writes land inside it. Without this, a reply missing
-// its envelope stays raw and galgame reads the JSON after the prose as dialogue (live 2026-09-26: a
-// `{"op` speaker). Only the replies that deferred for their envelope are retried, never a healthy one.
+// THE RETRY FOR AN ENVELOPE REPAIR STILL OWED (core §4d). The repair runs only once the reply is finished,
+// and with mvu-helper's POST call routed every message event fires while that call still runs:
+// GENERATION_ENDED lands before it, and its own writes land inside it. mvu-helper's last call settles most
+// such replies inside its write (offerShapeAtLastCall); this retry, when mvu-helper's last turn phase closes,
+// takes the rest — a reply whose shaped text still owed backdrop rows there, an edit the last call cut off,
+// an mvu-helper without the last call. Without it, a reply missing its envelope stays raw and galgame reads
+// the JSON after the prose as dialogue (live 2026-09-26: a `{"op` speaker). Only the replies that deferred
+// for their envelope are retried, never a healthy one.
 function retryPendingEnvelopeRepairs() {
   if (!pendingEnvelopeRepairs.size) return;
   const { run, drop } = envelopeRepairsToRun(pendingEnvelopeRepairs, currentChatKey());
@@ -477,8 +503,9 @@ export function startBeatShaper() {
     }
   }
   // §4b retry hook. MESSAGE_RECEIVED can land while ST still reads BUSY (GENERATION_ENDED trails
-  // it), and a truncated reply produces no further message event — so the idle-only repair would
-  // never get its chance, which is the exact "defers forever" bug it exists to fix. Re-run the last
+  // it), and a truncated reply produces no further message event — so without mvu-helper's last call
+  // the repair, which waits for a finished reply, would never get its chance, which is the exact
+  // "defers forever" bug it exists to fix. Re-run the last
   // message once generation is provably over. GENERATION_STOPPED matters most: a user pressing stop
   // is the commonest way to strand an unclosed envelope. Idempotent — a healthy message re-shapes
   // to identical text and the `changed` check makes it a no-op.
@@ -506,7 +533,7 @@ export function startBeatShaper() {
     window.eventOn(LAST_CALL_EVENT, offerShapeAtLastCall);
     isLastCallBound = true;
   } catch (e) {
-    log.warn(`beat-shaper: eventOn(${LAST_CALL_EVENT}) failed — on a picture turn the shaping writes once more after mvu-helper's write:`, e);
+    log.warn(`beat-shaper: eventOn(${LAST_CALL_EVENT}) failed — a picture turn's scene binding and an envelope repair each write once more after mvu-helper's write:`, e);
   }
-  log.image(`beat-shaper active (${bound} event(s) bound, envelope repair retried when mvu-helper's turn phase closes${isLastCallBound ? ', shaping joins mvu-helper\'s write at its last call' : ''})`);
+  log.image(`beat-shaper active (${bound} event(s) bound${isLastCallBound ? ', shaping and envelope repair join mvu-helper\'s write at its last call' : ''}, an envelope repair still owed is retried when mvu-helper's turn phase closes)`);
 }
