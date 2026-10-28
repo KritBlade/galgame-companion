@@ -1,4 +1,4 @@
-// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v1.9
+// galgame-companion · beat-shaper-core — PURE message-shaping transform (no TH globals, unit-testable). v2.0
 //
 // Deterministically reshapes an AI reply into galgame's beat contract (plan: mvu-helper
 // plans/GALGAME_DUMB_TERMINAL_PLAN.md §4 C1). galgame's standard parser builds display beats ONLY
@@ -28,7 +28,9 @@
 // The injected beat is PLAIN TEXT — galgame silently drops any beat carrying HTML — so severity rides in
 // an emoji, not a colour.
 // A pending <pic> defers only scene injection, never the whole transform (§3b): the envelope rename is
-// what keeps galgame's parser scoped, so a stalled image backend must not hold it back.
+// what keeps galgame's parser scoped, so a stalled image backend must not hold it back. Pending means the
+// contract tag mvu-helper will still draw, one carrying prompt= (hasPendingPic); a bare <pic> that a reply
+// merely quotes is text and holds nothing back.
 // The image census requires an actual <img> (see RE_IMG_WRAP): an UNRENDERED <pic> carries the same
 // auto-img-wrap envelope, and counting it would bind a beat run to a scene nobody can write a record for.
 // A card's logo reaches the stage either way it is written: ahead of the envelope it is a title image the
@@ -149,30 +151,41 @@ const RE_GC_HIDDEN = /<!--gc:hidden\n([\s\S]*?)\n-->/g;
 // strip (prompt-beat-strip-core.js) removes the same lines from what the model reads. Use it with replace()
 // only: a /g regex shared through test() or exec() carries lastIndex between callers.
 export const RE_BACKGROUND_TAG = /[ \t]*<background\b[^>]*\/?>(?:\s*<\/background>)?[ \t]*\r?\n?/gi;
-// Un-rendered image tag — its presence means mvu-helper's generation is still in flight (or failed).
-// It gates SCENE INJECTION ONLY (§3b): the image set is incomplete, so beat→image binding would be
-// derived from a partial set. Everything else — envelope rename, <p>-wrap, roll placement — runs now.
+// A PENDING <pic> — a picture mvu-helper still owes the message. It is the imagegen contract tag,
+// `<pic … prompt="…">`, which mvu-helper replaces with the drawn image (or drops, when the prompt is
+// empty), matched in the shape of mvu-helper's default detection regex (imagegen/default-template.js
+// DEFAULT_REGEX): whole quoted values are crossed before prompt=, the stray `>` of the auto-close slip
+// (`<pic> prompt="…">`) is bridged, and no `<` is ever crossed.
 //
-// IT USED TO GATE THE WHOLE TRANSFORM, and that was a GUI-killer. Rationale then (2026-07-17):
-// "mvu-helper replaces <pic> by STRING INDEX captured at detection time, so rewriting the message now
-// would corrupt that splice." That stopped being true five days later — mvu-helper's REPLACE pass
-// re-anchors every splice with indexOf against the CURRENT text (image-gen.js, 2026-07-22), so our
-// edits shifting offsets is a non-event. Meanwhile the deferral had a failure mode nobody costed:
-// mvu-helper awaits ST's /sd with NO timeout and ST's /sd has no wall-clock abort, so an image backend
-// that HANGS (blocked port, dropped packets, stalled VPN, wedged queue — not a clean failure, which the
-// leftover-<pic> sweep already handles) leaves the raw <pic> in the message forever. We then deferred
-// forever, so the message kept its <gametxt> envelope, so galgame's RE_MAINTEXT_* never matched, so its
-// parser fell through to the WHOLE message including <UpdateVariable> — and read `{ "op"` as a speaker
-// name. The embedded quote made `[data-character="{ "op"]` invalid CSS, jQuery threw, and the main
-// interface failed to render on every attempt until a reload (live 2026-08-04 and again 2026-08-07).
-//
-// So: a stalled image now costs backdrops, never the GUI. That is the whole point of the split — the
-// rename is what SCOPES galgame's parser, and it must never be hostage to an image backend.
-const RE_PIC_TAG = /<pic\b/i;
-// A WHOLE unrendered <pic …> tag, for the tail rescue (§0a) — RE_PIC_TAG only answers "is one present?".
-// Self-closing or not; mvu-helper's own scanner is equally `[^>]*>`-shaped, so a prompt containing a
-// literal '>' would already have defeated the renderer long before it reached us.
-const RE_PIC_TAG_FULL = /[ \t]*<pic\b[^>]*>[ \t]*\r?\n?/gi;
+// A <pic> WITHOUT prompt= is text, never a pending picture: mvu-helper's scanner never matches it, so it is
+// never drawn and never removed, and reading it as pending holds the binding back for good. A preset's
+// planning notes that quote their own rule ("Mandatory <pic> placement") inside <maintext> leave exactly
+// that, and the reply's real picture never reached the stage (live 2026-10-28). Any <pic …> tag is still
+// markup to the <p>-wrap (MACHINERY_BLOCK_SOURCES) — that answers "never prose", not "still pending".
+// The shape is the contract, not a mirror of mvu-helper's settings: a detection regex edited on its
+// Image tab is not followed here.
+const PENDING_PIC_SOURCE = '<pic\\b(?:"[^"]*"|[^"<])*?\\bprompt\\s*=\\s*"[^"]*"[^<>]*>';
+const RE_PENDING_PIC = new RegExp(PENDING_PIC_SOURCE, 'i');
+// The whole pending tag with the spaces and line break around it, for the tail rescue (§0a).
+const RE_PENDING_PIC_LINE = new RegExp(`[ \\t]*${PENDING_PIC_SOURCE}[ \\t]*\\r?\\n?`, 'gi');
+
+/**
+ * Does mvu-helper still owe this text a picture? A pending <pic> gates SCENE BINDING ONLY (§3b, §3c):
+ * the image set is incomplete, so a beat→image binding would come from a partial set. Everything else —
+ * envelope rename, <p>-wrap, roll placement — runs at once. Shaping around the tag is safe because
+ * mvu-helper re-anchors each splice on the tag's own text (indexOf against the CURRENT message), so the
+ * tag only has to survive verbatim. And it must run at once: mvu-helper awaits ST's /sd with no timeout,
+ * so an image backend that HANGS leaves its <pic> in the message for good, and a reply still wearing its
+ * <gametxt> envelope is read WHOLE by galgame's parser — <UpdateVariable> included, whose `{ "op"` became
+ * a speaker name, made `[data-character=…]` invalid CSS, and stopped the main interface rendering until a
+ * reload (live 2026-08-04). A stalled image costs backdrops, never the GUI.
+ * The image seam holds its unbound-image report back on the same question.
+ * @param {string} text
+ * @returns {boolean}
+ */
+export function hasPendingPic(text) {
+  return RE_PENDING_PIC.test(String(text ?? ''));
+}
 // An image-machinery block from mvu-helper imagegen, fixed structure:
 // <span class="auto-img-wrap" data-rawtag="…"><img …><span class="auto-img-regen" …></span></span>
 // The outer span contains exactly ONE nested span → match through the second </span>.
@@ -329,7 +342,8 @@ const RE_STYLED_CARD_LINE = new RegExp(`[ \\t]*${STYLED_CARD_SOURCE}[ \\t]*\\r?\
 // Order matters only for overlap (none in practice).
 const MACHINERY_BLOCK_SOURCES = [
   RE_IMG_WRAP.source, // rendered images
-  // An UN-RENDERED <pic>, for the same reason: the shape runs while an image is still generating
+  // Every <pic …> tag, pending or not — a tag is markup, never story text (hasPendingPic decides which
+  // ones mvu-helper still draws). A PENDING one is why: the shape runs while an image is still generating
   // (§3b), and mvu-helper later swaps the tag for the image IN PLACE. A <pic> the narrator put on the
   // line right above its prose shares that paragraph, so wrapping the paragraph put the finished
   // image INSIDE a beat — galgame printed the <img> markup as narration (live 2026-09-30).
@@ -811,17 +825,18 @@ export function shapeMessage(raw, mintUid) {
   // it the final beats. A backdrop on the wrong beat beats no backdrop at all, and the alternative —
   // leaving it where the narrator put it — is the silent blank we are here to end.
   //
-  // BOTH FORMS MOVE. A rendered wrap is bound directly by §3. A raw <pic> is moved so mvu-helper's
-  // next pass renders it INSIDE the envelope, where the following shape binds it normally — rescuing
-  // only the rendered form would leave the pending case to fail exactly as before.
-  // Idempotent by construction: after one move the tail holds no image machinery, so re-shapes no-op.
+  // BOTH FORMS MOVE. A rendered wrap is bound directly by §3. A pending <pic> is moved so mvu-helper's
+  // next pass renders it INSIDE the envelope, where the following shape binds it — drawn in the tail,
+  // it would be the same unbound image. A <pic> with no prompt= stays: it is text the tail quotes, and
+  // mvu-helper never draws it (hasPendingPic).
+  // Idempotent by construction: after one move the tail holds nothing the rescue lifts, so re-shapes no-op.
   {
     const rescued = [];
     const lift = (re) => {
       tail = tail.replace(re, (block) => { rescued.push(block.trim()); return ''; });
     };
     lift(RE_IMG_WRAP);
-    lift(RE_PIC_TAG_FULL);
+    lift(RE_PENDING_PIC_LINE);
     if (rescued.length) {
       inner = `${inner.replace(/\s+$/, '')}\n\n${rescued.join('\n\n')}\n`;
       stats.imagesRehomed = rescued.length;
@@ -888,7 +903,7 @@ export function shapeMessage(raw, mintUid) {
 
   // mvu-helper still owes this message rendered images. Shape everything else NOW and skip only the
   // scene binding (§3b); mvu-helper's MESSAGE_UPDATED brings us back once every tag is replaced.
-  const picsPending = RE_PIC_TAG.test(inner);
+  const picsPending = hasPendingPic(inner);
   stats.picsPending = picsPending;
 
   // 0c) Recover this message's uid from the scene tags a previous shape wrote, BEFORE step 1 strips
@@ -1031,7 +1046,7 @@ export function shapeMessage(raw, mintUid) {
 // quoted, not a picture. A pending <pic> holds the binding back, as in §3b.
 // Returns null when there is nothing to bind; the caller then leaves the message untouched.
 function bindWholeMessageBackdrop(raw, mintUid, reasoning) {
-  if (RE_PIC_TAG.test(raw)) return null;
+  if (hasPendingPic(raw)) return null;
   const imgs = imageCensus(raw, (at) => insideReasoning(reasoning, at));
   if (!imgs.length) return null;
   const stats = blankShapeStats();

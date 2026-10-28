@@ -3,7 +3,8 @@
 // each past reply SillyTavern sends to the model (prompt-beat-strip).
 //
 // The scene-name pieces are exported for image/: the seam filters, prunes and sweeps galgame's
-// background store by the naming contract that THIS feature defines (beat-shaper-core §2.1).
+// background store by the naming contract that THIS feature defines (beat-shaper-core §2.1), and holds
+// its unbound-image report back on the same pending-<pic> test the shaper holds its binding on.
 // One definition, consumed through the barrel — shared contract, not a leak.
 export { startBeatShaper, currentChatKey, registerWritePrerequisite } from './beat-shaper.js';
 export { startPromptBeatStrip } from './prompt-beat-strip.js';
@@ -12,4 +13,7 @@ export {
   // shortHash is the binding key itself: the seam must hash an <img> src with the SAME function the
   // shaper used to name its scene, or the two would never agree. Shared definition, never re-derived.
   shortHash,
+  // "Does mvu-helper still owe this text a picture?" — one answer for the shaper's binding and the
+  // seam's report, so one can never wait on a tag the other has stopped counting.
+  hasPendingPic,
 } from './beat-shaper-core.js';

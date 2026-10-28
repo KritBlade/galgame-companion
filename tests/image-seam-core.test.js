@@ -1,5 +1,5 @@
 // image-seam-core unit tests — the seam's pure decisions: the two DELETE predicates for galgame's
-// shared background store, and how images bind to their scenes. v0.5
+// shared background store, and how images bind to their scenes. v0.6
 //
 // These are the only functions in the companion that remove someone else's data, so the tests lean hard
 // on what must NEVER be deleted: another chat's records, a foreign scene name, or anything at all when
@@ -190,6 +190,12 @@ describe('unboundImageReport — a fully orphaned message must not fail silently
   it('stays silent while mvu-helper still owes a render — a raw <pic> is left', () => {
     const raw = `<maintext>\n<p>p</p>\n${IMG('/a.png')}\n<pic char="X" prompt="y">\n</maintext>`;
     expect(scan(raw)).toBe(null);
+  });
+
+  // MUTATION TARGET: the pending gate back to `<pic\b` — the report goes silent for good.
+  it('speaks when the only <pic> left has no prompt= — mvu-helper never draws one', () => {
+    const raw = `<maintext>\n<p>Mandatory <pic> placement</p>\n${IMG('/a.png')}\n</maintext>`;
+    expect(scan(raw)).toMatch(/EVERY image is unbound/);
   });
 
   it('says nothing when there are no images at all — a text reply is not a defect', () => {

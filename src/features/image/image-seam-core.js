@@ -1,4 +1,4 @@
-// galgame-companion · image-seam-core — PURE decisions for the image seam (no DOM/IndexedDB). v0.6
+// galgame-companion · image-seam-core — PURE decisions for the image seam (no DOM/IndexedDB). v0.7
 //
 // The image-seam DELETES rows out of galgame's own global background DB, so "which keys go" is the one
 // decision in this feature that must never be wrong: over-delete and the player loses backdrops from a
@@ -8,7 +8,7 @@
 // Naming contract they both key off: beat-shaper-core §2.1.
 
 import {
-  SCENE_NAME_RE, LEGACY_SCENE_NAME_RE, chatKeyOfSceneName, hashOfSceneName, shortHash,
+  SCENE_NAME_RE, LEGACY_SCENE_NAME_RE, chatKeyOfSceneName, hashOfSceneName, shortHash, hasPendingPic,
 } from '../beat-shaper/index.js';
 
 // HTML-attribute-unescape a src (mvu-helper writes it via escapeHtmlAttribute; a URL with query
@@ -85,12 +85,12 @@ export function pairImagesToScenes(rawMes) {
 
 // Is the message FINISHED being assembled? Both producers must be done before an unbound image can
 // mean anything: the beat-shaper shapes a CLOSED <maintext>/<gametxt> envelope (an open one is still
-// streaming and it defers), and mvu-helper is still replacing <pic> tags until none remain. A message with
+// streaming and it defers), and mvu-helper still owes a picture while a pending <pic> is left — the
+// shaper's own hasPendingPic, so the report and the binding wait on the same tags. A message with
 // no envelope at all is bound at once (beat-shaper-core §3c), but nothing in its text tells finished from
 // streaming, so the report stays silent for it.
 // Read off the raw text so this stays pure — no events, no timers, no "wait a bit and see".
 const RE_ENVELOPE_CLOSED = /<\/(?:maintext|gametxt)>/i;
-const RE_PIC_PENDING = /<pic\b/i;
 
 /**
  * THE LINE THAT WAS MISSING WHEN EVERY IMAGE WAS ORPHANED (live 2026-08-11).
@@ -117,7 +117,7 @@ export function unboundImageReport(rawMes, scan) {
   if (!imageCount) return null;                                    // no images — nothing to bind, nothing to report
   const text = String(rawMes || '');
   if (!RE_ENVELOPE_CLOSED.test(text)) return null;                 // still streaming — the shaper has not run
-  if (RE_PIC_PENDING.test(text)) return null;                      // mvu-helper still rendering tags
+  if (hasPendingPic(text)) return null;                            // mvu-helper still owes a picture
   return `EVERY image is unbound — ${imageCount} rendered image(s), ${sceneCount} scene tag(s)`
     + (foreignScenes ? `, ${foreignScenes} foreign` : '')
     + '. galgame will show NO backdrop for this message. '

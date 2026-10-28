@@ -1,8 +1,8 @@
-// beat-shaper-core unit tests — pure transform (plan GALGAME_DUMB_TERMINAL_PLAN.md §5.1). v0.5
+// beat-shaper-core unit tests — pure transform (plan GALGAME_DUMB_TERMINAL_PLAN.md §5.1). v0.6
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
-  shapeMessage, sceneName, sceneUid, shortHash, uidOfSceneName, chatKeyOfSceneName,
+  shapeMessage, sceneName, sceneUid, shortHash, uidOfSceneName, chatKeyOfSceneName, hasPendingPic,
   SCENE_NAME_RE, LEGACY_SCENE_NAME_RE, parseCombatLog, countCombatLogStrayTags, repairTruncatedEnvelope, synthesizeEnvelope,
   shapeAndWriteWhenSettled, awaitsEnvelopeRepair, shouldRepairEnvelope, envelopeRepairsToRun, locateEnvelope,
   incompleteReplyReason, lastCallShapedText, shouldRetryEnvelopeAfterLastCall,
@@ -1162,6 +1162,78 @@ describe('§0a tail rescue — a <pic> outside the envelope still gets a backdro
     expect(r.stats.imagesRehomed).toBe(2);
     expect(r.stats.scenes).toBe(2);
     expect(r.text.indexOf(nameFor(m.uid, 1))).toBeLessThan(r.text.indexOf(nameFor(m.uid, 2)));
+  });
+
+  // MUTATION TARGET: lift a bare `<pic\b[^>]*>` in the rescue again — this moves it and counts it.
+  it('a bare <pic> the tail quotes stays there — it is text, not a picture to rescue', () => {
+    const m = mint();
+    const notes = '<notes>every scene needs a <pic> tag</notes>';
+    const r = shapeMessage(`<maintext>\n<p>b1</p>\n${img(1)}\n</maintext>\n${TAIL}\n${notes}`, m);
+    expect(r.stats.imagesRehomed).toBe(0);
+    expect(r.text.slice(r.text.indexOf('</maintext>'))).toContain(notes);
+    expect(r.stats.picsPending).toBe(false);
+    expect(r.stats.scenes).toBe(1);
+  });
+});
+
+// ── a pending <pic> is the tag mvu-helper will still draw ─────────────────────────────────────
+// Live 2026-10-28 (staging, msg 4): a preset's planning notes landed INSIDE <maintext> and quoted their own
+// rule, "Mandatory <pic> placement". mvu-helper draws only the contract tag, one carrying prompt=, so that
+// bare <pic> was never drawn and never removed. Read as pending, it held the reply's scene binding back for
+// good, and the picture mvu-helper DID render never reached galgame's stage.
+describe('hasPendingPic — only a tag mvu-helper will still draw is pending', () => {
+  it.each([
+    ['the contract tag', '<pic char="X" prompt="y">'],
+    ['attributes in any order, self-closing', '<pic prompt="y" char="X" outfit="Z" />'],
+    ['an empty prompt, which mvu-helper drops', '<pic prompt="">'],
+    ['the auto-close slip mvu-helper bridges', '<pic> prompt="y">'],
+    ['a quoted value holding ">" ahead of prompt=', '<pic char="a>b" prompt="y">'],
+  ])('pending: %s', (_, tag) => {
+    expect(hasPendingPic(`<p>a</p>\n${tag}\n<p>b</p>`)).toBe(true);
+  });
+
+  it.each([
+    ['a bare <pic> quoted in prose', 'Rules to watch: * Mandatory <pic> placement for the scene.'],
+    ['a bare <pic> between beats', '<p>Mandatory</p> <pic> <p>for the scene.</p>'],
+    ['a prompt= that sits past another tag', '<pic char="X"> <p>prompt="y"</p>'],
+    ['a <pic> with attributes but no prompt=', '<pic char="X" outfit="Y">'],
+    ['a rendered picture, whose raw tag is escaped', img(1)],
+    ['empty text', ''],
+    ['no text at all', null],
+  ])('not pending: %s', (_, text) => {
+    expect(hasPendingPic(text)).toBe(false);
+  });
+});
+
+describe('a <pic> with no prompt= never holds the backdrop back', () => {
+  // MUTATION TARGET: PENDING_PIC_SOURCE back to '<pic\\b' — the scene is withheld and none is bound.
+  it('THE LIVE CASE: a bare <pic> quoted inside <maintext> leaves the rendered picture its scene', () => {
+    const m = mint();
+    const raw = '<maintext>\nRules to watch: * Mandatory <pic> placement for the scene.\n\n'
+      + `The bell rang.\n\n${img(1)}\n\nShe turned around.\n</maintext>`;
+    const r = shapeMessage(raw, m);
+    expect(r.stats.picsPending).toBe(false);
+    expect(r.stats.scenes).toBe(1);
+    expect(r.text).toContain(nameFor(m.uid, 1));
+  });
+
+  it('a contract tag beside it still holds the binding back until mvu-helper draws it', () => {
+    const m = mint();
+    const raw = '<maintext>\nRules to watch: * Mandatory <pic> placement for the scene.\n\n'
+      + `The bell rang.\n\n${img(1)}\n\nShe turned around.\n\n<pic char="X" prompt="y">\n</maintext>`;
+    const r = shapeMessage(raw, m);
+    expect(r.stats.picsPending).toBe(true);
+    expect(r.stats.scenes).toBe(0);
+    expect(m.calls).toBe(0);
+  });
+
+  // MUTATION TARGET: the §3c gate back to `<pic\b`.
+  it('a message with no envelope still gets its one backdrop', () => {
+    const m = mint();
+    const r = shapeMessage(`${logo}\n\nThe notes say every scene needs a <pic> tag.`, m);
+    expect(r.changed).toBe(true);
+    expect(r.stats.scenes).toBe(1);
+    expect(r.text).toContain(logoScene(m.uid));
   });
 });
 

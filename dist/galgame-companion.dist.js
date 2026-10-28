@@ -1,9 +1,9 @@
-// galgame-companion v0.9.23
+// galgame-companion v0.9.24
 (() => {
   // src/env.js
   var SCRIPT_NAME = "galgame-companion";
-  var VERSION = "0.9.23";
-  var BUILD = "f85e558";
+  var VERSION = "0.9.24";
+  var BUILD = "84428b0";
   var DOC = typeof window !== "undefined" && window.parent && window.parent.document || (typeof document !== "undefined" ? document : null);
   var topWindow = typeof window !== "undefined" && (window.parent || window) || globalThis;
   var MVU_HELPER_EXT = "mvu-helper";
@@ -3068,8 +3068,12 @@
   var RE_TRAIT_CHECK = /<classmate_trait_check>[\s\S]*?<\/classmate_trait_check>/gi;
   var RE_GC_HIDDEN = /<!--gc:hidden\n([\s\S]*?)\n-->/g;
   var RE_BACKGROUND_TAG = /[ \t]*<background\b[^>]*\/?>(?:\s*<\/background>)?[ \t]*\r?\n?/gi;
-  var RE_PIC_TAG = /<pic\b/i;
-  var RE_PIC_TAG_FULL = /[ \t]*<pic\b[^>]*>[ \t]*\r?\n?/gi;
+  var PENDING_PIC_SOURCE = '<pic\\b(?:"[^"]*"|[^"<])*?\\bprompt\\s*=\\s*"[^"]*"[^<>]*>';
+  var RE_PENDING_PIC = new RegExp(PENDING_PIC_SOURCE, "i");
+  var RE_PENDING_PIC_LINE = new RegExp(`[ \\t]*${PENDING_PIC_SOURCE}[ \\t]*\\r?\\n?`, "gi");
+  function hasPendingPic(text) {
+    return RE_PENDING_PIC.test(String(text ?? ""));
+  }
   var RE_IMG_WRAP = /<span class="(?:custom-)?auto-img-wrap"[^>]*>[\s\S]*?<\/span>\s*<\/span>/gi;
   var RE_HAS_IMG = /<img\b/i;
   var PLAIN_IMG_SOURCE = "<img\\b[^>]*>";
@@ -3145,7 +3149,8 @@
   var MACHINERY_BLOCK_SOURCES = [
     RE_IMG_WRAP.source,
     // rendered images
-    // An UN-RENDERED <pic>, for the same reason: the shape runs while an image is still generating
+    // Every <pic …> tag, pending or not — a tag is markup, never story text (hasPendingPic decides which
+    // ones mvu-helper still draws). A PENDING one is why: the shape runs while an image is still generating
     // (§3b), and mvu-helper later swaps the tag for the image IN PLACE. A <pic> the narrator put on the
     // line right above its prose shares that paragraph, so wrapping the paragraph put the finished
     // image INSIDE a beat — galgame printed the <img> markup as narration (live 2026-09-30).
@@ -3377,7 +3382,7 @@ ${out.slice(proseAt)}`;
         });
       };
       lift(RE_IMG_WRAP);
-      lift(RE_PIC_TAG_FULL);
+      lift(RE_PENDING_PIC_LINE);
       if (rescued.length) {
         inner = `${inner.replace(/\s+$/, "")}
 
@@ -3420,7 +3425,7 @@ ${styled.join("\n\n")}
         stats.strippedThink = 1;
       }
     }
-    const picsPending = RE_PIC_TAG.test(inner);
+    const picsPending = hasPendingPic(inner);
     stats.picsPending = picsPending;
     const priorUid = RE_EXISTING_UID.exec(inner);
     const rolls = parseCombatLog(tail);
@@ -3503,7 +3508,7 @@ ${inner.replace(/^\n+/, "")}`;
     return { text, changed: text !== raw, deferred: null, stats };
   }
   function bindWholeMessageBackdrop(raw, mintUid, reasoning) {
-    if (RE_PIC_TAG.test(raw)) return null;
+    if (hasPendingPic(raw)) return null;
     const imgs = imageCensus(raw, (at) => insideReasoning(reasoning, at));
     if (!imgs.length) return null;
     const stats = blankShapeStats();
@@ -4090,7 +4095,6 @@ ${cot}` : cot;
     return { pairs, unmatchedImages, foreignScenes, sceneCount, imageCount: images.length };
   }
   var RE_ENVELOPE_CLOSED = /<\/(?:maintext|gametxt)>/i;
-  var RE_PIC_PENDING = /<pic\b/i;
   function unboundImageReport(rawMes, scan) {
     const { pairs = [], unmatchedImages = 0, foreignScenes = 0, sceneCount = 0, imageCount = 0 } = scan || {};
     if (pairs.length) {
@@ -4100,7 +4104,7 @@ ${cot}` : cot;
     if (!imageCount) return null;
     const text = String(rawMes || "");
     if (!RE_ENVELOPE_CLOSED.test(text)) return null;
-    if (RE_PIC_PENDING.test(text)) return null;
+    if (hasPendingPic(text)) return null;
     return `EVERY image is unbound — ${imageCount} rendered image(s), ${sceneCount} scene tag(s)` + (foreignScenes ? `, ${foreignScenes} foreign` : "") + ". galgame will show NO backdrop for this message. " + (sceneCount === 0 ? "No scene tags exist at all, so the beat-shaper saw no image INSIDE <maintext> — the most likely cause is a <pic> tag emitted outside the envelope (in the tail, after the engine blocks)." : "Scene tags exist but none carries an image hash — the shaper and the rendered <img> src have drifted.");
   }
   function pairSignature(pairs) {
