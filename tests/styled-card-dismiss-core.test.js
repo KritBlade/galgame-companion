@@ -1,4 +1,4 @@
-// styled-card-dismiss-core unit tests — a styled card closing the newest reply. v0.2
+// styled-card-dismiss-core unit tests — a styled card closing the newest reply. v0.3
 //
 // galgame turns a click outside a styled card into NEXT. On the last page of the newest reply NEXT has
 // nowhere to go, so the card used to stay over the backdrop until PREV. There, and only there, a click
@@ -88,6 +88,12 @@ describe('the hiding CSS keys on the same class', () => {
 
   it('MUTATION TARGET — app/style.js hides the stage holding a card with DISMISSED_CLASS', () => {
     expect(css).toContain(`.gal-styled-stage:has(> .gal-styled-stage-content > .${DISMISSED_CLASS})`);
+  });
+
+  // galgame's stage is pointer-events none already and sets its content back to auto, so a rule on the
+  // stage alone left the faded card over the bar, taking the clicks meant for Regen / Free chat.
+  it('MUTATION TARGET — clicks pass through everything inside the dismissed stage, not only the stage', () => {
+    expect(css).toContain(`.gal-styled-stage:has(> .gal-styled-stage-content > .${DISMISSED_CLASS}) * { pointer-events: none !important;`);
   });
 
   it('MUTATION TARGET — and brings back the Regen / Free chat bar that galgame\'s styled mode hides', () => {

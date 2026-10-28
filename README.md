@@ -29,10 +29,10 @@ The one catch: jsDelivr caches it for up to **12 hours**, so a new release can t
 **Pinned to one release,** for a card you ship, so it never changes under your players:
 
 ```js
-import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.9.24/dist/galgame-companion.dist.js'
+import 'https://cdn.jsdelivr.net/gh/KritBlade/galgame-companion@v0.9.25/dist/galgame-companion.dist.js'
 ```
 
-`@v0.9.24` is the release. To update, bump the number.
+`@v0.9.25` is the release. To update, bump the number.
 
 When it loads, the console prints one line, `[galgame-companion] v0.9.18 · build <hash>`, and `window.__galgameCompanion` is there. That's how you know it's running, and which release you got.
 

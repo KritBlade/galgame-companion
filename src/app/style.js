@@ -1,4 +1,4 @@
-// galgame-companion · style — small CSS overrides injected into the parent document. v0.10
+// galgame-companion · style — small CSS overrides injected into the parent document. v0.11
 // Only cosmetic nudges that a dictionary swap can't express. Keep tiny; anything galgame
 // renames simply stops matching (graceful).
 
@@ -172,10 +172,16 @@ const CSS = `
 /* Dismissed styled card (styled-card-dismiss.js) — the stage holding a card the player clicked away
    fades out with galgame's own 0.5s opacity transition and lets clicks through to the backdrop, and
    galgame's Regen / Free chat bar, which its styled mode hides, comes back (flex is its display in every
-   skin) so the player can answer from the backdrop. Keyed on a class on the card element, which galgame
+   skin) so the player can answer from the backdrop. Clicks pass through the stage AND everything in it:
+   galgame's stage is already pointer-events none and sets its content back to auto, so the faded card
+   would still sit over the bar and take its clicks. Keyed on a class on the card element, which galgame
    replaces on every page change, so the card and styled mode's own look return by themselves. */
 #gal-global-overlay .gal-styled-stage:has(> .gal-styled-stage-content > .companion-styled-card-dismissed) {
-  opacity: 0 !important; pointer-events: none !important;
+  opacity: 0 !important;
+}
+#gal-global-overlay .gal-styled-stage:has(> .gal-styled-stage-content > .companion-styled-card-dismissed),
+#gal-global-overlay .gal-styled-stage:has(> .gal-styled-stage-content > .companion-styled-card-dismissed) * {
+  pointer-events: none !important;
 }
 #gal-global-overlay.gal-mode-styled:has(.gal-styled-stage-content > .companion-styled-card-dismissed) .gal-interaction-bar {
   display: flex !important;
